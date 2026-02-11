@@ -8,7 +8,7 @@ Use this UI to deploy vLLM `serve` endpoints across a cluster so you can stand u
 
 Deployment is as simple as running the install script on the host and on each client, with automatic client discovery via Consul.
 
-Use the host UI to register GPU nodes, define model configurations, launch/stop workloads, and monitor health and logs in real time.
+Use the host UI to register GPU nodes, define model configurations, launch/stop workloads, and monitor health and logs in real time. Systemd services are enabled on install, so they automatically restart after a system reboot.
 
 ## Tested hardware/software
 - GPUs: NVIDIA H100, NVIDIA A100, NVIDIA L40, NVIDIA DGX Spark (GB10), NVIDIA RTX 4090.
