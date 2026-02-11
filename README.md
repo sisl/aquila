@@ -4,7 +4,15 @@
 
 Admin dashboard + satellite clients for multi-model vLLM deployments.
 
+Use this UI to deploy vLLM `serve` endpoints across a cluster so you can stand up multiple LLM servers (same or different models) with a few clicks. It is ideal for research labs or small business environments that need repeatable, multi-endpoint deployments without building a full MLOps stack.
+
+Deployment is as simple as running the install script on the host and on each client, with automatic client discovery via Consul.
+
 Use the host UI to register GPU nodes, define model configurations, launch/stop workloads, and monitor health and logs in real time.
+
+## Tested hardware/software
+- GPUs: NVIDIA H100, NVIDIA A100, NVIDIA L40, NVIDIA DGX Spark (GB10), NVIDIA RTX 4090.
+- OS: Ubuntu 22.04 and Ubuntu 24.04.
 
 ## What it can do
 - Register and manage GPU nodes that run vLLM workloads.
