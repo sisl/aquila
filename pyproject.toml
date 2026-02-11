@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vllm_cluster_manager"
+version = "0.1.0"
+description = "Admin dashboard + satellite clients for multi-model vLLM deployments"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+
+[project.scripts]
+vllm_cluster_manager = "vllm_cluster_manager.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vllm_cluster_manager*"]
+
+[tool.setuptools.package-data]
+"vllm_cluster_manager" = ["assets/**"]

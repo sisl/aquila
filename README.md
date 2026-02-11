@@ -6,7 +6,7 @@ Admin dashboard + satellite clients for multi-model vLLM deployments.
 
 Use this UI to deploy vLLM `serve` endpoints across a cluster so you can stand up multiple LLM servers (same or different models) with a few clicks. It is ideal for research labs or small business environments that need repeatable, multi-endpoint deployments without building a full MLOps stack.
 
-Deployment is as simple as running the install script on the host and on each client, with automatic client discovery via Consul.
+Deployment is as simple as running the CLI on the host and on each client, with automatic client discovery via Consul.
 
 Use the host UI to register GPU nodes, define model configurations, launch/stop workloads, and monitor health and logs in real time. Systemd services are enabled on install, so they automatically restart after a system reboot.
 
@@ -42,6 +42,28 @@ Define and manage model settings (weights, runtime settings, resource usage) fro
 - `client/` Satellite node agent
 - `img/` Screenshots used in documentation
 
+## Install (pip)
+```bash
+uv pip install vllm_cluster_manager
+```
+
+## Start the host
+```bash
+vllm_cluster_manager host up --host_ip 127.0.0.1 --host_frontend_port 5173 --host_backend_port 47528
+```
+`--host_backend_port` sets the Consul port used for client discovery. Use `--admin_api_port` to override the backend API port (default 8000).
+
+## Start a client
+```bash
+vllm_cluster_manager client up --host_ip 127.0.0.1 --host_backend_port 47528
+```
+
+To stop services:
+```bash
+vllm_cluster_manager host down
+vllm_cluster_manager client down
+```
+
 ## Quick start (dev)
 1) Start infrastructure:
 
@@ -72,29 +94,10 @@ npm run dev
 ```
 
 Open the UI at `http://localhost:5173` by default (see `host/frontend/.env`).
-
-## Install (systemd services)
-Use the host installer for a production-style setup (infra + backend + frontend services):
-
-```bash
-cd host
-bash install.sh
-```
-
-The installer prompts for ports and writes env files for each service. See `host/README.md` for details.
-
-## Client install
-Clients are installed separately on each GPU node:
-
-```bash
-cd client
-bash install.sh
-```
-
-See `client/README.md` for prerequisites, configuration, and troubleshooting.
+See `host/README.md` and `client/README.md` for detailed configuration and troubleshooting.
 
 ## Configuration files
-The installers write service-specific env files:
+The CLI writes service-specific env files under `~/.local/share/vllm_cluster_manager`:
 - `host/.env` (Docker compose: Postgres + Consul)
 - `host/backend/.env` (API service)
 - `host/frontend/.env` (UI)
