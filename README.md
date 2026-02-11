@@ -1,5 +1,7 @@
 # vLLM Cluster Manager
 
+![VLLM Cluster Manager overview UI](img/vllm-cluster-manager-screenshot.png "VLLM Cluster Manager User Interface")
+
 Admin dashboard + satellite clients for multi-model vLLM deployments.
 
 Use the host UI to register GPU nodes, define model configurations, launch/stop workloads, and monitor health and logs in real time.
@@ -9,8 +11,6 @@ Use the host UI to register GPU nodes, define model configurations, launch/stop 
 - Create model configurations and launch models on selected nodes.
 - Monitor node health and model status.
 - Stream logs from running processes for quick troubleshooting.
-
-![VLLM Cluster Manager overview UI](img/vllm-cluster-manager-screenshot.png "VLLM Cluster Manager User Interface")
 
 ## Real-time logs
 Stream logs from running nodes and model processes directly in the dashboard.
