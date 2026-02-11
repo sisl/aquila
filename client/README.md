@@ -21,9 +21,9 @@ Install the CLI and start the client:
 
 ```bash
 uv pip install vllm_cluster_manager
-vllm_cluster_manager client up --host_ip 127.0.0.1 --host_backend_port 47528
+vllm_cluster_manager client up --host_ip 127.0.0.1 --host_discover_port 47528
 ```
-The CLI uses systemd and may prompt for sudo to create and enable services.
+This runs in the foreground without sudo. Use `client service install` for a persistent systemd service.
 
 Stop the client with:
 ```bash
@@ -41,7 +41,7 @@ vllm_cluster_manager client service remove
 ```
 
 ## Run without sudo (foreground)
-If you do not have sudo access, run the client in the foreground from the runtime directory:
+`client up` already runs in the foreground. If you want to run it manually from the runtime directory:
 ```bash
 cd ~/.local/share/vllm_cluster_manager/client
 source .venv/bin/activate
@@ -51,14 +51,14 @@ python -m app.main
 ## CLI flags
 | Command | Flags |
 | --- | --- |
-| `client up` | `--host_ip`, `--host_backend_port`, `--consul_port`, `--client_host`, `--client_port`, `--node_name` |
+| `client up` | `--host_ip`, `--host_discover_port`, `--client_host`, `--client_port`, `--node_name` |
 | `client down` | None |
 | `client service install` | Same as `client up` |
 | `client service remove` | None |
 
 Key options:
 - `--client_host` / `--client_port`: bind host and port.
-- `--host_ip` / `--host_backend_port`: Consul host/port for discovery.
+- `--host_ip` / `--host_discover_port`: discovery host/port.
 - `--node_name`: name used for registration.
 
 The CLI then:
@@ -97,7 +97,7 @@ sudo systemctl restart vllm-cluster-client.service
 
 Network paths to allow:
 - Host → Client agent: TCP `client_port`.
-- Client → Host port: TCP `host_backend_port` or `consul_port`.
+- Client → Host port: TCP `host_discover_port`.
 
 ## Uninstall (systemd)
 ```bash

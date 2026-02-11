@@ -55,27 +55,29 @@ uv pip install vllm_cluster_manager
 
 ## Start the host
 ```bash
-vllm_cluster_manager host up --host_ip 127.0.0.1 --host_frontend_port 5173 --host_backend_port 47528
+vllm_cluster_manager host up --host_ip 127.0.0.1 --host_frontend_port 5173 --host_discover_port 47528
 ```
-`--host_backend_port` sets the Consul port used for client discovery. Use `--admin_api_port` to override the backend API port (default 8000).
+`--host_discover_port` sets the discovery port used for clients. Use `--host_backend_port` to override the backend API port (default 8000).
+This runs in the foreground without sudo; use `host service install` for a persistent systemd service.
 
 **Host command flags**
 | Command | Flags |
 | --- | --- |
-| `host up` | `--host_ip`, `--host_frontend_port`, `--host_backend_port`, `--admin_api_port`, `--consul_port`, `--postgres_host`, `--postgres_port`, `--postgres_db`, `--postgres_user`, `--postgres_password` |
+| `host up` | `--host_ip`, `--host_frontend_port`, `--host_discover_port`, `--host_backend_port`, `--postgres_host`, `--postgres_port`, `--postgres_db`, `--postgres_user`, `--postgres_password` |
 | `host down` | None |
 | `host service install` | Same as `host up` |
 | `host service remove` | None |
 
 ## Start a client
 ```bash
-vllm_cluster_manager client up --host_ip 127.0.0.1 --host_backend_port 47528
+vllm_cluster_manager client up --host_ip 127.0.0.1 --host_discover_port 47528
 ```
+This runs in the foreground without sudo; use `client service install` for a persistent systemd service.
 
 **Client command flags**
 | Command | Flags |
 | --- | --- |
-| `client up` | `--host_ip`, `--host_backend_port`, `--consul_port`, `--client_host`, `--client_port`, `--node_name` |
+| `client up` | `--host_ip`, `--host_discover_port`, `--client_host`, `--client_port`, `--node_name` |
 | `client down` | None |
 | `client service install` | Same as `client up` |
 | `client service remove` | None |
@@ -130,8 +132,8 @@ If you edit any env file, restart the affected service.
 ## Firewall rules
 Allow these network paths (adjust ports to your flags):
 - User → Host UI: TCP `host_frontend_port` (default 5173).
-- UI/Browser → Host API: TCP `admin_api_port` (default 8000).
-- Clients → Host port (service discovery): TCP `host_backend_port` or `consul_port` (default 47528).
+- UI/Browser → Host API: TCP `host_backend_port` (default 8000).
+- Clients → Host discovery port: TCP `host_discover_port` (default 47528).
 - Host → Client agents: TCP `client_port` (default 9000).
 
 ## Notes

@@ -12,6 +12,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Iterable
 from urllib.request import Request, urlopen
+import time
 
 DEFAULT_CONSUL_PORT = 47528
 DEFAULT_ADMIN_API_PORT = 8000
@@ -63,9 +64,8 @@ def main() -> None:
     host_up = host_subparsers.add_parser("up", help="Install and start host services")
     host_up.add_argument("--host_ip", default="127.0.0.1")
     host_up.add_argument("--host_frontend_port", type=int, default=DEFAULT_FRONTEND_PORT)
-    host_up.add_argument("--host_backend_port", type=int, default=None)
-    host_up.add_argument("--admin_api_port", type=int, default=DEFAULT_ADMIN_API_PORT)
-    host_up.add_argument("--consul_port", type=int, default=None)
+    host_up.add_argument("--host_discover_port", type=int, default=None)
+    host_up.add_argument("--host_backend_port", type=int, default=DEFAULT_ADMIN_API_PORT)
     host_up.add_argument("--postgres_host", default=DEFAULT_POSTGRES_HOST)
     host_up.add_argument("--postgres_port", type=int, default=DEFAULT_POSTGRES_PORT)
     host_up.add_argument("--postgres_db", default=DEFAULT_POSTGRES_DB)
@@ -79,9 +79,8 @@ def main() -> None:
     host_service_install = host_service_sub.add_parser("install", help="Install systemd services")
     host_service_install.add_argument("--host_ip", default="127.0.0.1")
     host_service_install.add_argument("--host_frontend_port", type=int, default=DEFAULT_FRONTEND_PORT)
-    host_service_install.add_argument("--host_backend_port", type=int, default=None)
-    host_service_install.add_argument("--admin_api_port", type=int, default=DEFAULT_ADMIN_API_PORT)
-    host_service_install.add_argument("--consul_port", type=int, default=None)
+    host_service_install.add_argument("--host_discover_port", type=int, default=None)
+    host_service_install.add_argument("--host_backend_port", type=int, default=DEFAULT_ADMIN_API_PORT)
     host_service_install.add_argument("--postgres_host", default=DEFAULT_POSTGRES_HOST)
     host_service_install.add_argument("--postgres_port", type=int, default=DEFAULT_POSTGRES_PORT)
     host_service_install.add_argument("--postgres_db", default=DEFAULT_POSTGRES_DB)
@@ -95,8 +94,7 @@ def main() -> None:
 
     client_up = client_subparsers.add_parser("up", help="Install and start the client")
     client_up.add_argument("--host_ip", default="127.0.0.1")
-    client_up.add_argument("--host_backend_port", type=int, default=None)
-    client_up.add_argument("--consul_port", type=int, default=None)
+    client_up.add_argument("--host_discover_port", type=int, default=None)
     client_up.add_argument("--client_host", default=DEFAULT_CLIENT_HOST)
     client_up.add_argument("--client_port", type=int, default=DEFAULT_CLIENT_PORT)
     client_up.add_argument("--node_name", default=socket.gethostname())
@@ -107,8 +105,7 @@ def main() -> None:
     client_service_sub = client_service.add_subparsers(dest="service_action", required=True)
     client_service_install = client_service_sub.add_parser("install", help="Install systemd service")
     client_service_install.add_argument("--host_ip", default="127.0.0.1")
-    client_service_install.add_argument("--host_backend_port", type=int, default=None)
-    client_service_install.add_argument("--consul_port", type=int, default=None)
+    client_service_install.add_argument("--host_discover_port", type=int, default=None)
     client_service_install.add_argument("--client_host", default=DEFAULT_CLIENT_HOST)
     client_service_install.add_argument("--client_port", type=int, default=DEFAULT_CLIENT_PORT)
     client_service_install.add_argument("--node_name", default=socket.gethostname())
@@ -155,13 +152,11 @@ def main() -> None:
 
 
 def build_host_config(args: argparse.Namespace) -> HostConfig:
-    consul_port = args.consul_port
-    if consul_port is None:
-        consul_port = args.host_backend_port or DEFAULT_CONSUL_PORT
+    consul_port = args.host_discover_port or DEFAULT_CONSUL_PORT
     return HostConfig(
         host_ip=args.host_ip,
         frontend_port=args.host_frontend_port,
-        admin_api_port=args.admin_api_port,
+        admin_api_port=args.host_backend_port,
         consul_port=consul_port,
         postgres_host=args.postgres_host,
         postgres_port=args.postgres_port,
@@ -172,9 +167,7 @@ def build_host_config(args: argparse.Namespace) -> HostConfig:
 
 
 def build_client_config(args: argparse.Namespace) -> ClientConfig:
-    consul_port = args.consul_port
-    if consul_port is None:
-        consul_port = args.host_backend_port or DEFAULT_CONSUL_PORT
+    consul_port = args.host_discover_port or DEFAULT_CONSUL_PORT
     return ClientConfig(
         host_ip=args.host_ip,
         consul_port=consul_port,
@@ -189,31 +182,76 @@ def run_host_up(config: HostConfig) -> None:
     write_host_env_files(runtime_dir, config)
     ensure_backend_venv(runtime_dir)
     ensure_frontend_deps(runtime_dir)
-    install_host_service(config)
-    systemctl(["enable", "--now", f"{HOST_SERVICE_NAME}-infra.service"])
-    systemctl(["enable", "--now", f"{HOST_SERVICE_NAME}-backend.service"])
-    systemctl(["enable", "--now", f"{HOST_SERVICE_NAME}-frontend.service"])
+    start_infra(runtime_dir)
+    backend_env = load_env_file(runtime_dir / "backend" / ".env")
+    frontend_env = load_env_file(runtime_dir / "frontend" / ".env")
+    backend_cmd = [
+        str(runtime_dir / "backend" / ".venv" / "bin" / "uvicorn"),
+        "app.main:app",
+        "--host",
+        backend_env.get("ADMIN_API_HOST", config.host_ip),
+        "--port",
+        backend_env.get("ADMIN_API_PORT", str(config.admin_api_port)),
+    ]
+    npm_path = shutil.which("npm")
+    if not npm_path:
+        raise RuntimeError("npm is required to run the frontend.")
+    frontend_cmd = [
+        npm_path,
+        "run",
+        "dev",
+        "--",
+        "--host",
+        frontend_env.get("FRONTEND_HOST", "0.0.0.0"),
+        "--port",
+        frontend_env.get("FRONTEND_PORT", str(config.frontend_port)),
+    ]
+    backend_proc = subprocess.Popen(
+        backend_cmd,
+        cwd=runtime_dir / "backend",
+        env=merge_env(backend_env),
+    )
+    frontend_proc = subprocess.Popen(
+        frontend_cmd,
+        cwd=runtime_dir / "frontend",
+        env=merge_env(frontend_env),
+    )
+    write_pid(runtime_dir / ".backend.pid", backend_proc.pid)
+    write_pid(runtime_dir / ".frontend.pid", frontend_proc.pid)
+    try:
+        wait_for_processes(backend_proc, frontend_proc)
+    finally:
+        terminate_process(backend_proc)
+        terminate_process(frontend_proc)
+        remove_pid(runtime_dir / ".backend.pid")
+        remove_pid(runtime_dir / ".frontend.pid")
+        stop_infra(runtime_dir)
 
 
 def run_host_down() -> None:
-    systemctl(["disable", "--now", f"{HOST_SERVICE_NAME}-frontend.service"])
-    systemctl(["disable", "--now", f"{HOST_SERVICE_NAME}-backend.service"])
-    systemctl(["disable", "--now", f"{HOST_SERVICE_NAME}-infra.service"])
+    runtime_dir = runtime_dir_path("host")
+    if runtime_dir:
+        stop_infra(runtime_dir)
+        stop_pid(runtime_dir / ".backend.pid")
+        stop_pid(runtime_dir / ".frontend.pid")
 
 
 def run_client_up(config: ClientConfig) -> None:
     runtime_dir = ensure_runtime_dir("client")
     write_client_env_file(runtime_dir, config)
     ensure_client_venv(runtime_dir)
-    install_client_service(config)
-    systemctl(["enable", "--now", f"{CLIENT_SERVICE_NAME}.service"])
+    client_env = load_env_file(runtime_dir / ".env")
+    python_bin = runtime_dir / ".venv" / "bin" / "python"
     print(f"Client service: {CLIENT_SERVICE_NAME}.service")
     print(f"Client bind: {config.client_host}:{config.client_port}")
     print(f"Host port: {config.host_ip}:{config.consul_port}")
+    run([str(python_bin), "-m", "app.main"], cwd=runtime_dir, env=merge_env(client_env))
 
 
 def run_client_down() -> None:
-    systemctl(["disable", "--now", f"{CLIENT_SERVICE_NAME}.service"])
+    runtime_dir = runtime_dir_path("client")
+    if runtime_dir:
+        stop_pid(runtime_dir / ".client.pid")
 
 
 def ensure_runtime_dir(kind: str) -> Path:
@@ -223,6 +261,14 @@ def ensure_runtime_dir(kind: str) -> Path:
         runtime_dir.mkdir(parents=True, exist_ok=True)
         copy_assets(kind, runtime_dir)
     return runtime_dir
+
+
+def runtime_dir_path(kind: str) -> Path | None:
+    base_dir = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    runtime_dir = base_dir / "vllm_cluster_manager" / kind
+    if runtime_dir.exists():
+        return runtime_dir
+    return None
 
 
 def copy_assets(kind: str, dest: Path) -> None:
@@ -451,6 +497,18 @@ def ensure_frontend_deps(runtime_dir: Path) -> None:
     run([npm, "install"], cwd=runtime_dir / "frontend")
 
 
+def start_infra(runtime_dir: Path) -> None:
+    compose_cmd = detect_compose_cmd()
+    cmd = compose_cmd.split() + ["up", "-d"]
+    run(cmd, cwd=runtime_dir)
+
+
+def stop_infra(runtime_dir: Path) -> None:
+    compose_cmd = detect_compose_cmd()
+    cmd = compose_cmd.split() + ["down"]
+    run(cmd, cwd=runtime_dir)
+
+
 def install_host_service(config: HostConfig) -> None:
     runtime_dir = ensure_runtime_dir("host")
     compose_cmd = detect_compose_cmd()
@@ -577,6 +635,70 @@ def write_systemd_service(path: str, content: str) -> None:
         raise RuntimeError(f"Failed to write systemd service: {path}")
 
 
+def load_env_file(path: Path) -> dict[str, str]:
+    env: dict[str, str] = {}
+    if not path.exists():
+        return env
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        env[key.strip()] = value.strip()
+    return env
+
+
+def merge_env(extra: dict[str, str]) -> dict[str, str]:
+    env = os.environ.copy()
+    env.update(extra)
+    return env
+
+
+def write_pid(path: Path, pid: int) -> None:
+    path.write_text(str(pid), encoding="utf-8")
+
+
+def remove_pid(path: Path) -> None:
+    path.unlink(missing_ok=True)
+
+
+def stop_pid(path: Path) -> None:
+    if not path.exists():
+        return
+    pid_text = path.read_text(encoding="utf-8").strip()
+    if not pid_text:
+        return
+    try:
+        pid = int(pid_text)
+    except ValueError:
+        return
+    try:
+        os.kill(pid, 15)
+    except ProcessLookupError:
+        pass
+    remove_pid(path)
+
+
+def wait_for_processes(*procs: subprocess.Popen) -> None:
+    try:
+        while True:
+            for proc in procs:
+                if proc.poll() is not None:
+                    return
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        return
+
+
+def terminate_process(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+    except Exception:
+        return
+
+
 def remove_systemd_service(path: str) -> None:
     if os.geteuid() == 0:
         Path(path).unlink(missing_ok=True)
@@ -605,12 +727,19 @@ def detect_compose_cmd() -> str:
     raise RuntimeError("Docker Compose not found. Install docker compose or docker-compose.")
 
 
-def run(cmd: list[str], cwd: Path | None = None, capture: bool = False, input_text: str | None = None) -> str:
+def run(
+    cmd: list[str],
+    cwd: Path | None = None,
+    capture: bool = False,
+    input_text: str | None = None,
+    env: dict[str, str] | None = None,
+) -> str:
     result = subprocess.run(
         cmd,
         cwd=cwd,
         input=input_text,
         text=True,
+        env=env,
         stdout=subprocess.PIPE if capture else None,
         stderr=subprocess.STDOUT,
         check=False,

@@ -18,9 +18,9 @@ Install the CLI and start the host services:
 
 ```bash
 uv pip install vllm_cluster_manager
-vllm_cluster_manager host up --host_ip 127.0.0.1 --host_frontend_port 5173 --host_backend_port 47528
+vllm_cluster_manager host up --host_ip 127.0.0.1 --host_frontend_port 5173 --host_discover_port 47528
 ```
-The CLI uses systemd and may prompt for sudo to create and enable services.
+This runs in the foreground without sudo. Use `host service install` for a persistent systemd service.
 
 Stop services with:
 ```bash
@@ -40,7 +40,7 @@ vllm_cluster_manager host service remove
 ## CLI flags
 | Command | Flags |
 | --- | --- |
-| `host up` | `--host_ip`, `--host_frontend_port`, `--host_backend_port`, `--admin_api_port`, `--consul_port`, `--postgres_host`, `--postgres_port`, `--postgres_db`, `--postgres_user`, `--postgres_password` |
+| `host up` | `--host_ip`, `--host_frontend_port`, `--host_discover_port`, `--host_backend_port`, `--postgres_host`, `--postgres_port`, `--postgres_db`, `--postgres_user`, `--postgres_password` |
 | `host down` | None |
 | `host service install` | Same as `host up` |
 | `host service remove` | None |
@@ -48,8 +48,8 @@ vllm_cluster_manager host service remove
 Key options:
 - `--host_ip`: backend bind host and UI backend host.
 - `--host_frontend_port`: UI port (default 5173).
-- `--host_backend_port`: Consul HTTP port (used for client discovery).
-- `--admin_api_port`: backend API port (default 8000).
+- `--host_discover_port`: discovery port used for clients.
+- `--host_backend_port`: backend API port (default 8000).
 - `--postgres_*`: Postgres configuration.
 
 The CLI writes env files, installs backend/frontend deps, and creates/enables systemd services.
