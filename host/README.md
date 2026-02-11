@@ -37,6 +37,14 @@ Remove systemd units:
 vllm_cluster_manager host service remove
 ```
 
+## CLI flags
+| Command | Flags |
+| --- | --- |
+| `host up` | `--host_ip`, `--host_frontend_port`, `--host_backend_port`, `--admin_api_port`, `--consul_port`, `--postgres_host`, `--postgres_port`, `--postgres_db`, `--postgres_user`, `--postgres_password` |
+| `host down` | None |
+| `host service install` | Same as `host up` |
+| `host service remove` | None |
+
 Key options:
 - `--host_ip`: backend bind host and UI backend host.
 - `--host_frontend_port`: UI port (default 5173).
@@ -104,6 +112,12 @@ Typical ports to allow (adjust to your choices):
 - Backend API: `ADMIN_API_PORT`
 - Consul (host API for clients): `CONSUL_PORT`
 - Postgres: `POSTGRES_PORT` (only if remote access is required)
+
+Network paths to allow:
+- User → Host UI: TCP `FRONTEND_PORT`.
+- UI/Browser → Host API: TCP `ADMIN_API_PORT`.
+- Clients → Host port: TCP `CONSUL_PORT`.
+- Host → Client agents: TCP `client_port` (configured on each client).
 
 ## Uninstall (systemd)
 ```bash

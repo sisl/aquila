@@ -207,6 +207,9 @@ def run_client_up(config: ClientConfig) -> None:
     ensure_client_venv(runtime_dir)
     install_client_service(config)
     systemctl(["enable", "--now", f"{CLIENT_SERVICE_NAME}.service"])
+    print(f"Client service: {CLIENT_SERVICE_NAME}.service")
+    print(f"Client bind: {config.client_host}:{config.client_port}")
+    print(f"Host port: {config.host_ip}:{config.consul_port}")
 
 
 def run_client_down() -> None:
@@ -302,11 +305,19 @@ def ensure_venv(venv_dir: Path, requirements: Path) -> None:
 
 
 def create_venv(venv_dir: Path) -> None:
+    uv = shutil.which("uv")
+    if uv:
+        run([uv, "venv", "--python=3.12", str(venv_dir)])
+        return
     run([sys.executable, "-m", "venv", str(venv_dir)])
 
 
 def install_requirements(venv_dir: Path, requirements: Path) -> None:
     python_bin = venv_dir / "bin" / "python"
+    uv = shutil.which("uv")
+    if uv:
+        run([uv, "pip", "install", "--python", str(python_bin), "-r", str(requirements)])
+        return
     run([str(python_bin), "-m", "pip", "install", "-r", str(requirements)])
 
 
@@ -325,6 +336,10 @@ def install_requirements_without_vllm(venv_dir: Path, requirements: Path) -> Non
 
 
 def install_vllm_wheel(venv_dir: Path) -> None:
+    python_bin = venv_dir / "bin" / "python"
+    if vllm_installed(python_bin):
+        return
+
     cuda_version = detect_cuda_version()
     cuda_major, cuda_minor = cuda_version.split(".")
     cuda_compact = int(cuda_major) * 10 + int(cuda_minor)
@@ -344,7 +359,21 @@ def install_vllm_wheel(venv_dir: Path) -> None:
             f"Checked: {wheel_url}"
         )
 
-    python_bin = venv_dir / "bin" / "python"
+    uv = shutil.which("uv")
+    if uv:
+        run(
+            [
+                uv,
+                "pip",
+                "install",
+                "--python",
+                str(python_bin),
+                wheel_url,
+                "--extra-index-url",
+                f"https://download.pytorch.org/whl/cu{cuda_compact}",
+            ]
+        )
+        return
     run(
         [
             str(python_bin),
@@ -370,6 +399,14 @@ def detect_cuda_version() -> str:
         if version:
             return version
     raise RuntimeError("Unable to detect CUDA version. Ensure nvcc or nvidia-smi is available.")
+
+
+def vllm_installed(python_bin: Path) -> bool:
+    try:
+        run([str(python_bin), "-c", "import vllm"], capture=True)
+        return True
+    except RuntimeError:
+        return False
 
 
 def parse_nvcc_version(output: str) -> str | None:
@@ -528,7 +565,16 @@ def write_systemd_service(path: str, content: str) -> None:
     if os.geteuid() == 0:
         Path(path).write_text(content, encoding="utf-8")
         return
-    run(["sudo", "tee", path], input_text=content)
+    result = subprocess.run(
+        ["sudo", "tee", path],
+        input=content,
+        text=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to write systemd service: {path}")
 
 
 def remove_systemd_service(path: str) -> None:
