@@ -103,17 +103,34 @@ vllm_cluster_manager client down
 ```
 
 ## CLI flags
-**Host**
-| Command | Flags |
-| --- | --- |
-| `host up` | `--service`, `--host_ip`, `--host_frontend_port`, `--host_discover_port`, `--host_backend_port`, `--postgres_host`, `--postgres_port`, `--postgres_db`, `--postgres_user`, `--postgres_password` |
-| `host down` | None |
+**Host (`host up`)**
 
-**Client**
-| Command | Flags |
-| --- | --- |
-| `client up` | `--service`, `--host_ip`, `--host_discover_port`, `--client_host`, `--client_port`, `--node_name` |
-| `client down` | None |
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--service` | `false` | Run as a persistent systemd service. |
+| `--host_ip` | `127.0.0.1` | Bind host for the backend API and UI backend target. |
+| `--host_frontend_port` | `5173` | UI port. |
+| `--host_discover_port` | `47528` | Discovery port used by clients. |
+| `--host_backend_port` | `8000` | Backend API port. |
+| `--postgres_host` | `127.0.0.1` | Postgres host. |
+| `--postgres_port` | `5757` | Postgres port. |
+| `--postgres_db` | `vllm_admin` | Postgres database name. |
+| `--postgres_user` | `vllm` | Postgres user. |
+| `--postgres_password` | `change-me` | Postgres password. |
+
+**Client (`client up`)**
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--service` | `false` | Run as a persistent systemd service. |
+| `--host_ip` | `127.0.0.1` | Host IP for discovery. |
+| `--host_discover_port` | `47528` | Host discovery port. |
+| `--client_host` | `0.0.0.0` | Client bind host. |
+| `--client_port` | `9000` | Client bind port. |
+| `--node_name` | `<hostname>` | Node name used for registration. |
+
+**Down commands**
+- `host down` and `client down` stop foreground processes and remove/stop systemd services if present.
 
 ## Configuration files
 The CLI writes service-specific env files under `~/.local/share/vllm_cluster_manager`:
