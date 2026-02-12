@@ -65,41 +65,41 @@ source .venv/bin/activate
 ```
 
 ```bash
-uv pip install vllm_cluster_manager
+uv pip install vllm-cluster-manager
 ```
 
 ## Start the host
 Foreground (no sudo):
 ```bash
-vllm_cluster_manager host up --host_ip 127.0.0.1 --host_frontend_port 5173 --host_discover_port 47528
+vllm-cluster-manager host up --host-ip 127.0.0.1 --host-frontend-port 5173 --host-discover-port 47528
 ```
 
 Persistent service (systemd):
 ```bash
-vllm_cluster_manager host up --service --host_ip 127.0.0.1 --host_frontend_port 5173 --host_discover_port 47528
+vllm-cluster-manager host up --service --host-ip 127.0.0.1 --host-frontend-port 5173 --host-discover-port 47528
 ```
 
-`--host_discover_port` sets the discovery port used for clients. Use `--host_backend_port` to override the backend API port (default 8000).
+`--host-discover-port` sets the discovery port used for clients. Use `--host-backend-port` to override the backend API port (default 8000).
 
 Stop host services (foreground or systemd):
 ```bash
-vllm_cluster_manager host down
+vllm-cluster-manager host down
 ```
 
 ## Start a client
 Foreground (no sudo):
 ```bash
-vllm_cluster_manager client up --host_ip 127.0.0.1 --host_discover_port 47528
+vllm-cluster-manager client up --host-ip 127.0.0.1 --host-discover-port 47528
 ```
 
 Persistent service (systemd):
 ```bash
-vllm_cluster_manager client up --service --host_ip 127.0.0.1 --host_discover_port 47528
+vllm-cluster-manager client up --service --host-ip 127.0.0.1 --host-discover-port 47528
 ```
 
 Stop client services (foreground or systemd):
 ```bash
-vllm_cluster_manager client down
+vllm-cluster-manager client down
 ```
 
 ## CLI flags
@@ -108,26 +108,26 @@ vllm_cluster_manager client down
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--service` | `false` | Run as a persistent systemd service. |
-| `--host_ip` | `127.0.0.1` | Bind host for the backend API and UI backend target. |
-| `--host_frontend_port` | `5173` | UI port. |
-| `--host_discover_port` | `47528` | Discovery port used by clients. |
-| `--host_backend_port` | `8000` | Backend API port. |
-| `--postgres_host` | `127.0.0.1` | Postgres host. |
-| `--postgres_port` | `5757` | Postgres port. |
-| `--postgres_db` | `vllm_admin` | Postgres database name. |
-| `--postgres_user` | `vllm` | Postgres user. |
-| `--postgres_password` | `change-me` | Postgres password. |
+| `--host-ip` | `127.0.0.1` | Bind host for the backend API and UI backend target. |
+| `--host-frontend-port` | `5173` | UI port. |
+| `--host-discover-port` | `47528` | Discovery port used by clients. |
+| `--host-backend-port` | `8000` | Backend API port. |
+| `--postgres-host` | `127.0.0.1` | Postgres host. |
+| `--postgres-port` | `5757` | Postgres port. |
+| `--postgres-db` | `vllm_admin` | Postgres database name. |
+| `--postgres-user` | `vllm` | Postgres user. |
+| `--postgres-password` | `change-me` | Postgres password. |
 
 **Client (`client up`)**
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--service` | `false` | Run as a persistent systemd service. |
-| `--host_ip` | `127.0.0.1` | Host IP for discovery. |
-| `--host_discover_port` | `47528` | Host discovery port. |
-| `--client_host` | `0.0.0.0` | Client bind host. |
-| `--client_port` | `9000` | Client bind port. |
-| `--node_name` | `<hostname>` | Node name used for registration. |
+| `--host-ip` | `127.0.0.1` | Host IP for discovery. |
+| `--host-discover-port` | `47528` | Host discovery port. |
+| `--client-host` | `0.0.0.0` | Client bind host. |
+| `--client-port` | `9000` | Client bind port. |
+| `--node-name` | `<hostname>` | Node name used for registration. |
 
 **Down commands**
 - `host down` and `client down` stop foreground processes and remove/stop systemd services if present.
@@ -143,10 +143,10 @@ If you edit any env file, restart the affected service.
 
 ## Firewall rules
 Allow these network paths (adjust ports to your flags):
-- User → Host UI: TCP `host_frontend_port` (default 5173).
-- UI/Browser → Host API: TCP `host_backend_port` (default 8000).
-- Clients → Host discovery port: TCP `host_discover_port` (default 47528).
-- Host → Client agents: TCP `client_port` (default 9000).
+- User → Host UI: TCP `host-frontend-port` (default 5173).
+- UI/Browser → Host API: TCP `host-backend-port` (default 8000).
+- Clients → Host discovery port: TCP `host-discover-port` (default 47528).
+- Host → Client agents: TCP `client-port` (default 9000).
 
 ## Data persistence
 By default, shutting down the host (`host down` or stopping the systemd infra unit) runs `docker compose down -v`, which wipes the Postgres volume. Remove `-v` in code if you want to keep data.

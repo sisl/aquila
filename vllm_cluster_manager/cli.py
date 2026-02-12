@@ -54,8 +54,9 @@ class ClientConfig:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="vllm_cluster_manager",
+        prog="vllm-cluster-manager",
         description="vLLM Cluster Manager CLI",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -63,16 +64,16 @@ def main() -> None:
     host_subparsers = host_parser.add_subparsers(dest="action", required=True)
 
     host_up = host_subparsers.add_parser("up", help="Install and start host services")
-    host_up.add_argument("--service", action="store_true", help="Run as a systemd service")
-    host_up.add_argument("--host_ip", default="127.0.0.1")
-    host_up.add_argument("--host_frontend_port", type=int, default=DEFAULT_FRONTEND_PORT)
-    host_up.add_argument("--host_discover_port", type=int, default=None)
-    host_up.add_argument("--host_backend_port", type=int, default=DEFAULT_ADMIN_API_PORT)
-    host_up.add_argument("--postgres_host", default=DEFAULT_POSTGRES_HOST)
-    host_up.add_argument("--postgres_port", type=int, default=DEFAULT_POSTGRES_PORT)
-    host_up.add_argument("--postgres_db", default=DEFAULT_POSTGRES_DB)
-    host_up.add_argument("--postgres_user", default=DEFAULT_POSTGRES_USER)
-    host_up.add_argument("--postgres_password", default=DEFAULT_POSTGRES_PASSWORD)
+    host_up.add_argument("--service", action="store_true", help="Run as a systemd service.")
+    host_up.add_argument("--host-ip", default="127.0.0.1", help="Bind host for the backend API and UI backend target.")
+    host_up.add_argument("--host-frontend-port", type=int, default=DEFAULT_FRONTEND_PORT, help="UI port.")
+    host_up.add_argument("--host-discover-port", type=int, default=DEFAULT_CONSUL_PORT, help="Discovery port used by clients.")
+    host_up.add_argument("--host-backend-port", type=int, default=DEFAULT_ADMIN_API_PORT, help="Backend API port.")
+    host_up.add_argument("--postgres-host", default=DEFAULT_POSTGRES_HOST, help="Postgres host.")
+    host_up.add_argument("--postgres-port", type=int, default=DEFAULT_POSTGRES_PORT, help="Postgres port.")
+    host_up.add_argument("--postgres-db", default=DEFAULT_POSTGRES_DB, help="Postgres database name.")
+    host_up.add_argument("--postgres-user", default=DEFAULT_POSTGRES_USER, help="Postgres user.")
+    host_up.add_argument("--postgres-password", default=DEFAULT_POSTGRES_PASSWORD, help="Postgres password.")
 
     host_down = host_subparsers.add_parser("down", help="Stop host services")
 
@@ -80,12 +81,12 @@ def main() -> None:
     client_subparsers = client_parser.add_subparsers(dest="action", required=True)
 
     client_up = client_subparsers.add_parser("up", help="Install and start the client")
-    client_up.add_argument("--service", action="store_true", help="Run as a systemd service")
-    client_up.add_argument("--host_ip", default="127.0.0.1")
-    client_up.add_argument("--host_discover_port", type=int, default=None)
-    client_up.add_argument("--client_host", default=DEFAULT_CLIENT_HOST)
-    client_up.add_argument("--client_port", type=int, default=DEFAULT_CLIENT_PORT)
-    client_up.add_argument("--node_name", default=socket.gethostname())
+    client_up.add_argument("--service", action="store_true", help="Run as a systemd service.")
+    client_up.add_argument("--host-ip", default="127.0.0.1", help="Host IP for discovery.")
+    client_up.add_argument("--host-discover-port", type=int, default=DEFAULT_CONSUL_PORT, help="Host discovery port.")
+    client_up.add_argument("--client-host", default=DEFAULT_CLIENT_HOST, help="Client bind host.")
+    client_up.add_argument("--client-port", type=int, default=DEFAULT_CLIENT_PORT, help="Client bind port.")
+    client_up.add_argument("--node-name", default=socket.gethostname(), help="Node name used for registration.")
 
     client_down = client_subparsers.add_parser("down", help="Stop the client")
 
@@ -113,7 +114,7 @@ def main() -> None:
 
 
 def build_host_config(args: argparse.Namespace) -> HostConfig:
-    consul_port = args.host_discover_port or DEFAULT_CONSUL_PORT
+    consul_port = args.host_discover_port
     return HostConfig(
         host_ip=args.host_ip,
         frontend_port=args.host_frontend_port,
@@ -128,7 +129,7 @@ def build_host_config(args: argparse.Namespace) -> HostConfig:
 
 
 def build_client_config(args: argparse.Namespace) -> ClientConfig:
-    consul_port = args.host_discover_port or DEFAULT_CONSUL_PORT
+    consul_port = args.host_discover_port
     return ClientConfig(
         host_ip=args.host_ip,
         consul_port=consul_port,

@@ -58,13 +58,19 @@ export function Dashboard() {
   const nodesQuery = useQuery({
     queryKey: ["nodes"],
     queryFn: fetchNodes,
-    refetchInterval: 5000
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+    staleTime: 4000,
+    placeholderData: (previous) => previous
   });
 
   const deploymentsQuery = useQuery({
     queryKey: ["deployments"],
     queryFn: fetchDeployments,
-    refetchInterval: 5000
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+    staleTime: 4000,
+    placeholderData: (previous) => previous
   });
 
   const configsQuery = useQuery({
@@ -76,7 +82,10 @@ export function Dashboard() {
     queryKey: ["port-check", nodeId, port],
     queryFn: () => checkNodePort(Number(nodeId), port),
     enabled: nodeId !== "" && !Number.isNaN(Number(nodeId)) && port > 0,
-    refetchInterval: 5000
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+    staleTime: 4000,
+    placeholderData: (previous) => previous
   });
 
   const startMutation = useMutation({
@@ -135,7 +144,10 @@ export function Dashboard() {
     queryKey: ["deployment-logs", logsDeploymentId],
     queryFn: () => fetchDeploymentLogs(logsDeploymentId ?? 0, 400),
     enabled: logsDeploymentId !== null,
-    refetchInterval: logsDeploymentId !== null ? 2000 : false
+    refetchInterval: logsDeploymentId !== null ? 2000 : false,
+    refetchIntervalInBackground: true,
+    staleTime: 1500,
+    placeholderData: (previous) => previous
   });
 
   const canDeploy = nodeId !== "" && modelName.trim().length > 0 && !Number.isNaN(Number(nodeId));

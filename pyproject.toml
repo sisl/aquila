@@ -3,15 +3,17 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vllm_cluster_manager"
-version = "0.1.0"
+name = "vllm-cluster-manager"
+version = "0.1.2"
 description = "Admin dashboard + satellite clients for multi-model vLLM deployments"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "MIT"}
+authors = [{name = "Marc Schlichting", email="mschl@stanford.edu"}]
+urls = {Hompage="https://github.com/sisl/VLLMClusterManager"}
 
 [project.scripts]
-vllm_cluster_manager = "vllm_cluster_manager.cli:main"
+vllm-cluster-manager = "vllm_cluster_manager.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

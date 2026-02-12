@@ -5,7 +5,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Dashboard } from "./pages/Dashboard";
 import { theme } from "./styles/theme";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      retry: 1
+    }
+  }
+});
 
 export default function App() {
   return (
