@@ -1,5 +1,6 @@
 import argparse
 import json
+import hashlib
 import os
 import platform
 import shutil
@@ -62,6 +63,7 @@ def main() -> None:
     host_subparsers = host_parser.add_subparsers(dest="action", required=True)
 
     host_up = host_subparsers.add_parser("up", help="Install and start host services")
+    host_up.add_argument("--service", action="store_true", help="Run as a systemd service")
     host_up.add_argument("--host_ip", default="127.0.0.1")
     host_up.add_argument("--host_frontend_port", type=int, default=DEFAULT_FRONTEND_PORT)
     host_up.add_argument("--host_discover_port", type=int, default=None)
@@ -74,25 +76,11 @@ def main() -> None:
 
     host_down = host_subparsers.add_parser("down", help="Stop host services")
 
-    host_service = host_subparsers.add_parser("service", help="Manage host systemd services")
-    host_service_sub = host_service.add_subparsers(dest="service_action", required=True)
-    host_service_install = host_service_sub.add_parser("install", help="Install systemd services")
-    host_service_install.add_argument("--host_ip", default="127.0.0.1")
-    host_service_install.add_argument("--host_frontend_port", type=int, default=DEFAULT_FRONTEND_PORT)
-    host_service_install.add_argument("--host_discover_port", type=int, default=None)
-    host_service_install.add_argument("--host_backend_port", type=int, default=DEFAULT_ADMIN_API_PORT)
-    host_service_install.add_argument("--postgres_host", default=DEFAULT_POSTGRES_HOST)
-    host_service_install.add_argument("--postgres_port", type=int, default=DEFAULT_POSTGRES_PORT)
-    host_service_install.add_argument("--postgres_db", default=DEFAULT_POSTGRES_DB)
-    host_service_install.add_argument("--postgres_user", default=DEFAULT_POSTGRES_USER)
-    host_service_install.add_argument("--postgres_password", default=DEFAULT_POSTGRES_PASSWORD)
-
-    host_service_remove = host_service_sub.add_parser("remove", help="Remove systemd services")
-
     client_parser = subparsers.add_parser("client", help="Manage a client node")
     client_subparsers = client_parser.add_subparsers(dest="action", required=True)
 
     client_up = client_subparsers.add_parser("up", help="Install and start the client")
+    client_up.add_argument("--service", action="store_true", help="Run as a systemd service")
     client_up.add_argument("--host_ip", default="127.0.0.1")
     client_up.add_argument("--host_discover_port", type=int, default=None)
     client_up.add_argument("--client_host", default=DEFAULT_CLIENT_HOST)
@@ -101,52 +89,25 @@ def main() -> None:
 
     client_down = client_subparsers.add_parser("down", help="Stop the client")
 
-    client_service = client_subparsers.add_parser("service", help="Manage client systemd service")
-    client_service_sub = client_service.add_subparsers(dest="service_action", required=True)
-    client_service_install = client_service_sub.add_parser("install", help="Install systemd service")
-    client_service_install.add_argument("--host_ip", default="127.0.0.1")
-    client_service_install.add_argument("--host_discover_port", type=int, default=None)
-    client_service_install.add_argument("--client_host", default=DEFAULT_CLIENT_HOST)
-    client_service_install.add_argument("--client_port", type=int, default=DEFAULT_CLIENT_PORT)
-    client_service_install.add_argument("--node_name", default=socket.gethostname())
-
-    client_service_remove = client_service_sub.add_parser("remove", help="Remove systemd service")
-
     args = parser.parse_args()
 
     if args.command == "host":
         if args.action == "up":
             host_config = build_host_config(args)
-            run_host_up(host_config)
+            run_host_up(host_config, use_service=args.service)
             return
         if args.action == "down":
             run_host_down()
             return
-        if args.action == "service":
-            if args.service_action == "install":
-                host_config = build_host_config(args)
-                install_host_service(host_config)
-                return
-            if args.service_action == "remove":
-                remove_host_service()
-                return
 
     if args.command == "client":
         if args.action == "up":
             client_config = build_client_config(args)
-            run_client_up(client_config)
+            run_client_up(client_config, use_service=args.service)
             return
         if args.action == "down":
             run_client_down()
             return
-        if args.action == "service":
-            if args.service_action == "install":
-                client_config = build_client_config(args)
-                install_client_service(client_config)
-                return
-            if args.service_action == "remove":
-                remove_client_service()
-                return
 
     parser.error("Unknown command")
 
@@ -177,11 +138,33 @@ def build_client_config(args: argparse.Namespace) -> ClientConfig:
     )
 
 
-def run_host_up(config: HostConfig) -> None:
+def run_host_up(config: HostConfig, use_service: bool) -> None:
     runtime_dir = ensure_runtime_dir("host")
+    print("Host configuration:")
+    print(format_kv(
+        {
+            "host_ip": config.host_ip,
+            "host_frontend_port": config.frontend_port,
+            "host_discover_port": config.consul_port,
+            "host_backend_port": config.admin_api_port,
+            "postgres_host": config.postgres_host,
+            "postgres_port": config.postgres_port,
+            "postgres_db": config.postgres_db,
+            "postgres_user": config.postgres_user,
+            "postgres_password": config.postgres_password,
+            "service_mode": use_service,
+        }
+    ))
     write_host_env_files(runtime_dir, config)
     ensure_backend_venv(runtime_dir)
     ensure_frontend_deps(runtime_dir)
+    if use_service:
+        install_host_service(config)
+        print(f"Host services: {HOST_SERVICE_NAME}-infra.service, {HOST_SERVICE_NAME}-backend.service, {HOST_SERVICE_NAME}-frontend.service")
+        systemctl(["enable", "--now", f"{HOST_SERVICE_NAME}-infra.service"])
+        systemctl(["enable", "--now", f"{HOST_SERVICE_NAME}-backend.service"])
+        systemctl(["enable", "--now", f"{HOST_SERVICE_NAME}-frontend.service"])
+        return
     start_infra(runtime_dir)
     backend_env = load_env_file(runtime_dir / "backend" / ".env")
     frontend_env = load_env_file(runtime_dir / "frontend" / ".env")
@@ -234,15 +217,31 @@ def run_host_down() -> None:
         stop_infra(runtime_dir)
         stop_pid(runtime_dir / ".backend.pid")
         stop_pid(runtime_dir / ".frontend.pid")
+    remove_host_service()
 
 
-def run_client_up(config: ClientConfig) -> None:
+def run_client_up(config: ClientConfig, use_service: bool) -> None:
     runtime_dir = ensure_runtime_dir("client")
+    print("Client configuration:")
+    print(format_kv(
+        {
+            "host_ip": config.host_ip,
+            "host_discover_port": config.consul_port,
+            "client_host": config.client_host,
+            "client_port": config.client_port,
+            "node_name": config.node_name,
+            "service_mode": use_service,
+        }
+    ))
     write_client_env_file(runtime_dir, config)
     ensure_client_venv(runtime_dir)
+    if use_service:
+        install_client_service(config)
+        print(f"Client service: {CLIENT_SERVICE_NAME}.service")
+        systemctl(["enable", "--now", f"{CLIENT_SERVICE_NAME}.service"])
+        return
     client_env = load_env_file(runtime_dir / ".env")
     python_bin = runtime_dir / ".venv" / "bin" / "python"
-    print(f"Client service: {CLIENT_SERVICE_NAME}.service")
     print(f"Client bind: {config.client_host}:{config.client_port}")
     print(f"Host port: {config.host_ip}:{config.consul_port}")
     run([str(python_bin), "-m", "app.main"], cwd=runtime_dir, env=merge_env(client_env))
@@ -252,6 +251,7 @@ def run_client_down() -> None:
     runtime_dir = runtime_dir_path("client")
     if runtime_dir:
         stop_pid(runtime_dir / ".client.pid")
+    remove_client_service()
 
 
 def ensure_runtime_dir(kind: str) -> Path:
@@ -332,7 +332,7 @@ def ensure_backend_venv(runtime_dir: Path) -> None:
     backend_dir = runtime_dir / "backend"
     venv_dir = backend_dir / ".venv"
     requirements = backend_dir / "requirements.txt"
-    ensure_venv(venv_dir, requirements)
+    ensure_venv(venv_dir, requirements, backend_dir / ".deps.sha256")
 
 
 def ensure_client_venv(runtime_dir: Path) -> None:
@@ -340,14 +340,18 @@ def ensure_client_venv(runtime_dir: Path) -> None:
     requirements = runtime_dir / "requirements.txt"
     if not venv_dir.exists():
         create_venv(venv_dir)
-    install_requirements_without_vllm(venv_dir, requirements)
+    if needs_install(requirements, runtime_dir / ".deps.sha256"):
+        install_requirements_without_vllm(venv_dir, requirements)
+        write_hash_marker(requirements, runtime_dir / ".deps.sha256")
     install_vllm_wheel(venv_dir)
 
 
-def ensure_venv(venv_dir: Path, requirements: Path) -> None:
+def ensure_venv(venv_dir: Path, requirements: Path, marker: Path) -> None:
     if not venv_dir.exists():
         create_venv(venv_dir)
-    install_requirements(venv_dir, requirements)
+    if needs_install(requirements, marker):
+        install_requirements(venv_dir, requirements)
+        write_hash_marker(requirements, marker)
 
 
 def create_venv(venv_dir: Path) -> None:
@@ -494,7 +498,15 @@ def ensure_frontend_deps(runtime_dir: Path) -> None:
     npm = shutil.which("npm")
     if not npm:
         raise RuntimeError("npm is required to install frontend dependencies.")
-    run([npm, "install"], cwd=runtime_dir / "frontend")
+    frontend_dir = runtime_dir / "frontend"
+    lockfile = frontend_dir / "package-lock.json"
+    manifest = lockfile if lockfile.exists() else frontend_dir / "package.json"
+    marker = frontend_dir / ".deps.sha256"
+    node_modules = frontend_dir / "node_modules"
+    if node_modules.exists() and not needs_install(manifest, marker):
+        return
+    run([npm, "install"], cwd=frontend_dir)
+    write_hash_marker(manifest, marker)
 
 
 def start_infra(runtime_dir: Path) -> None:
@@ -505,16 +517,34 @@ def start_infra(runtime_dir: Path) -> None:
 
 def stop_infra(runtime_dir: Path) -> None:
     compose_cmd = detect_compose_cmd()
-    cmd = compose_cmd.split() + ["down"]
+    cmd = compose_cmd.split() + ["down", "-v"]
     run(cmd, cwd=runtime_dir)
+
+
+def compose_service_cmd(args: str) -> str:
+    return (
+        '/bin/sh -c "if docker compose version >/dev/null 2>&1; then '
+        f'docker compose {args}; '
+        'elif command -v docker-compose >/dev/null 2>&1; then '
+        f'docker-compose {args}; '
+        'else echo \\"Docker Compose not found\\" >&2; exit 1; fi"'
+    )
 
 
 def install_host_service(config: HostConfig) -> None:
     runtime_dir = ensure_runtime_dir("host")
-    compose_cmd = detect_compose_cmd()
+    compose_start = compose_service_cmd("up -d")
+    compose_stop = compose_service_cmd("down -v")
     npm_path = shutil.which("npm")
+    node_path = shutil.which("node")
     if not npm_path:
         raise RuntimeError("npm is required to run the frontend service.")
+    if not node_path:
+        raise RuntimeError("node is required to run the frontend service.")
+    node_bin_dir = str(Path(node_path).parent)
+    npm_bin_dir = str(Path(npm_path).parent)
+    system_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    frontend_path = f"{node_bin_dir}:{npm_bin_dir}:{system_path}"
 
     infra_service = textwrap.dedent(
         f"""
@@ -527,8 +557,8 @@ def install_host_service(config: HostConfig) -> None:
         Type=oneshot
         WorkingDirectory={runtime_dir}
         EnvironmentFile={runtime_dir}/.env
-        ExecStart={compose_cmd} up -d
-        ExecStop={compose_cmd} down
+        ExecStart={compose_start}
+        ExecStop={compose_stop}
         RemainAfterExit=yes
 
         [Install]
@@ -567,6 +597,7 @@ def install_host_service(config: HostConfig) -> None:
         Type=simple
         WorkingDirectory={runtime_dir}/frontend
         EnvironmentFile={runtime_dir}/frontend/.env
+        Environment=PATH={frontend_path}
         ExecStart={npm_path} run dev -- --host ${{FRONTEND_HOST}} --port ${{FRONTEND_PORT}}
         Restart=always
         RestartSec=2
@@ -583,6 +614,12 @@ def install_host_service(config: HostConfig) -> None:
 
 
 def remove_host_service() -> None:
+    if systemd_unit_exists(f"{HOST_SERVICE_NAME}-frontend.service"):
+        systemctl(["disable", "--now", f"{HOST_SERVICE_NAME}-frontend.service"])
+    if systemd_unit_exists(f"{HOST_SERVICE_NAME}-backend.service"):
+        systemctl(["disable", "--now", f"{HOST_SERVICE_NAME}-backend.service"])
+    if systemd_unit_exists(f"{HOST_SERVICE_NAME}-infra.service"):
+        systemctl(["disable", "--now", f"{HOST_SERVICE_NAME}-infra.service"])
     remove_systemd_service(f"/etc/systemd/system/{HOST_SERVICE_NAME}-frontend.service")
     remove_systemd_service(f"/etc/systemd/system/{HOST_SERVICE_NAME}-backend.service")
     remove_systemd_service(f"/etc/systemd/system/{HOST_SERVICE_NAME}-infra.service")
@@ -615,6 +652,8 @@ def install_client_service(config: ClientConfig) -> None:
 
 
 def remove_client_service() -> None:
+    if systemd_unit_exists(f"{CLIENT_SERVICE_NAME}.service"):
+        systemctl(["disable", "--now", f"{CLIENT_SERVICE_NAME}.service"])
     remove_systemd_service(f"/etc/systemd/system/{CLIENT_SERVICE_NAME}.service")
     systemctl(["daemon-reload"])
 
@@ -652,6 +691,32 @@ def merge_env(extra: dict[str, str]) -> dict[str, str]:
     env = os.environ.copy()
     env.update(extra)
     return env
+
+
+def file_sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8192), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def needs_install(requirements: Path, marker: Path) -> bool:
+    if not requirements.exists():
+        return False
+    if not marker.exists():
+        return True
+    current = file_sha256(requirements)
+    saved = marker.read_text(encoding="utf-8").strip()
+    return current != saved
+
+
+def write_hash_marker(requirements: Path, marker: Path) -> None:
+    marker.write_text(file_sha256(requirements) + "\n", encoding="utf-8")
+
+
+def format_kv(items: dict[str, object]) -> str:
+    return "\n".join(f"  {key}={value}" for key, value in items.items())
 
 
 def write_pid(path: Path, pid: int) -> None:
@@ -713,10 +778,18 @@ def systemctl(args: Iterable[str]) -> None:
     run(cmd)
 
 
+def systemd_unit_exists(unit: str) -> bool:
+    cmd = ["systemctl", "list-unit-files", unit]
+    if os.geteuid() != 0:
+        cmd.insert(0, "sudo")
+    try:
+        output = run(cmd, capture=True)
+    except RuntimeError:
+        return False
+    return unit in output
+
+
 def detect_compose_cmd() -> str:
-    docker_compose = shutil.which("docker-compose")
-    if docker_compose:
-        return docker_compose
     docker = shutil.which("docker")
     if docker:
         try:
@@ -724,6 +797,9 @@ def detect_compose_cmd() -> str:
             return f"{docker} compose"
         except RuntimeError:
             pass
+    docker_compose = shutil.which("docker-compose")
+    if docker_compose:
+        return docker_compose
     raise RuntimeError("Docker Compose not found. Install docker compose or docker-compose.")
 
 

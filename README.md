@@ -6,9 +6,7 @@ Admin dashboard + satellite clients for multi-model vLLM deployments.
 
 Use this UI to deploy vLLM `serve` endpoints across a cluster so you can stand up multiple LLM servers (same or different models) with a few clicks. It is ideal for research labs or small business environments that need repeatable, multi-endpoint deployments without building a full MLOps stack.
 
-Deployment is as simple as running the CLI on the host and on each client, with automatic client discovery via Consul.
-
-Use the host UI to register GPU nodes, define model configurations, launch/stop workloads, and monitor health and logs in real time. Systemd services are enabled on install, so they automatically restart after a system reboot.
+Deployment is as simple as running the CLI on the host and on each client, with automatic client discovery. You can run in the foreground or with `--service` to install persistent systemd services.
 
 ## Tested hardware/software
 - GPUs: NVIDIA H100, NVIDIA A100, NVIDIA L40, NVIDIA DGX Spark (GB10), NVIDIA RTX 4090.
@@ -35,12 +33,29 @@ Define and manage model settings (weights, runtime settings, resource usage) fro
   - **Infra**: Postgres + Consul (service discovery) via Docker Compose.
   - **Backend**: FastAPI service for orchestration and persistence.
   - **Frontend**: React + Vite admin dashboard.
-- **Client**: Python agent running on GPU nodes; registers with Consul and runs vLLM workloads.
+- **Client**: Python agent running on GPU nodes; registers with the host and runs vLLM workloads.
 
 ## Repo layout
 - `host/` Admin services (infra, backend, frontend)
 - `client/` Satellite node agent
 - `img/` Screenshots used in documentation
+
+## Prerequisites
+Host:
+- Docker + Docker Compose plugin.
+- Node.js + npm.
+- Python 3.12.
+
+Client:
+- NVIDIA GPU with CUDA.
+- `nvcc` or `nvidia-smi` on PATH (used to detect CUDA version).
+- Python 3.12 + `python3.12-dev` and `build-essential` (Debian/Ubuntu).
+
+On Debian/Ubuntu:
+```bash
+sudo apt update
+sudo apt install -y python3.12-dev build-essential
+```
 
 ## Install (pip)
 Create and activate a Python 3.12 virtual environment:
@@ -54,39 +69,70 @@ uv pip install vllm_cluster_manager
 ```
 
 ## Start the host
+Foreground (no sudo):
 ```bash
 vllm_cluster_manager host up --host_ip 127.0.0.1 --host_frontend_port 5173 --host_discover_port 47528
 ```
-`--host_discover_port` sets the discovery port used for clients. Use `--host_backend_port` to override the backend API port (default 8000).
-This runs in the foreground without sudo; use `host service install` for a persistent systemd service.
 
-**Host command flags**
-| Command | Flags |
-| --- | --- |
-| `host up` | `--host_ip`, `--host_frontend_port`, `--host_discover_port`, `--host_backend_port`, `--postgres_host`, `--postgres_port`, `--postgres_db`, `--postgres_user`, `--postgres_password` |
-| `host down` | None |
-| `host service install` | Same as `host up` |
-| `host service remove` | None |
+Persistent service (systemd):
+```bash
+vllm_cluster_manager host up --service --host_ip 127.0.0.1 --host_frontend_port 5173 --host_discover_port 47528
+```
+
+`--host_discover_port` sets the discovery port used for clients. Use `--host_backend_port` to override the backend API port (default 8000).
+
+Stop host services (foreground or systemd):
+```bash
+vllm_cluster_manager host down
+```
 
 ## Start a client
+Foreground (no sudo):
 ```bash
 vllm_cluster_manager client up --host_ip 127.0.0.1 --host_discover_port 47528
 ```
-This runs in the foreground without sudo; use `client service install` for a persistent systemd service.
 
-**Client command flags**
-| Command | Flags |
-| --- | --- |
-| `client up` | `--host_ip`, `--host_discover_port`, `--client_host`, `--client_port`, `--node_name` |
-| `client down` | None |
-| `client service install` | Same as `client up` |
-| `client service remove` | None |
-
-To stop services:
+Persistent service (systemd):
 ```bash
-vllm_cluster_manager host down
+vllm_cluster_manager client up --service --host_ip 127.0.0.1 --host_discover_port 47528
+```
+
+Stop client services (foreground or systemd):
+```bash
 vllm_cluster_manager client down
 ```
+
+## CLI flags
+**Host**
+| Command | Flags |
+| --- | --- |
+| `host up` | `--service`, `--host_ip`, `--host_frontend_port`, `--host_discover_port`, `--host_backend_port`, `--postgres_host`, `--postgres_port`, `--postgres_db`, `--postgres_user`, `--postgres_password` |
+| `host down` | None |
+
+**Client**
+| Command | Flags |
+| --- | --- |
+| `client up` | `--service`, `--host_ip`, `--host_discover_port`, `--client_host`, `--client_port`, `--node_name` |
+| `client down` | None |
+
+## Configuration files
+The CLI writes service-specific env files under `~/.local/share/vllm_cluster_manager`:
+- `host/.env` (Docker compose: Postgres + discovery service)
+- `host/backend/.env` (API service)
+- `host/frontend/.env` (UI)
+- `client/.env` (client agent)
+
+If you edit any env file, restart the affected service.
+
+## Firewall rules
+Allow these network paths (adjust ports to your flags):
+- User → Host UI: TCP `host_frontend_port` (default 5173).
+- UI/Browser → Host API: TCP `host_backend_port` (default 8000).
+- Clients → Host discovery port: TCP `host_discover_port` (default 47528).
+- Host → Client agents: TCP `client_port` (default 9000).
+
+## Data persistence
+By default, shutting down the host (`host down` or stopping the systemd infra unit) runs `docker compose down -v`, which wipes the Postgres volume. Remove `-v` in code if you want to keep data.
 
 ## Quick start (dev)
 1) Start infrastructure:
@@ -118,23 +164,6 @@ npm run dev
 ```
 
 Open the UI at `http://localhost:5173` by default (see `host/frontend/.env`).
-See `host/README.md` and `client/README.md` for detailed configuration and troubleshooting.
-
-## Configuration files
-The CLI writes service-specific env files under `~/.local/share/vllm_cluster_manager`:
-- `host/.env` (Docker compose: Postgres + Consul)
-- `host/backend/.env` (API service)
-- `host/frontend/.env` (UI)
-- `client/.env` (client agent)
-
-If you edit any env file, restart the affected service.
-
-## Firewall rules
-Allow these network paths (adjust ports to your flags):
-- User → Host UI: TCP `host_frontend_port` (default 5173).
-- UI/Browser → Host API: TCP `host_backend_port` (default 8000).
-- Clients → Host discovery port: TCP `host_discover_port` (default 47528).
-- Host → Client agents: TCP `client_port` (default 9000).
 
 ## Notes
 - The service registry is Consul (used for client discovery).
