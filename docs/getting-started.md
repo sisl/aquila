@@ -4,7 +4,7 @@ This guide takes you from a clean host to a working cluster with at least one cl
 
 ## Prerequisites
 Host:
-- Docker + Docker Compose plugin
+- Docker + Docker Compose plugin (configure the `docker` group so no sudo is required)
 - Node.js + npm
 - Python 3.12
 - `uv` (Python package manager)

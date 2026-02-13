@@ -11,7 +11,9 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     server: {
+      host: true,
       port: 5173,
+      allowedHosts: "all",
       proxy: {
         "/api": backendHttp,
         "/ws": {

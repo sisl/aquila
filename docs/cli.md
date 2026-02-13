@@ -48,7 +48,7 @@ vllm-cluster-manager client up --host-ip 127.0.0.1 --host-discover-port 47528 --
 ```
 
 ### Service mode
-Service mode writes systemd units and starts them:
+Service mode writes systemd unit files and enables them so they start automatically on boot:
 ```bash
 vllm-cluster-manager host up --service
 vllm-cluster-manager client up --service

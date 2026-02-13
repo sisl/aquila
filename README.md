@@ -46,9 +46,10 @@ Define and manage model settings (weights, runtime settings, resource usage) fro
 
 ## Prerequisites
 Host:
-- Docker + Docker Compose plugin.
+- Docker + Docker Compose plugin (configure the `docker` group so no sudo is required).
 - Node.js + npm.
 - Python 3.12.
+- `uv` (Python package manager).
 
 Client:
 - NVIDIA GPU with CUDA.
@@ -59,6 +60,11 @@ On Debian/Ubuntu:
 ```bash
 sudo apt update
 sudo apt install -y python3.12-dev build-essential
+```
+
+Install `uv` if you don't already have it:
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 ## Install (pip)
