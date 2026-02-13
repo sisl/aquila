@@ -7,11 +7,18 @@ Host:
 - Docker + Docker Compose plugin
 - Node.js + npm
 - Python 3.12
+- `uv` (Python package manager)
 
 Client:
 - NVIDIA GPU with CUDA
 - `nvcc` or `nvidia-smi` on PATH
 - Python 3.12 + `python3.12-dev` and `build-essential` (Debian/Ubuntu)
+- `uv` (Python package manager)
+
+Install `uv` if you don't already have it:
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
 On Debian/Ubuntu:
 ```bash
