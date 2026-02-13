@@ -16,11 +16,14 @@ theme:
     - content.tabs.link
   palette:
     - scheme: default
-      primary: blue
-      accent: teal
+      primary: custom
+      accent: custom
 
 plugins:
   - search
+  - mike:
+      version_selector: true
+      canonical_version: latest
 
 markdown_extensions:
   - admonition
@@ -30,9 +33,14 @@ markdown_extensions:
   - pymdownx.superfences
   - pymdownx.tabbed
 
+extra_css:
+  - styles/extra.css
+
 nav:
   - Overview: index.md
   - Getting Started: getting-started.md
   - CLI Reference: cli.md
   - Architecture: architecture.md
   - Operations: operations.md
+  - Troubleshooting: troubleshooting.md
+  - Versions: versions.md

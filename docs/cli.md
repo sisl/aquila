@@ -46,3 +46,13 @@ Launch a client node:
 ```bash
 vllm-cluster-manager client up --host-ip 127.0.0.1 --host-discover-port 47528 --node-name node-1
 ```
+
+### Service mode
+Service mode writes systemd units and starts them:
+```bash
+vllm-cluster-manager host up --service
+vllm-cluster-manager client up --service
+```
+
+!!! warning
+    Service mode requires systemd and appropriate permissions. Use `sudo` when needed.

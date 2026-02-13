@@ -3,13 +3,23 @@
 ## Overview
 vLLM Cluster Manager runs three host services and a client agent on each GPU node.
 
-Host services:
-- Infra: Postgres + Consul via Docker Compose
-- Backend: FastAPI orchestration API
-- Frontend: React + Vite admin dashboard
-
-Client agent:
-- Python service that registers with Consul and executes vLLM workloads
+<div class="grid-2">
+  <div>
+    <strong>Host services</strong>
+    <ul>
+      <li>Infra: Postgres + Consul via Docker Compose</li>
+      <li>Backend: FastAPI orchestration API</li>
+      <li>Frontend: React + Vite admin dashboard</li>
+    </ul>
+  </div>
+  <div>
+    <strong>Client agent</strong>
+    <ul>
+      <li>Python service that registers with Consul</li>
+      <li>Executes vLLM workloads on the node</li>
+    </ul>
+  </div>
+</div>
 
 ## Service discovery
 Consul provides service discovery so the UI and backend can list connected clients.
@@ -18,3 +28,12 @@ Consul provides service discovery so the UI and backend can list connected clien
 1. Client registers with Consul.
 2. Backend discovers clients and stores state in Postgres.
 3. UI calls the backend API and subscribes to WebSocket streams for logs and status.
+
+## Ports
+| Service | Default | Purpose |
+| --- | --- | --- |
+| Frontend | 5173 | Web UI (Vite dev server). |
+| Backend | 8000 | API + WebSockets. |
+| Consul | 47528 | Host port mapped to Consul HTTP API (container port 8500). |
+| Postgres | 5757 | Host port mapped to Postgres (container port 5432). |
+| Client | 9000 | Client agent HTTP server. |

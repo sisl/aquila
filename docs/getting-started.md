@@ -1,5 +1,7 @@
 # Getting Started
 
+This guide takes you from a clean host to a working cluster with at least one client.
+
 ## Prerequisites
 Host:
 - Docker + Docker Compose plugin
@@ -41,11 +43,6 @@ vllm-cluster-manager host up --service --host-ip 127.0.0.1 --host-frontend-port 
 
 `--host-discover-port` sets the discovery port used for clients. Use `--host-backend-port` to override the backend API port (default 8000).
 
-Stop host services (foreground or systemd):
-```bash
-vllm-cluster-manager host down
-```
-
 ## Start a client
 Foreground (no sudo):
 ```bash
@@ -57,7 +54,19 @@ Persistent service (systemd):
 vllm-cluster-manager client up --service --host-ip 127.0.0.1 --host-discover-port 47528
 ```
 
-Stop client services (foreground or systemd):
+!!! note
+    If the client cannot register, verify firewall rules and that the host is reachable from the client on the discovery port.
+
+## Stop services
 ```bash
+vllm-cluster-manager host down
 vllm-cluster-manager client down
 ```
+
+## Verify the UI
+Open the UI at `http://<host-ip>:<host-frontend-port>`.
+
+Common first-run checks:
+- The UI loads without a network error.
+- The host shows up as healthy.
+- The client appears under Nodes within ~30 seconds.

@@ -19,6 +19,22 @@ Allow these network paths (adjust ports to your flags):
 ## Data persistence
 By default, shutting down the host (`host down` or stopping the systemd infra unit) runs `docker compose down -v`, which wipes the Postgres volume. Remove `-v` in code if you want to keep data.
 
-## Troubleshooting
-- Missing CUDA detection: ensure `nvcc` or `nvidia-smi` is on PATH.
-- Frontend fails to start: verify Node.js and npm are installed.
+## Service management
+Systemd unit names (service mode):
+- `vllm-cluster-infra.service`
+- `vllm-cluster-backend.service`
+- `vllm-cluster-frontend.service`
+- `vllm-cluster-client.service`
+
+Restart flows:
+```bash
+sudo systemctl restart vllm-cluster-backend.service
+sudo systemctl restart vllm-cluster-frontend.service
+sudo systemctl restart vllm-cluster-client.service
+```
+
+## Host network setup
+If the host should be reachable from other machines, use a non-loopback `--host-ip` (for example the host's LAN IP) and ensure firewall rules allow inbound traffic.
+
+## GPU wheel selection
+The client bootstrapper detects CUDA from `nvcc` or `nvidia-smi` and installs a vLLM wheel that matches the detected version. If the wheel doesn't exist for your CUDA version, the install fails with a clear error.
