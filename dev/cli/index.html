@@ -742,7 +742,7 @@ vllm-cluster-manager<span class="w"> </span>client<span class="w"> </span>up<spa
 <div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>client<span class="w"> </span>up<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">47528</span><span class="w"> </span>--node-name<span class="w"> </span>node-1
 </code></pre></div></p>
 <h3 id="service-mode">Service mode</h3>
-<p>Service mode writes systemd units and starts them:
+<p>Service mode writes systemd unit files and enables them so they start automatically on boot:
 <div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>host<span class="w"> </span>up<span class="w"> </span>--service
 vllm-cluster-manager<span class="w"> </span>client<span class="w"> </span>up<span class="w"> </span>--service
 </code></pre></div></p>
