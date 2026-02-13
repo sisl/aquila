@@ -8,6 +8,9 @@ edit_uri: edit/main/docs/
 theme:
   name: material
   language: en
+  logo: null
+  icon:
+    logo: null
   features:
     - navigation.instant
     - navigation.sections

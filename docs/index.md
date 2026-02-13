@@ -1,31 +1,30 @@
 # vLLM Cluster Manager
 
-<div class="hero">
-  <div class="hero-card">
-    <h2>Operate multi-node vLLM deployments</h2>
-    <p>Spin up a host with a web dashboard, then add GPU nodes with the client agent. The UI lets you launch, monitor, and troubleshoot model deployments without building a full MLOps stack.</p>
-    <div class="grid-2">
-      <div>
-        <strong>Best for</strong>
-        <ul>
-          <li>Research labs</li>
-          <li>Small teams</li>
-          <li>Multi-model serving</li>
-        </ul>
-      </div>
-      <div>
-        <strong>Built-in</strong>
-        <ul>
-          <li>Service discovery</li>
-          <li>Web UI</li>
-          <li>Systemd support</li>
-        </ul>
-      </div>
+<div class="hero-card">
+  <h2>Operate multi-node vLLM deployments</h2>
+  <p>Spin up a host with a web dashboard, then add GPU nodes with the client agent. The UI lets you launch, monitor, and troubleshoot model deployments without building a full MLOps stack.</p>
+  <div class="grid-2">
+    <div>
+      <strong>Best for</strong>
+      <ul>
+        <li>Research labs</li>
+        <li>Small teams</li>
+        <li>Multi-model serving</li>
+      </ul>
+    </div>
+    <div>
+      <strong>Built-in</strong>
+      <ul>
+        <li>Service discovery</li>
+        <li>Web UI</li>
+        <li>Systemd support</li>
+      </ul>
     </div>
   </div>
-  <div class="hero-image">
-    <img alt="vLLM Cluster Manager dashboard" src="assets/img/vllm-cluster-manager-screenshot.png" />
-  </div>
+</div>
+
+<div class="hero-image">
+  <img alt="vLLM Cluster Manager dashboard" src="assets/img/vllm-cluster-manager-screenshot.png" />
 </div>
 
 ## What you can do
