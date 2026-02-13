@@ -1,11 +1,8 @@
 # vLLM Cluster Manager
 
 [![Docs](https://img.shields.io/badge/docs-online-30a2ff)](https://sisl.github.io/vllmclustermanager/)
-[![PyPI](https://img.shields.io/pypi/v/vllm-cluster-manager)](https://pypi.org/project/vllm-cluster-manager/)
-[![Python](https://img.shields.io/pypi/pyversions/vllm-cluster-manager)](https://pypi.org/project/vllm-cluster-manager/)
-[![Publish Docs](https://img.shields.io/github/actions/workflow/status/sisl/vllmclustermanager/docs.yml?branch=main)](https://github.com/sisl/vllmclustermanager/actions/workflows/docs.yml)
-[![Publish to PyPI](https://img.shields.io/github/actions/workflow/status/sisl/vllmclustermanager/publish.yml?branch=main)](https://github.com/sisl/vllmclustermanager/actions/workflows/publish.yml)
-[![License](https://img.shields.io/github/license/sisl/vllmclustermanager)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/vllm-cluster-manager?color=30a2ff)](https://pypi.org/project/vllm-cluster-manager/)
+[![Python](https://img.shields.io/badge/python-3.12%2B-30a2ff)](https://pypi.org/project/vllm-cluster-manager/)
 
 ![VLLM Cluster Manager overview UI](img/vllm-cluster-manager-screenshot.png "VLLM Cluster Manager User Interface")
 
