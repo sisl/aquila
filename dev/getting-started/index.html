@@ -661,11 +661,16 @@
 <p>Host:
 - Docker + Docker Compose plugin
 - Node.js + npm
-- Python 3.12</p>
+- Python 3.12
+- <code>uv</code> (Python package manager)</p>
 <p>Client:
 - NVIDIA GPU with CUDA
 - <code>nvcc</code> or <code>nvidia-smi</code> on PATH
-- Python 3.12 + <code>python3.12-dev</code> and <code>build-essential</code> (Debian/Ubuntu)</p>
+- Python 3.12 + <code>python3.12-dev</code> and <code>build-essential</code> (Debian/Ubuntu)
+- <code>uv</code> (Python package manager)</p>
+<p>Install <code>uv</code> if you don't already have it:
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-LsSf<span class="w"> </span>https://astral.sh/uv/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
+</code></pre></div></p>
 <p>On Debian/Ubuntu:
 <div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>apt<span class="w"> </span>update
 sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>python3.12-dev<span class="w"> </span>build-essential
