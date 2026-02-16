@@ -471,6 +471,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#reverse-proxy-base-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reverse proxy base path
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#gpu-wheel-selection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -625,6 +636,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#reverse-proxy-base-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reverse proxy base path
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#gpu-wheel-selection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -677,6 +699,9 @@
 - <code>vllm-cluster-backend.service</code>
 - <code>vllm-cluster-frontend.service</code>
 - <code>vllm-cluster-client.service</code></p>
+<p>Frontend behavior:
+- <code>host up</code> builds a static frontend bundle and serves it with the Vite preview server.
+- If you change frontend config or base path, rerun <code>host up</code> to rebuild.</p>
 <p>Restart flows:
 <div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>vllm-cluster-backend.service
 sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>vllm-cluster-frontend.service
@@ -684,6 +709,8 @@ sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class=
 </code></pre></div></p>
 <h2 id="host-network-setup">Host network setup</h2>
 <p>If the host should be reachable from other machines, use a non-loopback <code>--host-ip</code> (for example the host's LAN IP) and ensure firewall rules allow inbound traffic.</p>
+<h2 id="reverse-proxy-base-path">Reverse proxy base path</h2>
+<p>If you proxy the frontend under a path like <code>/vllm/</code>, set <code>VITE_BASE_PATH=/vllm/</code> in <code>host/frontend/.env</code> and restart the frontend service. This ensures asset URLs and API/WebSocket paths resolve correctly.</p>
 <h2 id="gpu-wheel-selection">GPU wheel selection</h2>
 <p>The client bootstrapper detects CUDA from <code>nvcc</code> or <code>nvidia-smi</code> and installs a vLLM wheel that matches the detected version. If the wheel doesn't exist for your CUDA version, the install fails with a clear error.</p>
 
