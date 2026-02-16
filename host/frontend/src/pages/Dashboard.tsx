@@ -236,18 +236,6 @@ export function Dashboard() {
     return `'${value.replace(/'/g, `'\"'\"'`)}'`;
   };
 
-  const normalizeEnvValue = (value: string) => {
-    const trimmed = value.trim();
-    if (
-      trimmed.length >= 2 &&
-      (trimmed.startsWith('"') || trimmed.startsWith("'")) &&
-      trimmed[0] === trimmed[trimmed.length - 1]
-    ) {
-      return trimmed.slice(1, -1);
-    }
-    return value;
-  };
-
   const buildVllmCommand = (deployment: Deployment) => {
     const envParts: string[] = [];
     if (deployment.gpu_ids && deployment.gpu_ids.length > 0) {
@@ -258,8 +246,7 @@ export function Dashboard() {
         if (!pair.key) {
           continue;
         }
-        const normalized = normalizeEnvValue(String(pair.value ?? ""));
-        envParts.push(`${pair.key}=${shellQuote(normalized)}`);
+        envParts.push(`${pair.key}=${shellQuote(String(pair.value ?? ""))}`);
       }
     }
 
@@ -284,7 +271,7 @@ export function Dashboard() {
 
   const extraEnvVars = useMemo(() => {
     return envVars
-      .map((entry) => ({ key: entry.key.trim(), value: normalizeEnvValue(entry.value) }))
+      .map((entry) => ({ key: entry.key.trim(), value: entry.value }))
       .filter((entry) => entry.key.length > 0);
   }, [envVars]);
 
@@ -347,14 +334,11 @@ export function Dashboard() {
     }
     setRawArgs(rawArgsValue);
     setEnvVars(
-      envVarsValue.map((env, index) => {
-        const rawValue = String(env.value ?? "");
-        return {
-          id: envVarId.current + index,
-          key: String(env.key ?? ""),
-          value: normalizeEnvValue(rawValue)
-        };
-      })
+      envVarsValue.map((env, index) => ({
+        id: envVarId.current + index,
+        key: String(env.key ?? ""),
+        value: String(env.value ?? "")
+      }))
     );
     envVarId.current += envVarsValue.length;
   };

@@ -11,30 +11,6 @@ from app.services.client_api import get_logs, start_model, stop_model
 router = APIRouter()
 
 
-def _normalize_env_value(value: object) -> str:
-    text = "" if value is None else str(value)
-    trimmed = text.strip()
-    if len(trimmed) >= 2 and trimmed[0] == trimmed[-1] and trimmed[0] in {"'", '"'}:
-        return trimmed[1:-1]
-    return text
-
-
-def _normalize_env_vars(
-    env_vars: list[dict[str, str]] | None,
-) -> list[dict[str, str]] | None:
-    if not env_vars:
-        return env_vars
-    normalized: list[dict[str, str]] = []
-    for pair in env_vars:
-        if not isinstance(pair, dict):
-            continue
-        key = str(pair.get("key", "")).strip()
-        if not key:
-            continue
-        normalized.append({"key": key, "value": _normalize_env_value(pair.get("value", ""))})
-    return normalized
-
-
 @router.get("/", response_model=list[DeploymentRead])
 async def list_deployments(session: AsyncSession = Depends(get_session)) -> list[DeploymentRead]:
     result = await session.execute(select(Deployment).order_by(Deployment.id.desc()))
@@ -45,9 +21,7 @@ async def list_deployments(session: AsyncSession = Depends(get_session)) -> list
 async def create_deployment(
     payload: DeploymentCreate, session: AsyncSession = Depends(get_session)
 ) -> DeploymentRead:
-    payload_data = payload.model_dump()
-    payload_data["env_vars"] = _normalize_env_vars(payload_data.get("env_vars"))
-    deployment = Deployment(**payload_data)
+    deployment = Deployment(**payload.model_dump())
     session.add(deployment)
     await session.commit()
     await session.refresh(deployment)
@@ -80,7 +54,6 @@ async def start_deployment(
             ),
         )
 
-    normalized_env = _normalize_env_vars(payload.env_vars)
     await start_model(
         node.ip_address,
         node.port,
@@ -90,11 +63,10 @@ async def start_deployment(
         payload.gpu_ids,
         payload.tensor_parallel_size,
         payload.extra_args,
-        normalized_env,
+        payload.env_vars,
     )
 
     payload_data = payload.model_dump(exclude={"status"})
-    payload_data["env_vars"] = normalized_env
     deployment = Deployment(**payload_data, status="loading")
     session.add(deployment)
     await session.commit()
