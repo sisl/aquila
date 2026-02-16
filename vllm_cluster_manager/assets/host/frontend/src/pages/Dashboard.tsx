@@ -230,7 +230,10 @@ export function Dashboard() {
     if (value === "") {
       return "''";
     }
-    if (/^[A-Za-z0-9_./:=@+-]+$/.test(value)) {
+    if (
+      /^[A-Za-z0-9_./:=@+-]+$/.test(value) ||
+      (/^'.*'$/.test(value) || /^".*"$/.test(value))
+    ) {
       return value;
     }
     return `'${value.replace(/'/g, `'\"'\"'`)}'`;
