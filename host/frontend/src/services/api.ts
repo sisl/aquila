@@ -29,7 +29,13 @@ export type Deployment = {
   created_at?: string | null;
 };
 
-const baseUrl = "/api";
+const baseUrl = withBase("api");
+
+function withBase(path: string): string {
+  const base = import.meta.env.BASE_URL || "/";
+  const normalized = base.endsWith("/") ? base : `${base}/`;
+  return `${normalized}${path}`.replace(/\/{2,}/g, "/").replace(/:\//, "://");
+}
 
 async function request<T>(path: string): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`);
