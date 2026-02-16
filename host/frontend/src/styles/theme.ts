@@ -103,9 +103,6 @@ export const theme = createTheme({
             backgroundColor: "transparent",
             color: "#334155"
           }
-        },
-        containedHover: {
-          boxShadow: "none"
         }
       }
     },

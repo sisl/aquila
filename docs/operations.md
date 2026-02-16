@@ -26,6 +26,10 @@ Systemd unit names (service mode):
 - `vllm-cluster-frontend.service`
 - `vllm-cluster-client.service`
 
+Frontend behavior:
+- `host up` builds a static frontend bundle and serves it with the Vite preview server.
+- If you change frontend config or base path, rerun `host up` to rebuild.
+
 Restart flows:
 ```bash
 sudo systemctl restart vllm-cluster-backend.service
@@ -35,6 +39,9 @@ sudo systemctl restart vllm-cluster-client.service
 
 ## Host network setup
 If the host should be reachable from other machines, use a non-loopback `--host-ip` (for example the host's LAN IP) and ensure firewall rules allow inbound traffic.
+
+## Reverse proxy base path
+If you proxy the frontend under a path like `/vllm/`, set `VITE_BASE_PATH=/vllm/` in `host/frontend/.env` and restart the frontend service. This ensures asset URLs and API/WebSocket paths resolve correctly.
 
 ## GPU wheel selection
 The client bootstrapper detects CUDA from `nvcc` or `nvidia-smi` and installs a vLLM wheel that matches the detected version. If the wheel doesn't exist for your CUDA version, the install fails with a clear error.

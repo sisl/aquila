@@ -141,6 +141,7 @@ def build_client_config(args: argparse.Namespace) -> ClientConfig:
 
 def run_host_up(config: HostConfig, use_service: bool) -> None:
     runtime_dir = ensure_runtime_dir("host")
+    ensure_host_assets(runtime_dir)
     print("Host configuration:")
     print(format_kv(
         {
@@ -159,6 +160,8 @@ def run_host_up(config: HostConfig, use_service: bool) -> None:
     write_host_env_files(runtime_dir, config)
     ensure_backend_venv(runtime_dir)
     ensure_frontend_deps(runtime_dir)
+    frontend_env = load_env_file(runtime_dir / "frontend" / ".env")
+    build_frontend(runtime_dir, frontend_env)
     if use_service:
         install_host_service(config)
         print(f"Host services: {HOST_SERVICE_NAME}-infra.service, {HOST_SERVICE_NAME}-backend.service, {HOST_SERVICE_NAME}-frontend.service")
@@ -168,7 +171,6 @@ def run_host_up(config: HostConfig, use_service: bool) -> None:
         return
     start_infra(runtime_dir)
     backend_env = load_env_file(runtime_dir / "backend" / ".env")
-    frontend_env = load_env_file(runtime_dir / "frontend" / ".env")
     backend_cmd = [
         str(runtime_dir / "backend" / ".venv" / "bin" / "uvicorn"),
         "app.main:app",
@@ -183,7 +185,7 @@ def run_host_up(config: HostConfig, use_service: bool) -> None:
     frontend_cmd = [
         npm_path,
         "run",
-        "dev",
+        "preview",
         "--",
         "--host",
         frontend_env.get("FRONTEND_HOST", "0.0.0.0"),
@@ -210,6 +212,7 @@ def run_host_up(config: HostConfig, use_service: bool) -> None:
         remove_pid(runtime_dir / ".backend.pid")
         remove_pid(runtime_dir / ".frontend.pid")
         stop_infra(runtime_dir)
+        remove_runtime_dir("host")
 
 
 def run_host_down() -> None:
@@ -219,6 +222,7 @@ def run_host_down() -> None:
         stop_pid(runtime_dir / ".backend.pid")
         stop_pid(runtime_dir / ".frontend.pid")
     remove_host_service()
+    remove_runtime_dir("host")
 
 
 def run_client_up(config: ClientConfig, use_service: bool) -> None:
@@ -245,7 +249,10 @@ def run_client_up(config: ClientConfig, use_service: bool) -> None:
     python_bin = runtime_dir / ".venv" / "bin" / "python"
     print(f"Client bind: {config.client_host}:{config.client_port}")
     print(f"Host port: {config.host_ip}:{config.consul_port}")
-    run([str(python_bin), "-m", "app.main"], cwd=runtime_dir, env=merge_env(client_env))
+    try:
+        run([str(python_bin), "-m", "app.main"], cwd=runtime_dir, env=merge_env(client_env))
+    finally:
+        remove_runtime_dir("client")
 
 
 def run_client_down() -> None:
@@ -253,6 +260,7 @@ def run_client_down() -> None:
     if runtime_dir:
         stop_pid(runtime_dir / ".client.pid")
     remove_client_service()
+    remove_runtime_dir("client")
 
 
 def ensure_runtime_dir(kind: str) -> Path:
@@ -272,6 +280,13 @@ def runtime_dir_path(kind: str) -> Path | None:
     return None
 
 
+def remove_runtime_dir(kind: str) -> None:
+    base_dir = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    runtime_dir = base_dir / "vllm_cluster_manager" / kind
+    if runtime_dir.exists():
+        shutil.rmtree(runtime_dir, ignore_errors=True)
+
+
 def copy_assets(kind: str, dest: Path) -> None:
     src_root = resources.files("vllm_cluster_manager.assets") / kind
     if not src_root.is_dir():
@@ -281,6 +296,8 @@ def copy_assets(kind: str, dest: Path) -> None:
 
 
 def write_host_env_files(runtime_dir: Path, config: HostConfig) -> None:
+    (runtime_dir / "backend").mkdir(parents=True, exist_ok=True)
+    (runtime_dir / "frontend").mkdir(parents=True, exist_ok=True)
     host_env = textwrap.dedent(
         f"""
         POSTGRES_DB={config.postgres_db}
@@ -315,6 +332,25 @@ def write_host_env_files(runtime_dir: Path, config: HostConfig) -> None:
         """
     ).strip() + "\n"
     (runtime_dir / "frontend" / ".env").write_text(frontend_env, encoding="utf-8")
+
+
+def ensure_host_assets(runtime_dir: Path) -> None:
+    missing = []
+    for subdir in ("frontend", "backend", "infra"):
+        if not (runtime_dir / subdir).exists():
+            missing.append(subdir)
+    if not missing:
+        return
+    for subdir in missing:
+        copy_assets_subdir("host", subdir, runtime_dir / subdir)
+
+
+def copy_assets_subdir(kind: str, subdir: str, dest: Path) -> None:
+    src_root = resources.files("vllm_cluster_manager.assets") / kind / subdir
+    if not src_root.is_dir():
+        raise RuntimeError(f"Missing packaged assets for {kind}/{subdir}.")
+    with resources.as_file(src_root) as src_path:
+        shutil.copytree(src_path, dest, dirs_exist_ok=True)
 
 
 def write_client_env_file(runtime_dir: Path, config: ClientConfig) -> None:
@@ -510,6 +546,14 @@ def ensure_frontend_deps(runtime_dir: Path) -> None:
     write_hash_marker(manifest, marker)
 
 
+def build_frontend(runtime_dir: Path, frontend_env: dict[str, str]) -> None:
+    npm = shutil.which("npm")
+    if not npm:
+        raise RuntimeError("npm is required to build the frontend.")
+    frontend_dir = runtime_dir / "frontend"
+    run([npm, "run", "build"], cwd=frontend_dir, env=merge_env(frontend_env))
+
+
 def start_infra(runtime_dir: Path) -> None:
     compose_cmd = detect_compose_cmd()
     cmd = compose_cmd.split() + ["up", "-d"]
@@ -599,7 +643,7 @@ def install_host_service(config: HostConfig) -> None:
         WorkingDirectory={runtime_dir}/frontend
         EnvironmentFile={runtime_dir}/frontend/.env
         Environment=PATH={frontend_path}
-        ExecStart={npm_path} run dev -- --host ${{FRONTEND_HOST}} --port ${{FRONTEND_PORT}}
+        ExecStart={npm_path} run preview -- --host ${{FRONTEND_HOST}} --port ${{FRONTEND_PORT}}
         Restart=always
         RestartSec=2
 

@@ -84,6 +84,8 @@ Foreground (no sudo):
 vllm-cluster-manager host up --host-ip 127.0.0.1 --host-frontend-port 5173 --host-discover-port 47528
 ```
 
+`host up` builds a static frontend bundle and serves it with the Vite preview server.
+
 Persistent service (systemd):
 ```bash
 vllm-cluster-manager host up --service --host-ip 127.0.0.1 --host-frontend-port 5173 --host-discover-port 47528

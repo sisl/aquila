@@ -18,6 +18,13 @@ Checks:
 - Verify `VITE_BACKEND_HOST` in `host/frontend/.env` matches your host IP.
 - If you changed ports, restart the frontend service.
 
+## Blank page behind reverse proxy
+**Symptoms**: The UI shows a blank page when accessed through Nginx or another reverse proxy.
+
+Checks:
+- If you proxy under a path (for example `/vllm/`), set `VITE_BASE_PATH=/vllm/` in `host/frontend/.env`.
+- Restart the frontend service so Vite picks up the new base path.
+
 ## Consul port confusion
 **Symptoms**: Clients fail to register when using the Consul default port (8500).
 
