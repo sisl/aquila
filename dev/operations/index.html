@@ -710,8 +710,8 @@ sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class=
 <h2 id="host-network-setup">Host network setup</h2>
 <p>If the host should be reachable from other machines, use a non-loopback <code>--host-ip</code> (for example the host's LAN IP) and ensure firewall rules allow inbound traffic.</p>
 <h2 id="reverse-proxy-base-path">Reverse proxy base path</h2>
-<p>If you proxy the frontend under a path like <code>/vllm/</code>, set <code>VITE_BASE_PATH=/vllm/</code> in <code>host/frontend/.env</code> and restart the frontend service. This ensures asset URLs and API/WebSocket paths resolve correctly.</p>
-<p>For Nginx, make sure <code>/vllm/api</code> and <code>/vllm/ws</code> are proxied to the backend (port 8000 by default). The frontend now uses the configured base path for API and WebSocket URLs, so it works both at <code>/</code> and under a subpath.</p>
+<p>If you proxy the frontend under a path like <code>/vllm/</code>, pass <code>--base-path /vllm/</code> when running <code>host up</code>. This ensures asset URLs and API/WebSocket paths resolve correctly.</p>
+<p>For Nginx, make sure <code>/vllm/api</code> and <code>/vllm/ws</code> are proxied to the backend (port 8000 by default). The frontend uses the configured base path for API and WebSocket URLs, so it works both at <code>/</code> and under a subpath.</p>
 <h2 id="gpu-wheel-selection">GPU wheel selection</h2>
 <p>The client bootstrapper detects CUDA from <code>nvcc</code> or <code>nvidia-smi</code> and installs a vLLM wheel that matches the detected version. If the wheel doesn't exist for your CUDA version, the install fails with a clear error.</p>
 

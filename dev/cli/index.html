@@ -690,6 +690,11 @@ vllm-cluster-manager<span class="w"> </span>client<span class="w"> </span>up<spa
 <td><code>change-me</code></td>
 <td>Postgres password.</td>
 </tr>
+<tr>
+<td><code>--base-path</code></td>
+<td><code>/</code></td>
+<td>Base path for the UI (reverse proxy subpath).</td>
+</tr>
 </tbody>
 </table>
 <h2 id="client-client-up">Client (<code>client up</code>)</h2>
@@ -737,6 +742,9 @@ vllm-cluster-manager<span class="w"> </span>client<span class="w"> </span>up<spa
 <h2 id="examples">Examples</h2>
 <p>Launch host services in the foreground:
 <div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>host<span class="w"> </span>up<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--host-frontend-port<span class="w"> </span><span class="m">5173</span><span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">47528</span>
+</code></pre></div></p>
+<p>Reverse proxy under <code>/vllm/</code>:
+<div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>host<span class="w"> </span>up<span class="w"> </span>--base-path<span class="w"> </span>/vllm/
 </code></pre></div></p>
 <p>Launch a client node:
 <div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>client<span class="w"> </span>up<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">47528</span><span class="w"> </span>--node-name<span class="w"> </span>node-1
