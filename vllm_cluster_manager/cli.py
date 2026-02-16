@@ -41,6 +41,7 @@ class HostConfig:
     postgres_db: str
     postgres_user: str
     postgres_password: str
+    base_path: str
 
 
 @dataclass
@@ -67,6 +68,7 @@ def main() -> None:
     host_up.add_argument("--service", action="store_true", help="Run as a systemd service.")
     host_up.add_argument("--host-ip", default="127.0.0.1", help="Bind host for the backend API and UI backend target.")
     host_up.add_argument("--host-frontend-port", type=int, default=DEFAULT_FRONTEND_PORT, help="UI port.")
+    host_up.add_argument("--base-path", default="/", help="Base path for the UI (for reverse proxies).")
     host_up.add_argument("--host-discover-port", type=int, default=DEFAULT_CONSUL_PORT, help="Discovery port used by clients.")
     host_up.add_argument("--host-backend-port", type=int, default=DEFAULT_ADMIN_API_PORT, help="Backend API port.")
     host_up.add_argument("--postgres-host", default=DEFAULT_POSTGRES_HOST, help="Postgres host.")
@@ -125,6 +127,7 @@ def build_host_config(args: argparse.Namespace) -> HostConfig:
         postgres_db=args.postgres_db,
         postgres_user=args.postgres_user,
         postgres_password=args.postgres_password,
+        base_path=args.base_path,
     )
 
 
@@ -154,6 +157,7 @@ def run_host_up(config: HostConfig, use_service: bool) -> None:
             "postgres_db": config.postgres_db,
             "postgres_user": config.postgres_user,
             "postgres_password": config.postgres_password,
+            "base_path": config.base_path,
             "service_mode": use_service,
         }
     ))
@@ -329,6 +333,7 @@ def write_host_env_files(runtime_dir: Path, config: HostConfig) -> None:
         FRONTEND_PORT={config.frontend_port}
         VITE_BACKEND_HOST={config.host_ip}
         VITE_BACKEND_PORT={config.admin_api_port}
+        VITE_BASE_PATH={config.base_path}
         """
     ).strip() + "\n"
     (runtime_dir / "frontend" / ".env").write_text(frontend_env, encoding="utf-8")

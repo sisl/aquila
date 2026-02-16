@@ -23,6 +23,7 @@ vllm-cluster-manager client up --help
 | `--postgres-db` | `vllm_admin` | Postgres database name. |
 | `--postgres-user` | `vllm` | Postgres user. |
 | `--postgres-password` | `change-me` | Postgres password. |
+| `--base-path` | `/` | Base path for the UI (reverse proxy subpath). |
 
 ## Client (`client up`)
 
@@ -40,6 +41,11 @@ vllm-cluster-manager client up --help
 Launch host services in the foreground:
 ```bash
 vllm-cluster-manager host up --host-ip 127.0.0.1 --host-frontend-port 5173 --host-discover-port 47528
+```
+
+Reverse proxy under `/vllm/`:
+```bash
+vllm-cluster-manager host up --base-path /vllm/
 ```
 
 Launch a client node:

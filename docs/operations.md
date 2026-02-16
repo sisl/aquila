@@ -41,9 +41,9 @@ sudo systemctl restart vllm-cluster-client.service
 If the host should be reachable from other machines, use a non-loopback `--host-ip` (for example the host's LAN IP) and ensure firewall rules allow inbound traffic.
 
 ## Reverse proxy base path
-If you proxy the frontend under a path like `/vllm/`, set `VITE_BASE_PATH=/vllm/` in `host/frontend/.env` and restart the frontend service. This ensures asset URLs and API/WebSocket paths resolve correctly.
+If you proxy the frontend under a path like `/vllm/`, pass `--base-path /vllm/` when running `host up`. This ensures asset URLs and API/WebSocket paths resolve correctly.
 
-For Nginx, make sure `/vllm/api` and `/vllm/ws` are proxied to the backend (port 8000 by default). The frontend now uses the configured base path for API and WebSocket URLs, so it works both at `/` and under a subpath.
+For Nginx, make sure `/vllm/api` and `/vllm/ws` are proxied to the backend (port 8000 by default). The frontend uses the configured base path for API and WebSocket URLs, so it works both at `/` and under a subpath.
 
 ## GPU wheel selection
 The client bootstrapper detects CUDA from `nvcc` or `nvidia-smi` and installs a vLLM wheel that matches the detected version. If the wheel doesn't exist for your CUDA version, the install fails with a clear error.
