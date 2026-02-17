@@ -385,7 +385,17 @@ def ensure_client_venv(runtime_dir: Path) -> None:
     if needs_install(requirements, runtime_dir / ".deps.sha256"):
         install_requirements_without_vllm(venv_dir, requirements)
         write_hash_marker(requirements, runtime_dir / ".deps.sha256")
-    install_vllm_wheel(venv_dir)
+    try:
+        install_vllm_wheel(venv_dir)
+    except RuntimeError as exc:
+        raise RuntimeError(build_vllm_install_error(venv_dir, exc)) from exc
+    python_bin = venv_dir / "bin" / "python"
+    if not vllm_installed(python_bin):
+        raise RuntimeError(
+            "vLLM is not installed in the client runtime venv.\n"
+            f"Checked: {python_bin}\n"
+            "Delete the venv and rerun `vllm-cluster-manager client up` to retry."
+        )
 
 
 def ensure_venv(venv_dir: Path, requirements: Path, marker: Path) -> None:
@@ -475,6 +485,27 @@ def install_vllm_wheel(venv_dir: Path) -> None:
             wheel_url,
             "--extra-index-url",
             f"https://download.pytorch.org/whl/cu{cuda_compact}",
+        ]
+    )
+
+
+def build_vllm_install_error(venv_dir: Path, exc: Exception) -> str:
+    return "\n".join(
+        [
+            "Failed to install vLLM into the client runtime venv.",
+            f"venv: {venv_dir}",
+            "",
+            "Reason:",
+            str(exc),
+            "",
+            "Common fixes:",
+            "- Ensure NVIDIA drivers are installed and `nvidia-smi` or `nvcc` is available.",
+            "- Ensure outbound HTTPS access to GitHub releases and the PyTorch wheel index.",
+            "- Ensure your CUDA version and CPU architecture match an available vLLM wheel.",
+            "",
+            "Retry:",
+            f"  rm -rf {venv_dir}",
+            "  vllm-cluster-manager client up",
         ]
     )
 
