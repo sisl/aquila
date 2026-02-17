@@ -427,6 +427,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#gated-models-hugging-face" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gated models (Hugging Face)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#firewall-rules" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -592,6 +603,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#gated-models-hugging-face" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gated models (Hugging Face)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#firewall-rules" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -685,6 +707,14 @@
 - <code>host/frontend/.env</code> (UI)
 - <code>client/.env</code> (client agent)</p>
 <p>If you edit any env file, restart the affected service.</p>
+<h2 id="gated-models-hugging-face">Gated models (Hugging Face)</h2>
+<p>Some models (for example Llama variants) require a Hugging Face access token. Provide the token via an env var when creating the deployment:
+- <code>HF_TOKEN</code>
+- <code>HUGGING_FACE_HUB_TOKEN</code></p>
+<p>Set the value to your Hugging Face access token (read access) and include quotation marks, for example:
+<div class="highlight"><pre><span></span><code>HUGGING_FACE_HUB_TOKEN=&quot;hf_...&quot;
+</code></pre></div></p>
+<p>You can add this in the UI under env vars or by setting it in the client environment before starting a deployment.</p>
 <h2 id="firewall-rules">Firewall rules</h2>
 <p>Allow these network paths (adjust ports to your flags):
 - User → Host UI: TCP <code>host-frontend-port</code> (default 5173)
