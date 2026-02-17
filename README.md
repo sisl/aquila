@@ -125,6 +125,7 @@ vllm-cluster-manager client down
 | `--host-frontend-port` | `5173` | UI port. |
 | `--host-discover-port` | `47528` | Discovery port used by clients. |
 | `--host-backend-port` | `8000` | Backend API port. |
+| `--base-path` | `/` | Base path for the UI (reverse proxy subpath). |
 | `--postgres-host` | `127.0.0.1` | Postgres host. |
 | `--postgres-port` | `5757` | Postgres port. |
 | `--postgres-db` | `vllm_admin` | Postgres database name. |
