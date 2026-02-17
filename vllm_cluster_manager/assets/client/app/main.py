@@ -128,8 +128,8 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
         env["CUDA_VISIBLE_DEVICES"] = ",".join(str(gpu) for gpu in payload.gpu_ids)
     if payload.env_vars:
         for pair in payload.env_vars:
-            key = pair.get("key")
-            if not key:
+            env_key = pair.get("key")
+            if not env_key:
                 continue
             raw_value = str(pair.get("value", ""))
             trimmed = raw_value.strip()
@@ -138,9 +138,9 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
                 and trimmed[0] == trimmed[-1]
                 and trimmed[0] in {"'", '"'}
             ):
-                env[key] = trimmed[1:-1]
+                env[env_key] = trimmed[1:-1]
             else:
-                env[key] = raw_value
+                env[env_key] = raw_value
 
     def _mask_env_value(key_name: str, value: str) -> str:
         upper = key_name.upper()
