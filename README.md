@@ -85,7 +85,7 @@ vllm-cluster-manager host up --host-ip 127.0.0.1 --host-frontend-port 5173 --hos
 ```
 
 `host up` builds a static frontend bundle and serves it with the Vite preview server.
-Use `--base-path /vllm/` when running behind a reverse proxy that serves the UI under a subpath.
+The UI assumes it is served at `/` by default; if you serve it under a subpath (for example `/vllm/`), pass `--base-path /vllm/` so asset URLs and API/WebSocket paths are generated correctly.
 
 Persistent service (systemd):
 ```bash
