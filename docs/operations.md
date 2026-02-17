@@ -9,6 +9,18 @@ The CLI writes service-specific env files under `~/.local/share/vllm_cluster_man
 
 If you edit any env file, restart the affected service.
 
+## Gated models (Hugging Face)
+Some models (for example Llama variants) require a Hugging Face access token. Provide the token via an env var when creating the deployment:
+- `HF_TOKEN`
+- `HUGGING_FACE_HUB_TOKEN`
+
+Set the value to your Hugging Face access token (read access) and include quotation marks, for example:
+```
+HUGGING_FACE_HUB_TOKEN="hf_..."
+```
+
+You can add this in the UI under env vars or by setting it in the client environment before starting a deployment.
+
 ## Firewall rules
 Allow these network paths (adjust ports to your flags):
 - User → Host UI: TCP `host-frontend-port` (default 5173)
