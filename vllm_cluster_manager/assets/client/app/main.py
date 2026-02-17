@@ -133,7 +133,21 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
                 continue
             env[key] = str(pair.get("value", ""))
 
+    def _mask_env_value(key_name: str, value: str) -> str:
+        upper = key_name.upper()
+        if any(token in upper for token in ["TOKEN", "SECRET", "KEY", "PASSWORD"]):
+            if len(value) <= 8:
+                return "*" * len(value)
+            return f"{value[:4]}...{value[-4:]}"
+        return value
+
+    def _mask_env_for_log(env_map: dict[str, str]) -> dict[str, str]:
+        return {k: _mask_env_value(k, str(v)) for k, v in env_map.items()}
+
     try:
+        logger.info("Starting deployment %s", key)
+        logger.info("Command: %s", " ".join(cmd))
+        logger.info("Env overrides: %s", _mask_env_for_log(env))
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,

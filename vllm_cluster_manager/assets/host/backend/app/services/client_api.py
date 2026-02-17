@@ -79,6 +79,8 @@ async def get_logs(
     url = _satellite_url(node_ip, node_port, "/deployments/logs")
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.get(url, params={"key": key, "tail": tail})
+        if response.status_code == 404:
+            return {"key": key, "lines": []}
         response.raise_for_status()
         return response.json()
 
