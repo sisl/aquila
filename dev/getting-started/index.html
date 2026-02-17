@@ -346,10 +346,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#install-pip" class="md-nav__link">
+  <a href="#install-uv" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Install (pip)
+        Install (uv)
       
     </span>
   </a>
@@ -554,10 +554,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#install-pip" class="md-nav__link">
+  <a href="#install-uv" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Install (pip)
+        Install (uv)
       
     </span>
   </a>
@@ -648,8 +648,8 @@
 <div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>apt<span class="w"> </span>update
 sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>python3.12-dev<span class="w"> </span>build-essential
 </code></pre></div></p>
-<h2 id="install-pip">Install (pip)</h2>
-<p>Create and activate a Python 3.12 virtual environment:
+<h2 id="install-uv">Install (uv)</h2>
+<p>Create and activate a Python 3.12+ virtual environment:
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="o">=</span><span class="m">3</span>.12
 <span class="nb">source</span><span class="w"> </span>.venv/bin/activate
 </code></pre></div></p>
@@ -657,18 +657,18 @@ sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> <
 </code></pre></div>
 <h2 id="start-the-host">Start the host</h2>
 <p>Foreground (no sudo):
-<div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>host<span class="w"> </span>up<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--host-frontend-port<span class="w"> </span><span class="m">5173</span><span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">47528</span>
+<div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>host<span class="w"> </span>up<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--host-frontend-port<span class="w"> </span><span class="m">5173</span><span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">11400</span>
 </code></pre></div></p>
 <p>Persistent service (systemd):
-<div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>host<span class="w"> </span>up<span class="w"> </span>--service<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--host-frontend-port<span class="w"> </span><span class="m">5173</span><span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">47528</span>
+<div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>host<span class="w"> </span>up<span class="w"> </span>--service<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--host-frontend-port<span class="w"> </span><span class="m">5173</span><span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">11400</span>
 </code></pre></div></p>
 <p><code>--host-discover-port</code> sets the discovery port used for clients. Use <code>--host-backend-port</code> to override the backend API port (default 8000).</p>
 <h2 id="start-a-client">Start a client</h2>
 <p>Foreground (no sudo):
-<div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>client<span class="w"> </span>up<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">47528</span>
+<div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>client<span class="w"> </span>up<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">1</span>.2.3.4<span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">11400</span>
 </code></pre></div></p>
 <p>Persistent service (systemd):
-<div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>client<span class="w"> </span>up<span class="w"> </span>--service<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">47528</span>
+<div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>client<span class="w"> </span>up<span class="w"> </span>--service<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">1</span>.2.3.4<span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">11400</span>
 </code></pre></div></p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>

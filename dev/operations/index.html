@@ -427,10 +427,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#gated-models-hugging-face" class="md-nav__link">
+  <a href="#gated-models-huggingface" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Gated models (Hugging Face)
+        Gated models (Huggingface)
       
     </span>
   </a>
@@ -576,10 +576,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#gated-models-hugging-face" class="md-nav__link">
+  <a href="#gated-models-huggingface" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Gated models (Hugging Face)
+        Gated models (Huggingface)
       
     </span>
   </a>
@@ -680,7 +680,7 @@
 - <code>host/frontend/.env</code> (UI)
 - <code>client/.env</code> (client agent)</p>
 <p>If you edit any env file, restart the affected service.</p>
-<h2 id="gated-models-hugging-face">Gated models (Hugging Face)</h2>
+<h2 id="gated-models-huggingface">Gated models (Huggingface)</h2>
 <p>Some models (for example Llama variants) require a Hugging Face access token. Provide the token via an env var when creating the deployment:
 - <code>HF_TOKEN</code>
 - <code>HUGGING_FACE_HUB_TOKEN</code></p>
@@ -689,24 +689,29 @@
 </code></pre></div></p>
 <p>You can add this in the UI under env vars or by setting it in the client environment before starting a deployment.</p>
 <h2 id="firewall-rules">Firewall rules</h2>
-<p>Allow these network paths (adjust ports to your flags):
-- User → Host UI: TCP <code>host-frontend-port</code> (default 5173)
-- UI/Browser → Host API: TCP <code>host-backend-port</code> (default 8000)
-- Clients → Host discovery port: TCP <code>host-discover-port</code> (default 47528)
-- Host → Client agents: TCP <code>client-port</code> (default 9000)</p>
+<p>Allow these network paths (adjust ports to your flags):</p>
+<ul>
+<li>User → Host UI: TCP <code>host-frontend-port</code> (default 5173)</li>
+<li>UI/Browser → Host API: TCP <code>host-backend-port</code> (default 8000)</li>
+<li>Clients → Host discovery port: TCP <code>host-discover-port</code> (default 47528)</li>
+<li>Host → Client agents: TCP <code>client-port</code> (default 9000)</li>
+</ul>
 <h2 id="data-persistence">Data persistence</h2>
 <p>By default, shutting down the host (<code>host down</code> or stopping the systemd infra unit) runs <code>docker compose down -v</code>, which wipes the Postgres volume. Remove <code>-v</code> in code if you want to keep data.</p>
 <h2 id="service-management">Service management</h2>
-<p>Systemd unit names (service mode):
-- <code>vllm-cluster-infra.service</code>
-- <code>vllm-cluster-backend.service</code>
-- <code>vllm-cluster-frontend.service</code>
-- <code>vllm-cluster-client.service</code></p>
+<p>Systemd unit names (service mode):</p>
+<ul>
+<li><code>vllm-cluster-infra.service</code></li>
+<li><code>vllm-cluster-backend.service</code></li>
+<li><code>vllm-cluster-frontend.service</code></li>
+<li><code>vllm-cluster-client.service</code></li>
+</ul>
 <p>Frontend behavior:
 - <code>host up</code> builds a static frontend bundle and serves it with the Vite preview server.
 - If you change frontend config or base path, rerun <code>host up</code> to rebuild.</p>
 <p>Restart flows:
-<div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>vllm-cluster-backend.service
+<div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>vllm-cluster-infra.service
+sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>vllm-cluster-backend.service
 sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>vllm-cluster-frontend.service
 sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>vllm-cluster-client.service
 </code></pre></div></p>
