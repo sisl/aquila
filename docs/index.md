@@ -1,6 +1,6 @@
 # vLLM Cluster Manager
 
-<div class="hero-card">
+<div class="hero-card"  style="margin-bottom: 2rem;">
   <h2>Operate multi-node vLLM deployments</h2>
   <p>Spin up a host with a web dashboard, then add GPU nodes with the client agent. The UI lets you launch, monitor, and troubleshoot model deployments without building a full MLOps stack.</p>
   <div class="grid-2">
