@@ -131,7 +131,16 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
             key = pair.get("key")
             if not key:
                 continue
-            env[key] = str(pair.get("value", ""))
+            raw_value = str(pair.get("value", ""))
+            trimmed = raw_value.strip()
+            if (
+                len(trimmed) >= 2
+                and trimmed[0] == trimmed[-1]
+                and trimmed[0] in {"'", '"'}
+            ):
+                env[key] = trimmed[1:-1]
+            else:
+                env[key] = raw_value
 
     def _mask_env_value(key_name: str, value: str) -> str:
         upper = key_name.upper()
