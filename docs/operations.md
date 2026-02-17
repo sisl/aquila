@@ -9,7 +9,7 @@ The CLI writes service-specific env files under `~/.local/share/vllm_cluster_man
 
 If you edit any env file, restart the affected service.
 
-## Gated models (Hugging Face)
+## Gated models (Huggingface)
 Some models (for example Llama variants) require a Hugging Face access token. Provide the token via an env var when creating the deployment:
 - `HF_TOKEN`
 - `HUGGING_FACE_HUB_TOKEN`
@@ -23,6 +23,7 @@ You can add this in the UI under env vars or by setting it in the client environ
 
 ## Firewall rules
 Allow these network paths (adjust ports to your flags):
+
 - User → Host UI: TCP `host-frontend-port` (default 5173)
 - UI/Browser → Host API: TCP `host-backend-port` (default 8000)
 - Clients → Host discovery port: TCP `host-discover-port` (default 47528)
@@ -33,6 +34,7 @@ By default, shutting down the host (`host down` or stopping the systemd infra un
 
 ## Service management
 Systemd unit names (service mode):
+
 - `vllm-cluster-infra.service`
 - `vllm-cluster-backend.service`
 - `vllm-cluster-frontend.service`
@@ -44,6 +46,7 @@ Frontend behavior:
 
 Restart flows:
 ```bash
+sudo systemctl restart vllm-cluster-infra.service
 sudo systemctl restart vllm-cluster-backend.service
 sudo systemctl restart vllm-cluster-frontend.service
 sudo systemctl restart vllm-cluster-client.service

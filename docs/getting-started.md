@@ -26,8 +26,8 @@ sudo apt update
 sudo apt install -y python3.12-dev build-essential
 ```
 
-## Install (pip)
-Create and activate a Python 3.12 virtual environment:
+## Install (uv)
+Create and activate a Python 3.12+ virtual environment:
 ```bash
 uv venv --python=3.12
 source .venv/bin/activate
@@ -40,12 +40,12 @@ uv pip install vllm-cluster-manager
 ## Start the host
 Foreground (no sudo):
 ```bash
-vllm-cluster-manager host up --host-ip 127.0.0.1 --host-frontend-port 5173 --host-discover-port 47528
+vllm-cluster-manager host up --host-ip 0.0.0.0 --host-frontend-port 5173 --host-discover-port 11400
 ```
 
 Persistent service (systemd):
 ```bash
-vllm-cluster-manager host up --service --host-ip 127.0.0.1 --host-frontend-port 5173 --host-discover-port 47528
+vllm-cluster-manager host up --service --host-ip 0.0.0.0 --host-frontend-port 5173 --host-discover-port 11400
 ```
 
 `--host-discover-port` sets the discovery port used for clients. Use `--host-backend-port` to override the backend API port (default 8000).
@@ -53,12 +53,12 @@ vllm-cluster-manager host up --service --host-ip 127.0.0.1 --host-frontend-port 
 ## Start a client
 Foreground (no sudo):
 ```bash
-vllm-cluster-manager client up --host-ip 127.0.0.1 --host-discover-port 47528
+vllm-cluster-manager client up --host-ip 1.2.3.4 --host-discover-port 11400
 ```
 
 Persistent service (systemd):
 ```bash
-vllm-cluster-manager client up --service --host-ip 127.0.0.1 --host-discover-port 47528
+vllm-cluster-manager client up --service --host-ip 1.2.3.4 --host-discover-port 11400
 ```
 
 !!! note
