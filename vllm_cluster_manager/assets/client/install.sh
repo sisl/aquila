@@ -72,6 +72,79 @@ prompt_default() {
   fi
 }
 
+find_highest_available_cuda() {
+  local vllm_version="$1"
+  local cpu_arch="$2"
+  local max_search=200  # Reasonable upper limit to prevent infinite loop
+  local highest_found=""
+  local found_versions=()
+  
+  # Search from cu100 up to max_search
+  for cu_ver in $(seq 100 "$max_search"); do
+    local wheel_url="https://github.com/vllm-project/vllm/releases/download/v${vllm_version}/vllm-${vllm_version}+cu${cu_ver}-cp38-abi3-manylinux_2_35_${cpu_arch}.whl"
+    if curl -sSfI "$wheel_url" >/dev/null 2>&1; then
+      highest_found="$cu_ver"
+      found_versions+=("$cu_ver")
+    else
+      # If we've found at least one and now hit a miss, check a few more to be sure
+      if [[ -n "$highest_found" ]]; then
+        # Check if we've hit a gap of 5 consecutive misses
+        local consecutive_misses=1
+        local check_ahead=5
+        for offset in $(seq 1 "$check_ahead"); do
+          local next_cu=$((cu_ver + offset))
+          local next_url="https://github.com/vllm-project/vllm/releases/download/v${vllm_version}/vllm-${vllm_version}+cu${next_cu}-cp38-abi3-manylinux_2_35_${cpu_arch}.whl"
+          if curl -sSfI "$next_url" >/dev/null 2>&1; then
+            highest_found="$next_cu"
+            found_versions+=("$next_cu")
+            consecutive_misses=0
+            break
+          else
+            ((consecutive_misses++))
+          fi
+        done
+        
+        # If we had consecutive misses, we've likely found the highest
+        if [[ $consecutive_misses -ge $check_ahead ]]; then
+          break
+        fi
+      fi
+    fi
+  done
+  
+  # Echo all found CUDA versions
+  if [[ ${#found_versions[@]} -gt 0 ]]; then
+    echo "Found CUDA versions: ${found_versions[*]}" >&2
+    local formatted_versions=""
+    for v in "${found_versions[@]}"; do
+      local major="$((v / 10))"
+      local minor="$((v % 10))"
+      formatted_versions="${formatted_versions}${major}.${minor} "
+    done
+    echo "Available CUDA versions: ${formatted_versions% }" >&2
+  fi
+  
+  if [[ -n "$highest_found" ]]; then
+    echo "$highest_found"
+    return 0
+  fi
+  
+  return 1
+}
+
+prompt_yes_no() {
+  local prompt="$1"
+  local response
+  while true; do
+    read -r -p "$prompt (y/n): " response
+    case "$response" in
+      [Yy]|[Yy][Ee][Ss]) return 0 ;;
+      [Nn]|[Nn][Oo]) return 1 ;;
+      *) echo "Please answer y or n." ;;
+    esac
+  done
+}
+
 ensure_uv
 require_cmd systemctl
 require_cmd curl
@@ -94,10 +167,41 @@ if [[ -z "$VLLM_VERSION" ]]; then
 fi
 
 VLLM_WHEEL_URL="https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cu${CUDA_VERSION}-cp38-abi3-manylinux_2_35_${CPU_ARCH}.whl"
-if ! curl -sSfI "$VLLM_WHEEL_URL" >/dev/null; then
-  echo "No vLLM wheel found for CUDA ${CUDA_VERSION_RAW} (cu${CUDA_VERSION}) on ${CPU_ARCH}." >&2
-  echo "Checked: $VLLM_WHEEL_URL" >&2
-  exit 1
+
+# Check if exact match exists
+if ! curl -sSfI "$VLLM_WHEEL_URL" >/dev/null 2>&1; then
+  echo "No vLLM wheel found for exact CUDA version ${CUDA_VERSION_RAW} (cu${CUDA_VERSION})." >&2
+  
+  # Try to find the highest available CUDA version
+  echo "Searching for highest available CUDA version wheel..." >&2
+  HIGHEST_CUDA="$(find_highest_available_cuda "$VLLM_VERSION" "$CPU_ARCH")"
+  
+  if [[ -z "$HIGHEST_CUDA" ]]; then
+    echo "No compatible vLLM wheel found for any CUDA version on ${CPU_ARCH}." >&2
+    exit 1
+  fi
+  
+  HIGHEST_CUDA_MAJOR="$((HIGHEST_CUDA / 10))"
+  HIGHEST_CUDA_MINOR="$((HIGHEST_CUDA % 10))"
+  HIGHEST_CUDA_VERSION_RAW="${HIGHEST_CUDA_MAJOR}.${HIGHEST_CUDA_MINOR}"
+  
+  echo
+  echo "WARNING: Your CUDA version (${CUDA_VERSION_RAW}) is newer than the highest available vLLM wheel."
+  echo "Highest available CUDA version: ${HIGHEST_CUDA_VERSION_RAW} (cu${HIGHEST_CUDA})"
+  echo
+  echo "This may work due to CUDA forward compatibility, but is not guaranteed."
+  echo
+  
+  if ! prompt_yes_no "Do you want to continue with CUDA ${HIGHEST_CUDA_VERSION_RAW} wheel?"; then
+    echo "Installation cancelled by user." >&2
+    exit 1
+  fi
+  
+  # Update to use the highest available version
+  CUDA_VERSION="$HIGHEST_CUDA"
+  VLLM_WHEEL_URL="https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cu${CUDA_VERSION}-cp38-abi3-manylinux_2_35_${CPU_ARCH}.whl"
+  echo
+  echo "Proceeding with CUDA ${HIGHEST_CUDA_VERSION_RAW} wheel..."
 fi
 
 API_HOST="$(prompt_default "Client URI (bind host)" "0.0.0.0")"
@@ -121,7 +225,7 @@ grep -v -E '^[[:space:]]*vllm([[:space:]]|$)' "$ROOT_DIR/requirements.txt" > "$R
 uv pip install -r "$REQ_NO_VLLM"
 rm -f "$REQ_NO_VLLM"
 
-echo "Installing vLLM matching detected CUDA version..."
+echo "Installing vLLM matching CUDA version cu${CUDA_VERSION}..."
 uv pip install "$VLLM_WHEEL_URL" --extra-index-url "https://download.pytorch.org/whl/cu${CUDA_VERSION}"
 
 ENV_FILE="$ROOT_DIR/.env"
