@@ -171,10 +171,22 @@ if ! curl -sSfI "$VLLM_WHEEL_URL" >/dev/null 2>&1; then
   HIGHEST_CUDA_VERSION_RAW="${HIGHEST_CUDA_MAJOR}.${HIGHEST_CUDA_MINOR}"
   
   echo
-  echo "WARNING: Your CUDA version (${CUDA_VERSION_RAW}) is newer than the highest available vLLM wheel."
-  echo "Highest available CUDA version: ${HIGHEST_CUDA_VERSION_RAW} (cu${HIGHEST_CUDA})"
+  echo "========================================================================"
+  echo "                     CUDA VERSION MISMATCH WARNING"
+  echo "========================================================================"
+  echo "Your CUDA version:           ${CUDA_VERSION_RAW} (cu${CUDA_VERSION})"
+  echo "Highest available wheel:     ${HIGHEST_CUDA_VERSION_RAW} (cu${HIGHEST_CUDA})"
   echo
-  echo "This may work due to CUDA forward compatibility, but is not guaranteed."
+  
+  if [[ $CUDA_VERSION -gt $HIGHEST_CUDA ]]; then
+    echo "Your CUDA version is NEWER than the available wheel."
+    echo "This may work due to CUDA forward compatibility, but is not guaranteed."
+  elif [[ $CUDA_VERSION -lt $HIGHEST_CUDA ]]; then
+    echo "Your CUDA version is OLDER than the available wheel."
+    echo "This wheel may not be compatible with your CUDA installation."
+  fi
+  
+  echo "========================================================================"
   echo
   
   if ! prompt_yes_no "Do you want to continue with CUDA ${HIGHEST_CUDA_VERSION_RAW} wheel?"; then
