@@ -448,18 +448,29 @@ def install_vllm_wheel(venv_dir: Path) -> None:
     cpu_arch = platform.machine()
     vllm_version = fetch_latest_vllm_version()
 
-    wheel_url = (
-        "https://github.com/vllm-project/vllm/releases/download/"
-        f"v{vllm_version}/vllm-{vllm_version}+cu{cuda_compact}-"
-        f"cp38-abi3-manylinux_2_35_{cpu_arch}.whl"
-    )
+    wheel_url = _vllm_wheel_url(vllm_version, cuda_compact, cpu_arch)
 
     if not url_exists(wheel_url):
-        raise RuntimeError(
-            "No vLLM wheel found for CUDA "
-            f"{cuda_version} (cu{cuda_compact}) on {cpu_arch}.\n"
-            f"Checked: {wheel_url}"
+        print(
+            f"No vLLM wheel found for exact CUDA version "
+            f"{cuda_version} (cu{cuda_compact}). "
+            f"Searching for highest compatible wheel..."
         )
+        fallback = _find_highest_available_cuda(vllm_version, cpu_arch)
+        if fallback is None:
+            raise RuntimeError(
+                "No vLLM wheel found for CUDA "
+                f"{cuda_version} (cu{cuda_compact}) on {cpu_arch}, "
+                "and no fallback CUDA version wheel was found.\n"
+                f"Checked: {wheel_url}"
+            )
+        fallback_major, fallback_minor = divmod(fallback, 10)
+        print(
+            f"Using vLLM wheel for CUDA {fallback_major}.{fallback_minor} "
+            f"(cu{fallback}) instead of {cuda_version} (cu{cuda_compact})."
+        )
+        cuda_compact = fallback
+        wheel_url = _vllm_wheel_url(vllm_version, cuda_compact, cpu_arch)
 
     uv = shutil.which("uv")
     if uv:
@@ -487,6 +498,30 @@ def install_vllm_wheel(venv_dir: Path) -> None:
             f"https://download.pytorch.org/whl/cu{cuda_compact}",
         ]
     )
+
+
+def _vllm_wheel_url(vllm_version: str, cuda_compact: int, cpu_arch: str) -> str:
+    return (
+        "https://github.com/vllm-project/vllm/releases/download/"
+        f"v{vllm_version}/vllm-{vllm_version}+cu{cuda_compact}-"
+        f"cp38-abi3-manylinux_2_35_{cpu_arch}.whl"
+    )
+
+
+def _find_highest_available_cuda(vllm_version: str, cpu_arch: str) -> int | None:
+    """Search for the highest CUDA version that has a published vLLM wheel."""
+    highest: int | None = None
+    consecutive_misses = 0
+    for cu in range(128, 200):
+        if url_exists(_vllm_wheel_url(vllm_version, cu, cpu_arch)):
+            highest = cu
+            consecutive_misses = 0
+        else:
+            if highest is not None:
+                consecutive_misses += 1
+                if consecutive_misses >= 5:
+                    break
+    return highest
 
 
 def build_vllm_install_error(venv_dir: Path, exc: Exception) -> str:
