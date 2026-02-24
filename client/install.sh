@@ -77,12 +77,14 @@ find_highest_available_cuda() {
   local cpu_arch="$2"
   local max_search=200  # Reasonable upper limit to prevent infinite loop
   local highest_found=""
+  local found_versions=()
   
   # Search from cu100 up to max_search
   for cu_ver in $(seq 100 "$max_search"); do
     local wheel_url="https://github.com/vllm-project/vllm/releases/download/v${vllm_version}/vllm-${vllm_version}+cu${cu_ver}-cp38-abi3-manylinux_2_35_${cpu_arch}.whl"
     if curl -sSfI "$wheel_url" >/dev/null 2>&1; then
       highest_found="$cu_ver"
+      found_versions+=("$cu_ver")
     else
       # If we've found at least one and now hit a miss, check a few more to be sure
       if [[ -n "$highest_found" ]]; then
@@ -94,6 +96,7 @@ find_highest_available_cuda() {
           local next_url="https://github.com/vllm-project/vllm/releases/download/v${vllm_version}/vllm-${vllm_version}+cu${next_cu}-cp38-abi3-manylinux_2_35_${cpu_arch}.whl"
           if curl -sSfI "$next_url" >/dev/null 2>&1; then
             highest_found="$next_cu"
+            found_versions+=("$next_cu")
             consecutive_misses=0
             break
           else
@@ -108,6 +111,18 @@ find_highest_available_cuda() {
       fi
     fi
   done
+  
+  # Echo all found CUDA versions
+  if [[ ${#found_versions[@]} -gt 0 ]]; then
+    echo "Found CUDA versions: ${found_versions[*]}" >&2
+    local formatted_versions=""
+    for v in "${found_versions[@]}"; do
+      local major="$((v / 10))"
+      local minor="$((v % 10))"
+      formatted_versions="${formatted_versions}${major}.${minor} "
+    done
+    echo "Available CUDA versions: ${formatted_versions% }" >&2
+  fi
   
   if [[ -n "$highest_found" ]]; then
     echo "$highest_found"
