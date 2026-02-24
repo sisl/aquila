@@ -1,4 +1,4 @@
-# vLLM Cluster Manager
+# VLLM Cluster Manager
 
 [![Docs](https://img.shields.io/badge/docs-online-30a2ff)](https://sisl.github.io/VLLMClusterManager/)
 [![PyPI](https://img.shields.io/pypi/v/vllm-cluster-manager?color=30a2ff)](https://pypi.org/project/vllm-cluster-manager/)
