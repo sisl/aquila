@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -6,7 +6,7 @@ from app.db.session import get_session
 from app.models.node import Node
 from app.schemas.node import DiscoveredNode, NodeCreate, NodeRead
 from app.services.consul import consul_service
-from app.services.client_api import check_port
+from app.services.client_api import check_port, get_packages, upload_package
 
 router = APIRouter()
 
@@ -49,3 +49,28 @@ async def check_node_port(
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     return await check_port(node.ip_address, node.port, port)
+
+
+@router.post("/{node_id}/packages/upload")
+async def upload_node_package(
+    node_id: int,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    node = await session.get(Node, node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    file_bytes = await file.read()
+    return await upload_package(
+        node.ip_address, node.port, file.filename or "package", file_bytes
+    )
+
+
+@router.get("/{node_id}/packages")
+async def list_node_packages(
+    node_id: int, session: AsyncSession = Depends(get_session)
+) -> dict[str, object]:
+    node = await session.get(Node, node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    return await get_packages(node.ip_address, node.port)

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   Box,
   Button,
@@ -26,7 +26,8 @@ import {
   createConfig,
   deleteConfig,
   startDeployment,
-  stopDeployment
+  stopDeployment,
+  uploadPackage
 } from "../services/api";
 import { StatusCard } from "../components/StatusCard";
 import { NodeTable } from "../components/NodeTable";
@@ -49,6 +50,10 @@ export function Dashboard() {
     []
   );
   const envVarId = useRef(1);
+  const [pipPackages, setPipPackages] = useState<Array<{ id: number; value: string }>>([]);
+  const pipPackageId = useRef(1);
+  const [uploadingPackage, setUploadingPackage] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [configName, setConfigName] = useState("");
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [logsDeploymentId, setLogsDeploymentId] = useState<number | null>(null);
@@ -106,6 +111,7 @@ export function Dashboard() {
       setRawArgs("");
       setShowRawArgs(false);
       setEnvVars([]);
+      setPipPackages([]);
       setConfigName("");
     }
   });
@@ -240,6 +246,12 @@ export function Dashboard() {
   };
 
   const buildVllmCommand = (deployment: Deployment) => {
+    const lines: string[] = [];
+    if (deployment.pip_packages && deployment.pip_packages.length > 0) {
+      lines.push(`# pip_packages: ${deployment.pip_packages.join(", ")}`);
+      lines.push(`# (uses isolated per-deployment venv)`);
+    }
+
     const envParts: string[] = [];
     if (deployment.gpu_ids && deployment.gpu_ids.length > 0) {
       envParts.push(`CUDA_VISIBLE_DEVICES=${shellQuote(deployment.gpu_ids.join(","))}`);
@@ -253,8 +265,12 @@ export function Dashboard() {
       }
     }
 
+    const pythonBin =
+      deployment.pip_packages && deployment.pip_packages.length > 0
+        ? "<venv>/bin/python"
+        : "python";
     const cmdParts = [
-      "python",
+      pythonBin,
       "-m",
       "vllm.entrypoints.openai.api_server",
       "--model",
@@ -269,7 +285,8 @@ export function Dashboard() {
     }
 
     const envPrefix = envParts.length > 0 ? `${envParts.join(" ")} ` : "";
-    return `${envPrefix}${cmdParts.map(shellQuote).join(" ")}`;
+    lines.push(`${envPrefix}${cmdParts.map(shellQuote).join(" ")}`);
+    return lines.join("\n");
   };
 
   const extraEnvVars = useMemo(() => {
@@ -277,6 +294,35 @@ export function Dashboard() {
       .map((entry) => ({ key: entry.key.trim(), value: entry.value }))
       .filter((entry) => entry.key.length > 0);
   }, [envVars]);
+
+  const cleanedPipPackages = useMemo(() => {
+    return pipPackages
+      .map((entry) => entry.value.trim())
+      .filter((value) => value.length > 0);
+  }, [pipPackages]);
+
+  const handlePackageUpload = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file || nodeId === "") return;
+      setUploadingPackage(true);
+      try {
+        const result = await uploadPackage(Number(nodeId), file);
+        setPipPackages((prev) => [
+          ...prev,
+          { id: pipPackageId.current++, value: result.install_path }
+        ]);
+      } catch {
+        // Upload failed — user can retry
+      } finally {
+        setUploadingPackage(false);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
+      }
+    },
+    [nodeId]
+  );
 
   const loadConfig = (config: DeploymentConfig) => {
     const payload = config.payload ?? {};
@@ -292,6 +338,9 @@ export function Dashboard() {
       : [];
     const rawArgsValue = typeof payload.raw_args === "string" ? payload.raw_args : "";
     const envVarsValue = Array.isArray(payload.env_vars) ? payload.env_vars : [];
+    const pipPackagesValue = Array.isArray(payload.pip_packages)
+      ? (payload.pip_packages as string[])
+      : [];
 
     setModelName(modelNameValue);
     setPort(Number.isNaN(portValue) ? 8001 : portValue);
@@ -344,6 +393,13 @@ export function Dashboard() {
       }))
     );
     envVarId.current += envVarsValue.length;
+    setPipPackages(
+      pipPackagesValue.map((value, index) => ({
+        id: pipPackageId.current + index,
+        value: String(value)
+      }))
+    );
+    pipPackageId.current += pipPackagesValue.length;
   };
 
   const gpuAllocationWarning = useMemo(() => {
@@ -644,6 +700,68 @@ export function Dashboard() {
                     Add Environment Variable
                   </AppButton>
                 </Box>
+                <Typography
+                  variant="body2"
+                  className="muted"
+                  sx={{ textTransform: "uppercase", letterSpacing: "0.16em", fontSize: "0.7rem" }}
+                >
+                  Pip Packages
+                </Typography>
+                {pipPackages.map((entry, index) => (
+                  <Stack key={entry.id} direction="row" spacing={2} sx={{ mt: 0.5 }}>
+                    <TextField
+                      fullWidth
+                      label="Pip Specifier"
+                      placeholder="vllm==0.8.0"
+                      value={entry.value}
+                      onChange={(event) => {
+                        const next = [...pipPackages];
+                        next[index] = { ...entry, value: event.target.value };
+                        setPipPackages(next);
+                      }}
+                    />
+                    <AppButton
+                      type="button"
+                      className="app-button--small"
+                      onClick={() => {
+                        const next = pipPackages.filter((_, i) => i !== index);
+                        setPipPackages(next);
+                      }}
+                    >
+                      Remove
+                    </AppButton>
+                  </Stack>
+                ))}
+                <Typography variant="caption" className="muted">
+                  Override the node's default vLLM. Accepts any pip specifier.
+                </Typography>
+                <Stack direction="row" spacing={1}>
+                  <AppButton
+                    type="button"
+                    onClick={() =>
+                      setPipPackages([
+                        ...pipPackages,
+                        { id: pipPackageId.current++, value: "" }
+                      ])
+                    }
+                  >
+                    Add Pip Package
+                  </AppButton>
+                  <AppButton
+                    type="button"
+                    disabled={nodeId === "" || uploadingPackage}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    {uploadingPackage ? "Uploading..." : "Upload Package"}
+                  </AppButton>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".tar.gz,.tgz,.zip"
+                    style={{ display: "none" }}
+                    onChange={handlePackageUpload}
+                  />
+                </Stack>
               </Stack>
               <Box>
                 <Button
@@ -659,7 +777,9 @@ export function Dashboard() {
                       gpu_memory_fraction: gpuFraction,
                       gpu_ids: gpuIds,
                       extra_args: extraArgs.length > 0 ? extraArgs : undefined,
-                      env_vars: extraEnvVars.length > 0 ? extraEnvVars : undefined
+                      env_vars: extraEnvVars.length > 0 ? extraEnvVars : undefined,
+                      pip_packages:
+                        cleanedPipPackages.length > 0 ? cleanedPipPackages : undefined
                     })
                   }
                 >
@@ -843,7 +963,8 @@ export function Dashboard() {
                         value: entry.value
                       })),
                       raw_args: rawArgs,
-                      env_vars: extraEnvVars
+                      env_vars: extraEnvVars,
+                      pip_packages: cleanedPipPackages
                     }
                   })
                 }

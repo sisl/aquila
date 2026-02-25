@@ -1,16 +1,21 @@
 from contextlib import asynccontextmanager
 import asyncio
 from collections import deque
+import hashlib
 import logging
 import os
+from pathlib import Path
 import re
 import shutil
 import socket
 import subprocess
 import sys
+import tarfile
+import tempfile
+import zipfile
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
 import psutil
 
@@ -44,6 +49,81 @@ class StartRequest(BaseModel):
     tensor_parallel_size: int | None = None
     extra_args: list[str] | None = None
     env_vars: list[dict[str, str]] | None = None
+    pip_packages: list[str] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Per-deployment venv management
+# ---------------------------------------------------------------------------
+
+_CLIENT_ROOT = Path(os.environ.get("VLLM_CLIENT_ROOT", Path.home() / ".vllm-client"))
+_VENVS_DIR = _CLIENT_ROOT / ".venvs"
+_PACKAGES_DIR = _CLIENT_ROOT / ".packages"
+
+
+def _venv_hash(packages: list[str]) -> str:
+    """Deterministic short hash for a sorted package list."""
+    canonical = "\n".join(sorted(packages))
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
+async def _get_or_create_venv(packages: list[str], log_deque: deque | None = None) -> str:
+    """Create (or reuse) an isolated venv and install *packages*.
+
+    Returns the path to the venv's Python binary.
+    """
+    venv_id = _venv_hash(packages)
+    venv_dir = _VENVS_DIR / venv_id
+    python_bin = venv_dir / "bin" / "python"
+    marker = venv_dir / ".installed"
+
+    if marker.exists() and python_bin.exists():
+        logger.info("Reusing cached venv %s", venv_id)
+        if log_deque is not None:
+            log_deque.append(f"[pip] Reusing cached venv {venv_id}")
+        return str(python_bin)
+
+    venv_dir.mkdir(parents=True, exist_ok=True)
+
+    def _log(msg: str) -> None:
+        logger.info(msg)
+        if log_deque is not None:
+            log_deque.append(msg)
+
+    # Create venv
+    _log(f"[pip] Creating venv {venv_id}...")
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "venv", str(venv_dir),
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    )
+    stdout, _ = await proc.communicate()
+    if proc.returncode != 0:
+        _log(f"[pip] venv creation failed: {stdout.decode(errors='replace')}")
+        raise RuntimeError(f"Failed to create venv: {stdout.decode(errors='replace')}")
+
+    # Build pip install command
+    pip_cmd = [
+        str(python_bin), "-m", "pip", "install",
+        "--extra-index-url", "https://download.pytorch.org/whl/cu124",
+    ]
+    pip_cmd.extend(packages)
+
+    _log(f"[pip] Installing: {' '.join(packages)}")
+    proc = await asyncio.create_subprocess_exec(
+        *pip_cmd,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    )
+    stdout, _ = await proc.communicate()
+    for line in stdout.decode(errors="replace").splitlines():
+        _log(f"[pip] {line}")
+
+    if proc.returncode != 0:
+        _log(f"[pip] Installation failed (exit {proc.returncode})")
+        raise RuntimeError(f"pip install failed (exit {proc.returncode})")
+
+    marker.touch()
+    _log(f"[pip] Venv {venv_id} ready")
+    return str(python_bin)
 
 
 @app.get("/health")
@@ -107,8 +187,18 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
                 detail=f"Port {payload.port} is already in use on this node.",
             )
 
+    # Resolve Python binary: per-deployment venv or system default
+    log_buf = _logs.setdefault(key, deque(maxlen=2000))
+    if payload.pip_packages:
+        try:
+            python_bin = await _get_or_create_venv(payload.pip_packages, log_buf)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+    else:
+        python_bin = sys.executable
+
     cmd = [
-        sys.executable,
+        python_bin,
         "-m",
         "vllm.entrypoints.openai.api_server",
         "--model",
@@ -174,10 +264,10 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
         "gpu_memory_fraction": payload.gpu_memory_fraction,
         "gpu_ids": payload.gpu_ids or [],
         "tensor_parallel_size": payload.tensor_parallel_size,
+        "pip_packages": payload.pip_packages or [],
         "status": "loading",
         "desired_state": "running",
     }
-    _logs[key] = deque(maxlen=2000)
     asyncio.create_task(_stream_output(key, process))
     asyncio.create_task(_monitor_process(key, process))
     return {"status": "started", "key": key}
@@ -273,6 +363,100 @@ async def _stream_output(key: str, process: subprocess.Popen) -> None:
             _logs.setdefault(key, deque(maxlen=2000)).append(cleaned)
 
     await asyncio.to_thread(_reader)
+
+
+# ---------------------------------------------------------------------------
+# Venv cache management endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/venvs")
+def list_venvs() -> dict[str, list[dict[str, object]]]:
+    venvs: list[dict[str, object]] = []
+    if _VENVS_DIR.exists():
+        for entry in sorted(_VENVS_DIR.iterdir()):
+            if entry.is_dir():
+                venvs.append({
+                    "id": entry.name,
+                    "path": str(entry),
+                    "installed": (entry / ".installed").exists(),
+                })
+    return {"venvs": venvs}
+
+
+@app.delete("/venvs/{venv_id}")
+def delete_venv(venv_id: str) -> dict[str, str]:
+    venv_dir = _VENVS_DIR / venv_id
+    if not venv_dir.exists() or not venv_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Venv not found")
+    shutil.rmtree(venv_dir)
+    return {"status": "deleted", "id": venv_id}
+
+
+# ---------------------------------------------------------------------------
+# Package upload endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/packages/upload")
+async def upload_package(file: UploadFile = File(...)) -> dict[str, str]:
+    filename = file.filename or "package"
+    data = await file.read()
+    content_hash = hashlib.sha256(data).hexdigest()[:16]
+    pkg_dir = _PACKAGES_DIR / content_hash
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=filename) as tmp:
+        tmp.write(data)
+        tmp_path = tmp.name
+
+    try:
+        if filename.endswith(".tar.gz") or filename.endswith(".tgz"):
+            with tarfile.open(tmp_path, "r:gz") as tar:
+                tar.extractall(path=str(pkg_dir))
+        elif filename.endswith(".zip"):
+            with zipfile.ZipFile(tmp_path, "r") as zf:
+                zf.extractall(path=str(pkg_dir))
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported archive format. Use .tar.gz or .zip",
+            )
+    finally:
+        os.unlink(tmp_path)
+
+    # If the archive contained a single top-level directory, point to it
+    children = list(pkg_dir.iterdir())
+    install_path = str(children[0]) if len(children) == 1 and children[0].is_dir() else str(pkg_dir)
+
+    return {
+        "status": "uploaded",
+        "package_id": content_hash,
+        "install_path": install_path,
+    }
+
+
+@app.get("/packages")
+def list_packages() -> dict[str, list[dict[str, str]]]:
+    packages: list[dict[str, str]] = []
+    if _PACKAGES_DIR.exists():
+        for entry in sorted(_PACKAGES_DIR.iterdir()):
+            if entry.is_dir():
+                children = list(entry.iterdir())
+                install_path = str(children[0]) if len(children) == 1 and children[0].is_dir() else str(entry)
+                packages.append({
+                    "id": entry.name,
+                    "path": str(entry),
+                    "install_path": install_path,
+                })
+    return {"packages": packages}
+
+
+@app.delete("/packages/{package_id}")
+def delete_package(package_id: str) -> dict[str, str]:
+    pkg_dir = _PACKAGES_DIR / package_id
+    if not pkg_dir.exists() or not pkg_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Package not found")
+    shutil.rmtree(pkg_dir)
+    return {"status": "deleted", "id": package_id}
 
 
 def _gpu_metrics() -> list[dict[str, object]]:

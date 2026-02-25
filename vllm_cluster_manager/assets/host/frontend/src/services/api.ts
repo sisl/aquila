@@ -25,6 +25,7 @@ export type Deployment = {
   tensor_parallel_size?: number | null;
   extra_args?: string[];
   env_vars?: { key: string; value: string }[];
+  pip_packages?: string[];
   status: string;
   created_at?: string | null;
 };
@@ -73,6 +74,7 @@ export type DeploymentStart = {
   tensor_parallel_size?: number | null;
   extra_args?: string[];
   env_vars?: { key: string; value: string }[];
+  pip_packages?: string[];
 };
 
 export async function startDeployment(payload: DeploymentStart): Promise<Deployment> {
@@ -162,4 +164,45 @@ export async function deleteConfig(configId: number): Promise<void> {
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status}`);
   }
+}
+
+export type PackageUploadResult = {
+  status: string;
+  package_id: string;
+  install_path: string;
+};
+
+export async function uploadPackage(
+  nodeId: number,
+  file: File
+): Promise<PackageUploadResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch(`${baseUrl}/nodes/${nodeId}/packages/upload`, {
+    method: "POST",
+    body: formData
+  });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const body = (await response.json()) as { detail?: string };
+      detail = body.detail ?? "";
+    } catch {
+      detail = "";
+    }
+    throw new Error(detail || `Request failed: ${response.status}`);
+  }
+  return (await response.json()) as PackageUploadResult;
+}
+
+export type NodePackage = {
+  id: string;
+  path: string;
+  install_path: string;
+};
+
+export async function fetchNodePackages(
+  nodeId: number
+): Promise<{ packages: NodePackage[] }> {
+  return request<{ packages: NodePackage[] }>(`/nodes/${nodeId}/packages`);
 }

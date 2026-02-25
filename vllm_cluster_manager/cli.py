@@ -270,9 +270,8 @@ def run_client_down() -> None:
 def ensure_runtime_dir(kind: str) -> Path:
     base_dir = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
     runtime_dir = base_dir / "vllm_cluster_manager" / kind
-    if not runtime_dir.exists():
-        runtime_dir.mkdir(parents=True, exist_ok=True)
-        copy_assets(kind, runtime_dir)
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    copy_assets(kind, runtime_dir)
     return runtime_dir
 
 
@@ -340,13 +339,7 @@ def write_host_env_files(runtime_dir: Path, config: HostConfig) -> None:
 
 
 def ensure_host_assets(runtime_dir: Path) -> None:
-    missing = []
     for subdir in ("frontend", "backend", "infra"):
-        if not (runtime_dir / subdir).exists():
-            missing.append(subdir)
-    if not missing:
-        return
-    for subdir in missing:
         copy_assets_subdir("host", subdir, runtime_dir / subdir)
 
 

@@ -11,6 +11,7 @@ class DeploymentBase(BaseModel):
     tensor_parallel_size: int | None = None
     extra_args: list[str] | None = None
     env_vars: list[dict[str, str]] | None = None
+    pip_packages: list[str] | None = None
     status: str = "stopped"
 
 

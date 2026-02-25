@@ -17,5 +17,6 @@ class Deployment(Base):
     tensor_parallel_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     extra_args: Mapped[list[str]] = mapped_column(JSON, default=list)
     env_vars: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    pip_packages: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(32), default="stopped")
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())

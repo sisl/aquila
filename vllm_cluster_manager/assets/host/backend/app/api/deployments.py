@@ -64,6 +64,7 @@ async def start_deployment(
         payload.tensor_parallel_size,
         payload.extra_args,
         payload.env_vars,
+        payload.pip_packages,
     )
 
     payload_data = payload.model_dump(exclude={"status"})
