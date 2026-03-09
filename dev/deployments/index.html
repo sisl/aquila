@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://sisl.github.io/vllmclustermanager/latest/getting-started/">
+        <link rel="canonical" href="https://sisl.github.io/vllmclustermanager/latest/deployments/">
       
       
-        <link rel="prev" href="..">
+        <link rel="prev" href="../getting-started/">
       
       
-        <link rel="next" href="../deployments/">
+        <link rel="next" href="../cli/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Getting Started - vLLM Cluster Manager</title>
+        <title>Deployments - vLLM Cluster Manager</title>
       
     
     
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#getting-started" class="md-skip">
+        <a href="#deployments" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Getting Started
+              Deployments
             
           </span>
         </div>
@@ -272,6 +272,33 @@
       
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
     
   
   
@@ -291,7 +318,7 @@
   <span class="md-ellipsis">
     
   
-    Getting Started
+    Deployments
   
 
     
@@ -309,7 +336,7 @@
   <span class="md-ellipsis">
     
   
-    Getting Started
+    Deployments
   
 
     
@@ -335,10 +362,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
+  <a href="#creating-a-deployment" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Prerequisites
+        Creating a deployment
       
     </span>
   </a>
@@ -346,10 +373,66 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#install-uv" class="md-nav__link">
+  <a href="#vllm-version" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Install (uv)
+        vLLM version
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="vLLM version">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-venvs-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How venvs work
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gpu-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPU selection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="GPU selection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tensor-parallel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tensor parallel
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extra-packages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extra packages
       
     </span>
   </a>
@@ -357,10 +440,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#start-the-host" class="md-nav__link">
+  <a href="#plugins" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Start the host
+        Plugins
       
     </span>
   </a>
@@ -368,10 +451,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#start-a-client" class="md-nav__link">
+  <a href="#extra-args" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Start a client
+        Extra args
       
     </span>
   </a>
@@ -379,10 +462,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#stop-services" class="md-nav__link">
+  <a href="#environment-variables" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Stop services
+        Environment variables
       
     </span>
   </a>
@@ -390,10 +473,49 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#verify-the-ui" class="md-nav__link">
+  <a href="#deployment-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Verify the UI
+        Deployment lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deployment lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#readiness-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Readiness detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#saved-configurations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Saved configurations
       
     </span>
   </a>
@@ -401,10 +523,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#next-steps" class="md-nav__link">
+  <a href="#deployment-recovery" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Next steps
+        Deployment recovery
       
     </span>
   </a>
@@ -415,33 +537,6 @@
   
 </nav>
       
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../deployments/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Deployments
-  
-
-    
-  </span>
-  
-  
-
-      </a>
     </li>
   
 
@@ -581,10 +676,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
+  <a href="#creating-a-deployment" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Prerequisites
+        Creating a deployment
       
     </span>
   </a>
@@ -592,10 +687,66 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#install-uv" class="md-nav__link">
+  <a href="#vllm-version" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Install (uv)
+        vLLM version
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="vLLM version">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-venvs-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How venvs work
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gpu-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPU selection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="GPU selection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tensor-parallel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tensor parallel
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extra-packages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extra packages
       
     </span>
   </a>
@@ -603,10 +754,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#start-the-host" class="md-nav__link">
+  <a href="#plugins" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Start the host
+        Plugins
       
     </span>
   </a>
@@ -614,10 +765,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#start-a-client" class="md-nav__link">
+  <a href="#extra-args" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Start a client
+        Extra args
       
     </span>
   </a>
@@ -625,10 +776,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#stop-services" class="md-nav__link">
+  <a href="#environment-variables" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Stop services
+        Environment variables
       
     </span>
   </a>
@@ -636,10 +787,49 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#verify-the-ui" class="md-nav__link">
+  <a href="#deployment-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Verify the UI
+        Deployment lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deployment lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#readiness-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Readiness detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#saved-configurations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Saved configurations
       
     </span>
   </a>
@@ -647,10 +837,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#next-steps" class="md-nav__link">
+  <a href="#deployment-recovery" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Next steps
+        Deployment recovery
       
     </span>
   </a>
@@ -677,64 +867,182 @@
   
 
 
-<h1 id="getting-started">Getting Started</h1>
-<p>This guide takes you from a clean host to a working cluster with at least one client.</p>
-<h2 id="prerequisites">Prerequisites</h2>
-<p>Host:
-- Docker + Docker Compose plugin (configure the <code>docker</code> group so no sudo is required)
-- Node.js + npm
-- Python 3.10–3.14
-- <code>uv</code> (Python package manager)</p>
-<p>Client:
-- NVIDIA GPU with CUDA
-- <code>nvcc</code> or <code>nvidia-smi</code> on PATH
-- Python 3.10–3.14 + <code>python3-dev</code> and <code>build-essential</code> (Debian/Ubuntu)
-- <code>uv</code> (Python package manager)</p>
-<p>Install <code>uv</code> if you don't already have it:
-<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-LsSf<span class="w"> </span>https://astral.sh/uv/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
-</code></pre></div></p>
-<p>On Debian/Ubuntu:
-<div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>apt<span class="w"> </span>update
-sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>python3-dev<span class="w"> </span>build-essential
-</code></pre></div></p>
-<h2 id="install-uv">Install (uv)</h2>
-<p>Create and activate a virtual environment:
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>venv
-<span class="nb">source</span><span class="w"> </span>.venv/bin/activate
-</code></pre></div></p>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>vllm-cluster-manager
-</code></pre></div>
-<h2 id="start-the-host">Start the host</h2>
-<p>Foreground (no sudo):
-<div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>host<span class="w"> </span>up<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--host-frontend-port<span class="w"> </span><span class="m">5173</span><span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">11400</span>
-</code></pre></div></p>
-<p>Persistent service (systemd):
-<div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>host<span class="w"> </span>up<span class="w"> </span>--service<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--host-frontend-port<span class="w"> </span><span class="m">5173</span><span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">11400</span>
-</code></pre></div></p>
-<p><code>--host-discover-port</code> sets the discovery port used for clients. Use <code>--host-backend-port</code> to override the backend API port (default 8000).</p>
-<h2 id="start-a-client">Start a client</h2>
-<p>Foreground (no sudo):
-<div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>client<span class="w"> </span>up<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">1</span>.2.3.4<span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">11400</span>
-</code></pre></div></p>
-<p>Persistent service (systemd):
-<div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>client<span class="w"> </span>up<span class="w"> </span>--service<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">1</span>.2.3.4<span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">11400</span>
-</code></pre></div></p>
+<h1 id="deployments">Deployments</h1>
+<p>This page covers how to deploy models through the dashboard, including vLLM version selection, extra packages, plugins, GPU assignment, and deployment lifecycle.</p>
+<h2 id="creating-a-deployment">Creating a deployment</h2>
+<p>From the dashboard, select a target node, fill in the deployment form, and click <strong>Deploy</strong>. The required fields are:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Model Name</strong></td>
+<td>Hugging Face model ID (e.g. <code>meta-llama/Llama-3.1-8B-Instruct</code>).</td>
+</tr>
+<tr>
+<td><strong>Port</strong></td>
+<td>Port the vLLM OpenAI-compatible server will listen on.</td>
+</tr>
+<tr>
+<td><strong>GPU Memory Fraction</strong></td>
+<td>Fraction of GPU memory to allocate (0.0–1.0).</td>
+</tr>
+</tbody>
+</table>
+<h2 id="vllm-version">vLLM version</h2>
+<p>Every deployment runs inside its own isolated virtual environment. You can control which vLLM version is installed.</p>
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>(blank)</em></td>
+<td>Installs the <strong>latest stable release</strong> from GitHub automatically.</td>
+</tr>
+<tr>
+<td><code>0.8.5</code></td>
+<td>Installs that specific release (<code>vllm==0.8.5</code>).</td>
+</tr>
+<tr>
+<td><code>nightly</code></td>
+<td>Installs the latest nightly build from <code>wheels.vllm.ai/nightly</code>.</td>
+</tr>
+<tr>
+<td>40-character hex string</td>
+<td>Installs from a specific commit via <code>wheels.vllm.ai/&lt;commit&gt;</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>The version field placeholder dynamically shows the current latest release so you always know what "blank" resolves to.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>If the client cannot register, verify firewall rules and that the host is reachable from the client on the discovery port.</p>
+<p>The resolved version is stored in the database and displayed in the deployments table, even when you leave the field blank. This way you always know exactly which vLLM version a deployment is running.</p>
 </div>
-<h2 id="stop-services">Stop services</h2>
-<div class="highlight"><pre><span></span><code>vllm-cluster-manager<span class="w"> </span>host<span class="w"> </span>down
-vllm-cluster-manager<span class="w"> </span>client<span class="w"> </span>down
+<h3 id="how-venvs-work">How venvs work</h3>
+<ul>
+<li>Each deployment gets its own venv, keyed by a hash of the version string and deployment key (<code>model:port</code>).</li>
+<li>Venvs are cached and reused if the same version + key combination is deployed again.</li>
+<li>When a deployment is stopped, its venv is automatically cleaned up.</li>
+<li><code>uv</code> is used for venv creation and package installation for speed and reliability.</li>
+</ul>
+<h2 id="gpu-selection">GPU selection</h2>
+<p>Select which GPUs to use with the toggle buttons in the deploy form. Each button corresponds to a GPU index reported by the node. You can select one or more GPUs.</p>
+<ul>
+<li>If no GPUs are selected, vLLM uses its default GPU assignment.</li>
+<li>Selecting multiple GPUs sets <code>CUDA_VISIBLE_DEVICES</code> accordingly.</li>
+</ul>
+<h3 id="tensor-parallel">Tensor parallel</h3>
+<p>When using multiple GPUs for a single model, set <strong>Tensor Parallel Size</strong> to the number of GPUs. This tells vLLM to shard the model across the selected GPUs.</p>
+<h2 id="extra-packages">Extra packages</h2>
+<p>Expand the <strong>Add Extra Packages</strong> section to install additional pip packages into the deployment's venv. Enter one package per line, using standard pip syntax:</p>
+<div class="highlight"><pre><span></span><code>transformers&gt;=4.40
+flash-attn
 </code></pre></div>
-<h2 id="verify-the-ui">Verify the UI</h2>
-<p>Open the UI at <code>http://&lt;host-ip&gt;:&lt;host-frontend-port&gt;</code>.</p>
-<p>Common first-run checks:
-- The UI loads without a network error.
-- The host shows up as healthy.
-- The client appears under Nodes within ~30 seconds.</p>
-<h2 id="next-steps">Next steps</h2>
-<p>Once a client node appears in the dashboard, you are ready to deploy models. See the <a href="../deployments/">Deployments</a> page for details on vLLM version selection, GPU assignment, extra packages, and plugins.</p>
+<p>These packages are installed after vLLM, into the same isolated venv.</p>
+<h2 id="plugins">Plugins</h2>
+<p>vLLM supports Python plugins passed as CLI arguments (e.g. <code>--reasoning-parser-plugin my_plugin.py</code>). To use a plugin:</p>
+<ol>
+<li>Click the upload button and select a <code>.py</code> file.</li>
+<li>The file is uploaded to the client node and stored as-is.</li>
+<li>The file path is automatically added to the <strong>Extra Args</strong> field.</li>
+</ol>
+<p>Supported upload formats:</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.py</code></td>
+<td>Stored as a plugin file. Path added to extra args.</td>
+</tr>
+<tr>
+<td><code>.whl</code></td>
+<td>Stored as a wheel. Path added to extra packages for pip install.</td>
+</tr>
+<tr>
+<td><code>.tar.gz</code> / <code>.zip</code></td>
+<td>Extracted and path added to extra packages.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="extra-args">Extra args</h2>
+<p>The <strong>Extra Args</strong> field lets you pass additional CLI flags to the vLLM server. These are appended directly to the <code>vllm.entrypoints.openai.api_server</code> command. Examples:</p>
+<div class="highlight"><pre><span></span><code>--max-model-len 4096
+--reasoning-parser-plugin /path/to/plugin.py
+--enforce-eager
+</code></pre></div>
+<h2 id="environment-variables">Environment variables</h2>
+<p>Add environment variables for the deployment under the <strong>Env Vars</strong> section. Common use cases:</p>
+<ul>
+<li><code>HF_TOKEN</code> or <code>HUGGING_FACE_HUB_TOKEN</code> for gated models (e.g. Llama).</li>
+<li><code>VLLM_ATTENTION_BACKEND</code> to override the attention backend.</li>
+</ul>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>Sensitive values (tokens, keys, passwords) are masked in the deployment logs for security.</p>
+</div>
+<h2 id="deployment-lifecycle">Deployment lifecycle</h2>
+<p>A deployment goes through these states:</p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>loading</strong></td>
+<td>Venv is being created and/or the vLLM server is starting up.</td>
+</tr>
+<tr>
+<td><strong>running</strong></td>
+<td>The vLLM server is healthy and responding to requests.</td>
+</tr>
+<tr>
+<td><strong>stopping</strong></td>
+<td>A stop was requested and the process is shutting down.</td>
+</tr>
+<tr>
+<td><strong>stopped</strong></td>
+<td>The process has exited cleanly.</td>
+</tr>
+<tr>
+<td><strong>error</strong></td>
+<td>The process exited unexpectedly. Check logs for details.</td>
+</tr>
+<tr>
+<td><strong>unreachable</strong></td>
+<td>The host backend cannot reach the client node.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="readiness-detection">Readiness detection</h3>
+<p>After starting, the backend polls the vLLM server's <code>/health</code> and <code>/v1/models</code> endpoints every 2 seconds. The deployment transitions from <code>loading</code> to <code>running</code> once either endpoint returns HTTP 200.</p>
+<h3 id="logs">Logs</h3>
+<p>Click the terminal icon on any deployment to stream its logs in real time. Logs include:</p>
+<ul>
+<li>Venv creation and package installation output (<code>[uv]</code> prefixed lines).</li>
+<li>vLLM server startup and runtime output.</li>
+<li>ANSI escape codes are automatically stripped for clean display.</li>
+</ul>
+<p>Logs are buffered (up to 2000 lines per deployment) and available as long as the deployment exists.</p>
+<h2 id="saved-configurations">Saved configurations</h2>
+<p>You can save and load deployment configurations from the dashboard. A saved config stores all deployment settings (model, port, GPU selection, version, packages, extra args, env vars) so you can redeploy with one click.</p>
+<h2 id="deployment-recovery">Deployment recovery</h2>
+<p>If the host backend is restarted while deployments are still running on client nodes, the sync loop automatically rediscovers them and re-creates the database entries. Running deployments are never interrupted by a backend restart.</p>
 
 
 

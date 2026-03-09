@@ -300,6 +300,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../deployments/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../cli/" class="md-nav__link">
         
   
@@ -507,6 +534,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#uv-not-found-when-running-as-a-systemd-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        uv not found when running as a systemd service
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deployment-stuck-in-loading" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deployment stuck in "loading"
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deployments-missing-after-backend-restart" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deployments missing after backend restart
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#data-disappears-after-host-down" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -618,6 +678,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#uv-not-found-when-running-as-a-systemd-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        uv not found when running as a systemd service
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deployment-stuck-in-loading" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deployment stuck in "loading"
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deployments-missing-after-backend-restart" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deployments missing after backend restart
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#data-disappears-after-host-down" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -681,7 +774,24 @@
 <p><strong>Symptoms</strong>: Install fails after detecting CUDA.</p>
 <p>Checks:
 - The vLLM wheel must exist for your CUDA version and CPU architecture.
-- If you are on an unusual CUDA version, consider installing a supported version or building vLLM from source.</p>
+- If no wheel matches your exact CUDA version, the installer automatically tries the highest compatible version. If that also fails, consider installing a supported CUDA version or building vLLM from source.</p>
+<h2 id="uv-not-found-when-running-as-a-systemd-service"><code>uv</code> not found when running as a systemd service</h2>
+<p><strong>Symptoms</strong>: Deploying a model fails with "uv is not installed or not on PATH".</p>
+<p>Explanation:
+- Systemd services run with a minimal PATH that may not include user-local directories.</p>
+<p>Checks:
+- Verify <code>uv</code> is installed: <code>which uv</code> or check <code>~/.local/bin/uv</code> and <code>~/.cargo/bin/uv</code>.
+- The client automatically searches common locations (<code>/usr/local/bin</code>, <code>/usr/bin</code>, <code>/home/*/.local/bin</code>, <code>/home/*/.cargo/bin</code>), but if <code>uv</code> is installed elsewhere, add its directory to the systemd service's <code>Environment=PATH=...</code> line.</p>
+<h2 id="deployment-stuck-in-loading">Deployment stuck in "loading"</h2>
+<p><strong>Symptoms</strong>: A deployment stays in the <code>loading</code> state and never transitions to <code>running</code>.</p>
+<p>Checks:
+- Open the deployment logs to see venv creation or vLLM startup errors.
+- Common causes: network issues downloading packages, insufficient GPU memory, model not found on Hugging Face, or missing <code>HF_TOKEN</code> for gated models.
+- The readiness check polls <code>/health</code> and <code>/v1/models</code> on the deployment port. Ensure no firewall blocks localhost access on the client node.</p>
+<h2 id="deployments-missing-after-backend-restart">Deployments missing after backend restart</h2>
+<p><strong>Symptoms</strong>: Running models disappear from the dashboard after restarting the host backend.</p>
+<p>Explanation:
+- The sync loop automatically rediscovers running deployments from clients within ~10 seconds. If deployments still don't appear, check that the client nodes are reachable from the host.</p>
 <h2 id="data-disappears-after-host-down">Data disappears after <code>host down</code></h2>
 <p><strong>Symptoms</strong>: Previously created deployments are gone after shutdown.</p>
 <p>Explanation:
