@@ -42,6 +42,7 @@ extra_css:
 nav:
   - Overview: index.md
   - Getting Started: getting-started.md
+  - Deployments: deployments.md
   - CLI Reference: cli.md
   - Architecture: architecture.md
   - Operations: operations.md

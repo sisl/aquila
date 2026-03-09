@@ -61,4 +61,21 @@ If you proxy the frontend under a path like `/vllm/`, pass `--base-path /vllm/` 
 For Nginx, make sure `/vllm/api` and `/vllm/ws` are proxied to the backend (port 8000 by default). The frontend uses the configured base path for API and WebSocket URLs, so it works both at `/` and under a subpath.
 
 ## GPU wheel selection
-The client bootstrapper detects CUDA from `nvcc` or `nvidia-smi` and installs a vLLM wheel that matches the detected version. If the wheel doesn't exist for your CUDA version, the install fails with a clear error.
+The client bootstrapper detects CUDA from `nvcc` or `nvidia-smi` and installs a vLLM wheel that matches the detected version. If no wheel exists for your exact CUDA version, the installer automatically falls back to the highest compatible CUDA wheel and displays a warning.
+
+## Per-deployment venvs
+Each deployment creates an isolated virtual environment under `~/.vllm-client/.venvs/`. Venvs are managed with `uv` for fast creation and installs. When a deployment is stopped, its venv is automatically removed. Cached venvs are reused when deploying the same version + model + port combination.
+
+You can inspect and manage venvs via the client API:
+
+- `GET /venvs` — list all cached venvs.
+- `DELETE /venvs/<id>` — remove a specific venv.
+
+## Uploaded packages and plugins
+Uploaded files (`.py`, `.whl`, `.tar.gz`, `.zip`) are stored under `~/.vllm-client/.packages/`. Each upload is content-hashed to avoid duplicates.
+
+- `GET /packages` — list uploaded packages.
+- `DELETE /packages/<id>` — remove a specific package.
+
+## Deployment recovery
+The backend sync loop runs every 5 seconds and polls each client for its current deployments. If the backend is restarted while models are running on clients, the sync loop automatically recreates the database entries so the dashboard reflects the actual cluster state. Deployments in `stopped` or `error` state on the client are not re-imported.

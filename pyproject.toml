@@ -34,7 +34,7 @@ vllm-cluster-manager host install
 vllm-cluster-manager host start
 ```
 
-Then open the dashboard at `http://<host-ip>:3000` to deploy and monitor models across your cluster.
+Then open the dashboard at `http://<host-ip>:5173` to deploy and monitor models across your cluster.
 
 ## Features
 

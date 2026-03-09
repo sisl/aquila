@@ -44,7 +44,31 @@ Checks:
 
 Checks:
 - The vLLM wheel must exist for your CUDA version and CPU architecture.
-- If you are on an unusual CUDA version, consider installing a supported version or building vLLM from source.
+- If no wheel matches your exact CUDA version, the installer automatically tries the highest compatible version. If that also fails, consider installing a supported CUDA version or building vLLM from source.
+
+## `uv` not found when running as a systemd service
+**Symptoms**: Deploying a model fails with "uv is not installed or not on PATH".
+
+Explanation:
+- Systemd services run with a minimal PATH that may not include user-local directories.
+
+Checks:
+- Verify `uv` is installed: `which uv` or check `~/.local/bin/uv` and `~/.cargo/bin/uv`.
+- The client automatically searches common locations (`/usr/local/bin`, `/usr/bin`, `/home/*/.local/bin`, `/home/*/.cargo/bin`), but if `uv` is installed elsewhere, add its directory to the systemd service's `Environment=PATH=...` line.
+
+## Deployment stuck in "loading"
+**Symptoms**: A deployment stays in the `loading` state and never transitions to `running`.
+
+Checks:
+- Open the deployment logs to see venv creation or vLLM startup errors.
+- Common causes: network issues downloading packages, insufficient GPU memory, model not found on Hugging Face, or missing `HF_TOKEN` for gated models.
+- The readiness check polls `/health` and `/v1/models` on the deployment port. Ensure no firewall blocks localhost access on the client node.
+
+## Deployments missing after backend restart
+**Symptoms**: Running models disappear from the dashboard after restarting the host backend.
+
+Explanation:
+- The sync loop automatically rediscovers running deployments from clients within ~10 seconds. If deployments still don't appear, check that the client nodes are reachable from the host.
 
 ## Data disappears after `host down`
 **Symptoms**: Previously created deployments are gone after shutdown.

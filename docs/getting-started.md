@@ -6,13 +6,13 @@ This guide takes you from a clean host to a working cluster with at least one cl
 Host:
 - Docker + Docker Compose plugin (configure the `docker` group so no sudo is required)
 - Node.js + npm
-- Python 3.12
+- Python 3.10–3.14
 - `uv` (Python package manager)
 
 Client:
 - NVIDIA GPU with CUDA
 - `nvcc` or `nvidia-smi` on PATH
-- Python 3.12 + `python3.12-dev` and `build-essential` (Debian/Ubuntu)
+- Python 3.10–3.14 + `python3-dev` and `build-essential` (Debian/Ubuntu)
 - `uv` (Python package manager)
 
 Install `uv` if you don't already have it:
@@ -23,13 +23,13 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 On Debian/Ubuntu:
 ```bash
 sudo apt update
-sudo apt install -y python3.12-dev build-essential
+sudo apt install -y python3-dev build-essential
 ```
 
 ## Install (uv)
-Create and activate a Python 3.12+ virtual environment:
+Create and activate a virtual environment:
 ```bash
-uv venv --python=3.12
+uv venv
 source .venv/bin/activate
 ```
 
@@ -77,3 +77,6 @@ Common first-run checks:
 - The UI loads without a network error.
 - The host shows up as healthy.
 - The client appears under Nodes within ~30 seconds.
+
+## Next steps
+Once a client node appears in the dashboard, you are ready to deploy models. See the [Deployments](deployments.md) page for details on vLLM version selection, GPU assignment, extra packages, and plugins.
