@@ -59,6 +59,7 @@ export function DeploymentTable({
             <TableCell>Model</TableCell>
             <TableCell>Node</TableCell>
             <TableCell>Port</TableCell>
+            <TableCell>vLLM</TableCell>
             <TableCell>GPU Fraction</TableCell>
             <TableCell>GPUs</TableCell>
             <TableCell>Args</TableCell>
@@ -74,6 +75,12 @@ export function DeploymentTable({
                 <TableCell>{deployment.model_name}</TableCell>
                 <TableCell>{nodeNameById[deployment.node_id] ?? deployment.node_id}</TableCell>
                 <TableCell>{deployment.port}</TableCell>
+                <TableCell>
+                  {deployment.vllm_version || "-"}
+                  {deployment.extra_packages && deployment.extra_packages.length > 0 && (
+                    <Chip label={`+${deployment.extra_packages.length} pkg`} size="small" sx={{ ml: 0.5 }} />
+                  )}
+                </TableCell>
                 <TableCell>{deployment.gpu_memory_fraction}</TableCell>
                 <TableCell>
                   {deployment.gpu_ids && deployment.gpu_ids.length > 0
@@ -148,7 +155,7 @@ export function DeploymentTable({
           })}
           {deployments.length === 0 && (
             <TableRow>
-              <TableCell colSpan={8}>No deployments yet.</TableCell>
+              <TableCell colSpan={9}>No deployments yet.</TableCell>
             </TableRow>
           )}
         </TableBody>

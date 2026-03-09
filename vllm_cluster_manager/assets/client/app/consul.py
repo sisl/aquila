@@ -41,7 +41,12 @@ def register_node() -> None:
         service_id=service_id,
         address=advertise,
         port=settings.port,
-        check=consul.Check.http(f"http://{advertise}:{settings.port}/health", "10s"),
+        check=consul.Check.http(
+            f"http://{advertise}:{settings.port}/health",
+            "15s",
+            timeout="30s",
+            deregister="5m",
+        ),
     )
 
 

@@ -19,11 +19,12 @@ async def start_model(
     tensor_parallel_size: int | None = None,
     extra_args: list[str] | None = None,
     env_vars: list[dict[str, str]] | None = None,
-    pip_packages: list[str] | None = None,
-) -> None:
+    vllm_version: str | None = None,
+    extra_packages: list[str] | None = None,
+) -> dict[str, object]:
     url = _satellite_url(node_ip, node_port, "/deployments/start")
-    # Use a longer timeout when pip_packages are specified (venv creation can take minutes)
-    timeout = 600.0 if pip_packages else 10.0
+    # Always use a longer timeout since venv creation can take minutes
+    timeout = 600.0
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             response = await client.post(
@@ -36,7 +37,8 @@ async def start_model(
                     "tensor_parallel_size": tensor_parallel_size,
                     "extra_args": extra_args,
                     "env_vars": env_vars,
-                    "pip_packages": pip_packages,
+                    "vllm_version": vllm_version,
+                    "extra_packages": extra_packages,
                 },
             )
         except httpx.RequestError as exc:
@@ -46,7 +48,7 @@ async def start_model(
             ) from exc
 
         if response.is_success:
-            return
+            return response.json()
 
         detail = ""
         try:
@@ -70,7 +72,7 @@ async def stop_model(node_ip: str, node_port: int | None, key: str) -> None:
 
 async def get_statuses(node_ip: str, node_port: int | None) -> list[dict[str, object]]:
     url = _satellite_url(node_ip, node_port, "/deployments/status")
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(url)
         response.raise_for_status()
         payload = response.json()
@@ -91,7 +93,7 @@ async def get_logs(
 
 async def get_metrics(node_ip: str, node_port: int | None) -> dict[str, object]:
     url = _satellite_url(node_ip, node_port, "/metrics")
-    async with httpx.AsyncClient(timeout=5.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.get(url)
         response.raise_for_status()
         return response.json()
@@ -125,17 +127,14 @@ async def check_port(node_ip: str, node_port: int | None, port: int) -> dict[str
 
 
 async def upload_package(
-    node_ip: str,
-    node_port: int | None,
-    filename: str,
-    file_bytes: bytes,
-) -> dict[str, str]:
+    node_ip: str, node_port: int | None, filename: str, content: bytes
+) -> dict[str, object]:
     url = _satellite_url(node_ip, node_port, "/packages/upload")
     async with httpx.AsyncClient(timeout=120.0) as client:
         try:
             response = await client.post(
                 url,
-                files={"file": (filename, file_bytes)},
+                files={"file": (filename, content)},
             )
         except httpx.RequestError as exc:
             raise HTTPException(
@@ -155,25 +154,15 @@ async def upload_package(
 
         raise HTTPException(
             status_code=response.status_code,
-            detail=detail or f"Client rejected request with status {response.status_code}.",
+            detail=detail or f"Client rejected upload with status {response.status_code}.",
         )
 
 
-async def get_packages(node_ip: str, node_port: int | None) -> dict[str, object]:
+async def get_packages(node_ip: str, node_port: int | None) -> list[dict[str, object]]:
     url = _satellite_url(node_ip, node_port, "/packages")
     async with httpx.AsyncClient(timeout=10.0) as client:
-        try:
-            response = await client.get(url)
-        except httpx.RequestError as exc:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Failed to reach client at {url}: {exc}",
-            ) from exc
+        response = await client.get(url)
+        response.raise_for_status()
+        return response.json()
 
-        if response.is_success:
-            return response.json()
 
-        raise HTTPException(
-            status_code=response.status_code,
-            detail=f"Client rejected request with status {response.status_code}.",
-        )

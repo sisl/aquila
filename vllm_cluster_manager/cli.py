@@ -477,6 +477,8 @@ def install_vllm_wheel(venv_dir: Path) -> None:
                 wheel_url,
                 "--extra-index-url",
                 f"https://download.pytorch.org/whl/cu{cuda_compact}",
+                "--index-strategy",
+                "unsafe-best-match",
             ]
         )
         return

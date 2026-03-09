@@ -83,6 +83,40 @@ async def ensure_deployment_gpu_columns() -> None:
                 pass
 
 
+async def ensure_node_default_pip_packages_column() -> None:
+    dialect = engine.dialect.name
+    if dialect == "postgresql":
+        statement = (
+            "ALTER TABLE nodes "
+            "ADD COLUMN IF NOT EXISTS default_pip_packages JSONB DEFAULT '[]'::jsonb"
+        )
+    else:
+        statement = "ALTER TABLE nodes ADD COLUMN default_pip_packages JSON"
+
+    async with engine.begin() as conn:
+        try:
+            await conn.execute(text(statement))
+        except Exception:
+            pass
+
+
+async def ensure_node_installed_packages_column() -> None:
+    dialect = engine.dialect.name
+    if dialect == "postgresql":
+        statement = (
+            "ALTER TABLE nodes "
+            "ADD COLUMN IF NOT EXISTS installed_packages JSONB DEFAULT '[]'::jsonb"
+        )
+    else:
+        statement = "ALTER TABLE nodes ADD COLUMN installed_packages JSON"
+
+    async with engine.begin() as conn:
+        try:
+            await conn.execute(text(statement))
+        except Exception:
+            pass
+
+
 async def ensure_deployment_pip_packages_column() -> None:
     dialect = engine.dialect.name
     if dialect == "postgresql":
@@ -92,6 +126,57 @@ async def ensure_deployment_pip_packages_column() -> None:
         )
     else:
         statement = "ALTER TABLE deployments ADD COLUMN pip_packages JSON"
+
+    async with engine.begin() as conn:
+        try:
+            await conn.execute(text(statement))
+        except Exception:
+            pass
+
+
+async def ensure_deployment_vllm_version_column() -> None:
+    dialect = engine.dialect.name
+    if dialect == "postgresql":
+        statement = (
+            "ALTER TABLE deployments "
+            "ADD COLUMN IF NOT EXISTS vllm_version VARCHAR(255)"
+        )
+    else:
+        statement = "ALTER TABLE deployments ADD COLUMN vllm_version VARCHAR(255)"
+
+    async with engine.begin() as conn:
+        try:
+            await conn.execute(text(statement))
+        except Exception:
+            pass
+
+
+async def ensure_node_default_vllm_version_column() -> None:
+    dialect = engine.dialect.name
+    if dialect == "postgresql":
+        statement = (
+            "ALTER TABLE nodes "
+            "ADD COLUMN IF NOT EXISTS default_vllm_version VARCHAR(255)"
+        )
+    else:
+        statement = "ALTER TABLE nodes ADD COLUMN default_vllm_version VARCHAR(255)"
+
+    async with engine.begin() as conn:
+        try:
+            await conn.execute(text(statement))
+        except Exception:
+            pass
+
+
+async def ensure_deployment_extra_packages_column() -> None:
+    dialect = engine.dialect.name
+    if dialect == "postgresql":
+        statement = (
+            "ALTER TABLE deployments "
+            "ADD COLUMN IF NOT EXISTS extra_packages JSONB DEFAULT '[]'::jsonb"
+        )
+    else:
+        statement = "ALTER TABLE deployments ADD COLUMN extra_packages JSON"
 
     async with engine.begin() as conn:
         try:
@@ -133,8 +218,13 @@ async def lifespan(_: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
     await ensure_node_gpu_column()
     await ensure_node_port_column()
+    await ensure_node_default_pip_packages_column()
+    await ensure_node_installed_packages_column()
     await ensure_deployment_gpu_columns()
     await ensure_deployment_pip_packages_column()
+    await ensure_deployment_vllm_version_column()
+    await ensure_node_default_vllm_version_column()
+    await ensure_deployment_extra_packages_column()
     await ensure_deployment_config_table()
     task = asyncio.create_task(sync_nodes_from_consul())
     deploy_task = asyncio.create_task(sync_deployments_from_clients())

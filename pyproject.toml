@@ -5,12 +5,57 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vllm-cluster-manager"
 version = "0.1.7"
-description = "Admin dashboard + satellite clients for multi-model vLLM deployments"
-readme = "README.md"
-requires-python = ">=3.12"
+description = "Deploy, manage, and monitor vLLM instances across a GPU cluster from a single web dashboard."
+requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Marc Schlichting", email="mschl@stanford.edu"}]
-urls = {Hompage="https://github.com/sisl/VLLMClusterManager"}
+readme = {text = """
+# vLLM Cluster Manager
+
+Deploy, manage, and monitor vLLM instances across a GPU cluster from a single web dashboard.
+
+## Quick Start
+
+```bash
+pip install vllm-cluster-manager
+```
+
+**On each GPU node (satellite):**
+
+```bash
+vllm-cluster-manager client install
+vllm-cluster-manager client start
+```
+
+**On the management server (host):**
+
+```bash
+vllm-cluster-manager host install
+vllm-cluster-manager host start
+```
+
+Then open the dashboard at `http://<host-ip>:3000` to deploy and monitor models across your cluster.
+
+## Features
+
+- Web dashboard for deploying and managing vLLM models across multiple GPU nodes
+- Automatic vLLM version management with isolated per-deployment virtual environments
+- Live GPU utilization metrics and deployment status monitoring
+- Consul-based automatic node discovery
+- Support for custom pip packages and vLLM plugins
+""", content-type = "text/markdown"}
+keywords = ["vllm", "llm", "gpu", "cluster", "inference", "deployment"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://github.com/sisl/VLLMClusterManager"
 
 [project.scripts]
 vllm-cluster-manager = "vllm_cluster_manager.cli:main"

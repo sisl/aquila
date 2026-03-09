@@ -54,7 +54,7 @@ async def start_deployment(
             ),
         )
 
-    await start_model(
+    client_result = await start_model(
         node.ip_address,
         node.port,
         payload.model_name,
@@ -64,10 +64,15 @@ async def start_deployment(
         payload.tensor_parallel_size,
         payload.extra_args,
         payload.env_vars,
-        payload.pip_packages,
+        payload.vllm_version,
+        payload.extra_packages,
     )
 
     payload_data = payload.model_dump(exclude={"status"})
+    # Use the resolved version from the client (e.g. latest stable when left blank)
+    resolved_version = client_result.get("vllm_version") if client_result else None
+    if resolved_version:
+        payload_data["vllm_version"] = resolved_version
     deployment = Deployment(**payload_data, status="loading")
     session.add(deployment)
     await session.commit()

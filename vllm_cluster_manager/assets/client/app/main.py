@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 import asyncio
 from collections import deque
 import hashlib
+import json
 import logging
 import os
 from pathlib import Path
@@ -10,6 +11,8 @@ import shutil
 import socket
 import subprocess
 import sys
+from urllib.request import Request, urlopen
+
 import tarfile
 import tempfile
 import zipfile
@@ -26,8 +29,47 @@ logger = logging.getLogger("vllm-cluster-client")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
+_latest_vllm_version: str = ""
+_latest_vllm_version_fetched_at: float = 0.0
+_LATEST_VERSION_TTL: float = 3600.0  # re-fetch once per hour
+
+
+def _fetch_latest_vllm_version() -> str:
+    """Fetch the latest vLLM release version from GitHub."""
+    url = "https://api.github.com/repos/vllm-project/vllm/releases/latest"
+    request = Request(url, headers={"User-Agent": "vllm-cluster-client"})
+    data = json.loads(urlopen(request, timeout=15).read().decode("utf-8"))
+    tag = data.get("tag_name", "")
+    version = tag.lstrip("v")
+    if not version:
+        raise RuntimeError("Unable to determine latest vLLM version from GitHub releases.")
+    return version
+
+
+def _get_latest_vllm_version() -> str:
+    """Return the latest stable vLLM release from GitHub (cached with TTL)."""
+    import time
+
+    global _latest_vllm_version, _latest_vllm_version_fetched_at
+    now = time.monotonic()
+    if _latest_vllm_version and (now - _latest_vllm_version_fetched_at) < _LATEST_VERSION_TTL:
+        return _latest_vllm_version
+    try:
+        _latest_vllm_version = _fetch_latest_vllm_version()
+        _latest_vllm_version_fetched_at = now
+        logger.info("Resolved latest vLLM version: %s", _latest_vllm_version)
+    except Exception as exc:
+        logger.warning("Failed to fetch latest vLLM version: %s", exc)
+        if _latest_vllm_version:
+            # Keep the stale value if we had one
+            _latest_vllm_version_fetched_at = now
+    return _latest_vllm_version
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # Pre-fetch latest vLLM version at startup
+    _get_latest_vllm_version()
     register_node()
     task = asyncio.create_task(register_loop())
     yield
@@ -49,7 +91,8 @@ class StartRequest(BaseModel):
     tensor_parallel_size: int | None = None
     extra_args: list[str] | None = None
     env_vars: list[dict[str, str]] | None = None
-    pip_packages: list[str] | None = None
+    vllm_version: str | None = None
+    extra_packages: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -61,18 +104,74 @@ _VENVS_DIR = _CLIENT_ROOT / ".venvs"
 _PACKAGES_DIR = _CLIENT_ROOT / ".packages"
 
 
-def _venv_hash(packages: list[str]) -> str:
-    """Deterministic short hash for a sorted package list."""
-    canonical = "\n".join(sorted(packages))
+def _venv_hash(version: str, deployment_key: str = "") -> str:
+    """Deterministic short hash for a version string and deployment key."""
+    canonical = version + "\n" + deployment_key
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
-async def _get_or_create_venv(packages: list[str], log_deque: deque | None = None) -> str:
-    """Create (or reuse) an isolated venv and install *packages*.
+def _detect_cuda_compact() -> int | None:
+    """Return the CUDA version as a compact int (e.g. 130 for 13.0).
+
+    Tries nvcc first, then nvidia-smi.  Returns None when detection fails.
+    """
+    import re as _re
+
+    for cmd, pattern in (
+        (["nvcc", "--version"], r"release\s+(\d+)\.(\d+)"),
+        (["nvidia-smi"], r"CUDA Version:\s*(\d+)\.(\d+)"),
+    ):
+        if not shutil.which(cmd[0]):
+            continue
+        try:
+            out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
+        except Exception:
+            continue
+        m = _re.search(pattern, out)
+        if m:
+            return int(m.group(1)) * 10 + int(m.group(2))
+    return None
+
+
+def _find_uv() -> str:
+    """Return the path to the ``uv`` binary, or raise if not found."""
+    uv = shutil.which("uv")
+    if uv is not None:
+        return uv
+    # uv may not be on PATH in systemd; check common install locations.
+    candidates: list[Path] = [
+        Path("/usr/local/bin/uv"),
+        Path("/usr/bin/uv"),
+    ]
+    # Check home dirs (current user, root, and all /home/* users)
+    homes = [Path.home(), Path("/root")]
+    try:
+        homes.extend(sorted(Path("/home").iterdir()))
+    except OSError:
+        pass
+    for home in homes:
+        candidates.append(home / ".local" / "bin" / "uv")
+        candidates.append(home / ".cargo" / "bin" / "uv")
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    raise RuntimeError(
+        "uv is not installed or not on PATH. "
+        "Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    )
+
+
+async def _get_or_create_vllm_venv(
+    version: str,
+    deployment_key: str = "",
+    log_deque: deque | None = None,
+    extra_packages: list[str] | None = None,
+) -> str:
+    """Create (or reuse) an isolated venv and install vLLM using uv.
 
     Returns the path to the venv's Python binary.
     """
-    venv_id = _venv_hash(packages)
+    venv_id = _venv_hash(version, deployment_key)
     venv_dir = _VENVS_DIR / venv_id
     python_bin = venv_dir / "bin" / "python"
     marker = venv_dir / ".installed"
@@ -80,49 +179,85 @@ async def _get_or_create_venv(packages: list[str], log_deque: deque | None = Non
     if marker.exists() and python_bin.exists():
         logger.info("Reusing cached venv %s", venv_id)
         if log_deque is not None:
-            log_deque.append(f"[pip] Reusing cached venv {venv_id}")
+            log_deque.append(f"[uv] Reusing cached venv {venv_id}")
         return str(python_bin)
 
     venv_dir.mkdir(parents=True, exist_ok=True)
+    uv = _find_uv()
 
     def _log(msg: str) -> None:
         logger.info(msg)
         if log_deque is not None:
             log_deque.append(msg)
 
-    # Create venv
-    _log(f"[pip] Creating venv {venv_id}...")
+    # Create venv with uv
+    _log(f"[uv] Creating venv {venv_id}...")
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-m", "venv", str(venv_dir),
+        uv, "venv", "--allow-existing", "--python", sys.executable, str(venv_dir),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
     stdout, _ = await proc.communicate()
     if proc.returncode != 0:
-        _log(f"[pip] venv creation failed: {stdout.decode(errors='replace')}")
+        _log(f"[uv] venv creation failed: {stdout.decode(errors='replace')}")
         raise RuntimeError(f"Failed to create venv: {stdout.decode(errors='replace')}")
 
-    # Build pip install command
-    pip_cmd = [
-        str(python_bin), "-m", "pip", "install",
-        "--extra-index-url", "https://download.pytorch.org/whl/cu124",
-    ]
-    pip_cmd.extend(packages)
+    # Determine install command based on version type
+    pip_cmd = [uv, "pip", "install", "--python", str(python_bin)]
 
-    _log(f"[pip] Installing: {' '.join(packages)}")
+    if re.match(r"^\d+\.\d+(\.\d+)?.*$", version):
+        # Release version (e.g. 0.15.0)
+        _log(f"[uv] Installing vllm=={version} ...")
+        pip_cmd.append("vllm==" + version)
+    elif version.lower() == "nightly":
+        # Nightly build
+        _log("[uv] Installing vllm nightly ...")
+        pip_cmd.extend([
+            "vllm",
+            "--extra-index-url", "https://wheels.vllm.ai/nightly",
+        ])
+    elif re.match(r"^[0-9a-f]{40}$", version):
+        # Commit hash
+        _log(f"[uv] Installing vllm from commit {version[:12]}... ")
+        pip_cmd.extend([
+            "vllm",
+            "--extra-index-url", f"https://wheels.vllm.ai/{version}",
+        ])
+    else:
+        _log(f"[uv] Unrecognised version format '{version}', treating as release specifier")
+        pip_cmd.append("vllm==" + version)
+
     proc = await asyncio.create_subprocess_exec(
         *pip_cmd,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
     stdout, _ = await proc.communicate()
     for line in stdout.decode(errors="replace").splitlines():
-        _log(f"[pip] {line}")
+        _log(f"[uv] {line}")
 
     if proc.returncode != 0:
-        _log(f"[pip] Installation failed (exit {proc.returncode})")
-        raise RuntimeError(f"pip install failed (exit {proc.returncode})")
+        _log(f"[uv] Installation failed (exit {proc.returncode})")
+        tail = "\n".join(stdout.decode(errors="replace").splitlines()[-20:])
+        raise RuntimeError(f"uv pip install failed (exit {proc.returncode}):\n{tail}")
+
+    # Install extra packages if provided
+    if extra_packages:
+        _log(f"[uv] Installing {len(extra_packages)} extra package(s)...")
+        extras_cmd = [uv, "pip", "install", "--python", str(python_bin)] + extra_packages
+        proc = await asyncio.create_subprocess_exec(
+            *extras_cmd,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        )
+        stdout, _ = await proc.communicate()
+        for line in stdout.decode(errors="replace").splitlines():
+            _log(f"[uv] {line}")
+
+        if proc.returncode != 0:
+            _log(f"[uv] Extra packages installation failed (exit {proc.returncode})")
+            tail = "\n".join(stdout.decode(errors="replace").splitlines()[-20:])
+            raise RuntimeError(f"uv pip install (extra packages) failed (exit {proc.returncode}):\n{tail}")
 
     marker.touch()
-    _log(f"[pip] Venv {venv_id} ready")
+    _log(f"[uv] Venv {venv_id} ready")
     return str(python_bin)
 
 
@@ -187,15 +322,21 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
                 detail=f"Port {payload.port} is already in use on this node.",
             )
 
-    # Resolve Python binary: per-deployment venv or system default
-    log_buf = _logs.setdefault(key, deque(maxlen=2000))
-    if payload.pip_packages:
-        try:
-            python_bin = await _get_or_create_venv(payload.pip_packages, log_buf)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-    else:
-        python_bin = sys.executable
+    # Resolve Python binary: always use a venv with the requested or latest vLLM version
+    log_buf = _logs[key] = deque(maxlen=2000)
+    resolved_version = payload.vllm_version or _get_latest_vllm_version()
+    if not resolved_version:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not determine vLLM version. Set vllm_version explicitly.",
+        )
+    try:
+        venv_id = _venv_hash(resolved_version, key)
+        python_bin = await _get_or_create_vllm_venv(
+            resolved_version, key, log_buf, payload.extra_packages,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     cmd = [
         python_bin,
@@ -214,6 +355,21 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
         cmd.extend(payload.extra_args)
 
     env = os.environ.copy()
+
+    # Add nvidia library paths from venv so CUDA shared libs are found
+    venv_site = Path(python_bin).resolve().parent.parent / "lib"
+    if venv_site.exists():
+        # Find all site-packages nvidia dirs that contain .so files
+        nvidia_lib_dirs: list[str] = []
+        for sp in venv_site.rglob("site-packages/nvidia/*/lib"):
+            if sp.is_dir():
+                nvidia_lib_dirs.append(str(sp))
+        if nvidia_lib_dirs:
+            existing_ld = env.get("LD_LIBRARY_PATH", "")
+            env["LD_LIBRARY_PATH"] = ":".join(nvidia_lib_dirs) + (
+                f":{existing_ld}" if existing_ld else ""
+            )
+
     if payload.gpu_ids:
         env["CUDA_VISIBLE_DEVICES"] = ",".join(str(gpu) for gpu in payload.gpu_ids)
     if payload.env_vars:
@@ -264,13 +420,14 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
         "gpu_memory_fraction": payload.gpu_memory_fraction,
         "gpu_ids": payload.gpu_ids or [],
         "tensor_parallel_size": payload.tensor_parallel_size,
-        "pip_packages": payload.pip_packages or [],
+        "vllm_version": resolved_version,
+        "venv_id": venv_id,
         "status": "loading",
         "desired_state": "running",
     }
     asyncio.create_task(_stream_output(key, process))
     asyncio.create_task(_monitor_process(key, process))
-    return {"status": "started", "key": key}
+    return {"status": "started", "key": key, "vllm_version": resolved_version}
 
 
 class StopRequest(BaseModel):
@@ -299,6 +456,8 @@ async def stop_deployment(payload: StopRequest) -> dict[str, str]:
     if not process:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
+    venv_id = _statuses.get(key, {}).get("venv_id") if key in _statuses else None
+
     if key in _statuses:
         _statuses[key]["status"] = "stopping"
         _statuses[key]["desired_state"] = "stopped"
@@ -306,6 +465,17 @@ async def stop_deployment(payload: StopRequest) -> dict[str, str]:
     process.terminate()
     asyncio.create_task(_force_kill(key, process))
     _processes.pop(key, None)
+
+    # Tear down the deployment venv
+    if venv_id:
+        venv_dir = _VENVS_DIR / venv_id
+        if venv_dir.exists():
+            try:
+                shutil.rmtree(venv_dir)
+                logger.info("Removed venv %s for deployment %s", venv_id, key)
+            except Exception as exc:
+                logger.warning("Failed to remove venv %s: %s", venv_id, exc)
+
     return {"status": "stopped", "key": key}
 
 
@@ -408,6 +578,7 @@ async def upload_package(file: UploadFile = File(...)) -> dict[str, str]:
         tmp.write(data)
         tmp_path = tmp.name
 
+    file_type = "package"
     try:
         if filename.endswith(".tar.gz") or filename.endswith(".tgz"):
             with tarfile.open(tmp_path, "r:gz") as tar:
@@ -415,22 +586,40 @@ async def upload_package(file: UploadFile = File(...)) -> dict[str, str]:
         elif filename.endswith(".zip"):
             with zipfile.ZipFile(tmp_path, "r") as zf:
                 zf.extractall(path=str(pkg_dir))
+        elif filename.endswith(".whl"):
+            shutil.copy2(tmp_path, pkg_dir / filename)
+        elif filename.endswith(".py"):
+            # Python plugin files are stored as-is; they get passed to vLLM
+            # via CLI flags like --reasoning-parser-plugin <path>
+            shutil.copy2(tmp_path, pkg_dir / filename)
+            file_type = "plugin"
         else:
             raise HTTPException(
                 status_code=400,
-                detail="Unsupported archive format. Use .tar.gz or .zip",
+                detail="Unsupported file format. Use .py, .whl, .tar.gz, or .zip",
             )
     finally:
         os.unlink(tmp_path)
 
-    # If the archive contained a single top-level directory, point to it
+    # Determine the pip-installable path:
+    # - .whl: point to the .whl file itself
+    # - .py: point to the .py file itself (not pip-installable, used as CLI arg)
+    # - archive with single top-level dir: point to that dir
+    # - otherwise: point to pkg_dir
     children = list(pkg_dir.iterdir())
-    install_path = str(children[0]) if len(children) == 1 and children[0].is_dir() else str(pkg_dir)
+    if len(children) == 1 and children[0].is_file():
+        install_path = str(children[0])
+    elif len(children) == 1 and children[0].is_dir():
+        install_path = str(children[0])
+    else:
+        install_path = str(pkg_dir)
 
     return {
         "status": "uploaded",
         "package_id": content_hash,
+        "filename": filename,
         "install_path": install_path,
+        "type": file_type,
     }
 
 

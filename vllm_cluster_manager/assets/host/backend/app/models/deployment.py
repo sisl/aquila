@@ -18,5 +18,7 @@ class Deployment(Base):
     extra_args: Mapped[list[str]] = mapped_column(JSON, default=list)
     env_vars: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
     pip_packages: Mapped[list[str]] = mapped_column(JSON, default=list)
+    vllm_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    extra_packages: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(32), default="stopped")
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())

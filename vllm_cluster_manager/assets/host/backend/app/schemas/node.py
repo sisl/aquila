@@ -8,6 +8,8 @@ class NodeBase(BaseModel):
     port: int | None = None
     status: str = "unknown"
     gpu_usage: list[dict[str, object]] | None = None
+    default_pip_packages: list[str] | None = None
+    installed_packages: list[str] | None = None
 
 
 class NodeCreate(NodeBase):

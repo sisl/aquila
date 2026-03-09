@@ -24,3 +24,6 @@ dist/
 
 # SAML artifacts
 /host/frontend/saml/
+
+# Dev
+.claude/

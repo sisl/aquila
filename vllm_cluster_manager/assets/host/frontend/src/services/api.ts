@@ -12,6 +12,8 @@ export type Node = {
     memory_used_mb?: number;
     memory_total_mb?: number;
   }[];
+  default_pip_packages?: string[];
+  installed_packages?: string[];
   last_heartbeat_at?: string | null;
 };
 
@@ -26,6 +28,8 @@ export type Deployment = {
   extra_args?: string[];
   env_vars?: { key: string; value: string }[];
   pip_packages?: string[];
+  vllm_version?: string | null;
+  extra_packages?: string[];
   status: string;
   created_at?: string | null;
 };
@@ -48,6 +52,10 @@ async function request<T>(path: string): Promise<T> {
 
 export function fetchNodes(): Promise<Node[]> {
   return request<Node[]>("/nodes/");
+}
+
+export function fetchLatestVllmVersion(): Promise<{ version: string }> {
+  return request<{ version: string }>("/vllm-version");
 }
 
 export function checkNodePort(
@@ -74,7 +82,8 @@ export type DeploymentStart = {
   tensor_parallel_size?: number | null;
   extra_args?: string[];
   env_vars?: { key: string; value: string }[];
-  pip_packages?: string[];
+  vllm_version?: string;
+  extra_packages?: string[];
 };
 
 export async function startDeployment(payload: DeploymentStart): Promise<Deployment> {
@@ -167,9 +176,10 @@ export async function deleteConfig(configId: number): Promise<void> {
 }
 
 export type PackageUploadResult = {
-  status: string;
   package_id: string;
+  filename: string;
   install_path: string;
+  type: "package" | "plugin";
 };
 
 export async function uploadPackage(
@@ -190,19 +200,16 @@ export async function uploadPackage(
     } catch {
       detail = "";
     }
-    throw new Error(detail || `Request failed: ${response.status}`);
+    throw new Error(detail || `Upload failed: ${response.status}`);
   }
   return (await response.json()) as PackageUploadResult;
 }
 
 export type NodePackage = {
-  id: string;
-  path: string;
-  install_path: string;
+  package_id: string;
+  filename: string;
 };
 
-export async function fetchNodePackages(
-  nodeId: number
-): Promise<{ packages: NodePackage[] }> {
-  return request<{ packages: NodePackage[] }>(`/nodes/${nodeId}/packages`);
+export async function fetchNodePackages(nodeId: number): Promise<NodePackage[]> {
+  return request<NodePackage[]>(`/nodes/${nodeId}/packages`);
 }

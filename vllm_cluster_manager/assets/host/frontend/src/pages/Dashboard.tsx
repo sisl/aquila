@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Box,
   Button,
@@ -6,10 +6,13 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  LinearProgress,
   MenuItem,
   Paper,
   Stack,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -18,6 +21,7 @@ import {
   fetchDeployments,
   fetchConfigs,
   fetchNodes,
+  fetchLatestVllmVersion,
   type Deployment,
   type DeploymentConfig,
   deleteDeployment,
@@ -50,9 +54,12 @@ export function Dashboard() {
     []
   );
   const envVarId = useRef(1);
-  const [pipPackages, setPipPackages] = useState<Array<{ id: number; value: string }>>([]);
-  const pipPackageId = useRef(1);
+  const [vllmVersion, setVllmVersion] = useState("");
+  const [extraPackagesText, setExtraPackagesText] = useState("");
+  const [showExtraPackages, setShowExtraPackages] = useState(false);
   const [uploadingPackage, setUploadingPackage] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [uploadSuccess, setUploadSuccess] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [configName, setConfigName] = useState("");
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
@@ -83,6 +90,13 @@ export function Dashboard() {
     queryFn: fetchConfigs
   });
 
+  const latestVllmQuery = useQuery({
+    queryKey: ["latest-vllm-version"],
+    queryFn: fetchLatestVllmVersion,
+    staleTime: 3600000,
+    refetchInterval: 3600000
+  });
+
   const portCheckQuery = useQuery({
     queryKey: ["port-check", nodeId, port],
     queryFn: () => checkNodePort(Number(nodeId), port),
@@ -103,6 +117,7 @@ export function Dashboard() {
         return [deployment, ...existing];
       });
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
+      setLogsDeploymentId(deployment.id);
       setModelName("");
       setPort(8001);
       setGpuFraction(0.5);
@@ -111,7 +126,9 @@ export function Dashboard() {
       setRawArgs("");
       setShowRawArgs(false);
       setEnvVars([]);
-      setPipPackages([]);
+      setVllmVersion("");
+      setExtraPackagesText("");
+      setShowExtraPackages(false);
       setConfigName("");
     }
   });
@@ -247,9 +264,15 @@ export function Dashboard() {
 
   const buildVllmCommand = (deployment: Deployment) => {
     const lines: string[] = [];
-    if (deployment.pip_packages && deployment.pip_packages.length > 0) {
+    if (deployment.vllm_version) {
+      lines.push(`# vllm_version: ${deployment.vllm_version}`);
+      lines.push(`# (uses isolated per-deployment venv)`);
+    } else if (deployment.pip_packages && deployment.pip_packages.length > 0) {
       lines.push(`# pip_packages: ${deployment.pip_packages.join(", ")}`);
       lines.push(`# (uses isolated per-deployment venv)`);
+    }
+    if (deployment.extra_packages && deployment.extra_packages.length > 0) {
+      lines.push(`# extra_packages: ${deployment.extra_packages.join(", ")}`);
     }
 
     const envParts: string[] = [];
@@ -265,10 +288,10 @@ export function Dashboard() {
       }
     }
 
-    const pythonBin =
-      deployment.pip_packages && deployment.pip_packages.length > 0
-        ? "<venv>/bin/python"
-        : "python";
+    const hasCustomEnv = deployment.vllm_version ||
+      (deployment.pip_packages && deployment.pip_packages.length > 0) ||
+      (deployment.extra_packages && deployment.extra_packages.length > 0);
+    const pythonBin = hasCustomEnv ? "<venv>/bin/python" : "python";
     const cmdParts = [
       pythonBin,
       "-m",
@@ -295,34 +318,50 @@ export function Dashboard() {
       .filter((entry) => entry.key.length > 0);
   }, [envVars]);
 
-  const cleanedPipPackages = useMemo(() => {
-    return pipPackages
-      .map((entry) => entry.value.trim())
-      .filter((value) => value.length > 0);
-  }, [pipPackages]);
+  const cleanedExtraPackages = useMemo(() => {
+    return extraPackagesText
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"));
+  }, [extraPackagesText]);
 
-  const handlePackageUpload = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (!file || nodeId === "") return;
-      setUploadingPackage(true);
-      try {
-        const result = await uploadPackage(Number(nodeId), file);
-        setPipPackages((prev) => [
-          ...prev,
-          { id: pipPackageId.current++, value: result.install_path }
-        ]);
-      } catch {
-        // Upload failed — user can retry
-      } finally {
-        setUploadingPackage(false);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = "";
-        }
+  const handlePackageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !nodeId) return;
+    setUploadingPackage(true);
+    setUploadError("");
+    setUploadSuccess("");
+    try {
+      const result = await uploadPackage(Number(nodeId), file);
+      if (result.type === "plugin") {
+        // .py plugin files are passed via CLI flags (e.g. --reasoning-parser-plugin)
+        // Add to raw args so user can reference it
+        setRawArgs((prev) => {
+          const trimmed = prev.trim();
+          const sep = trimmed.length > 0 ? " " : "";
+          return `${trimmed}${sep}${result.install_path}`;
+        });
+        setShowRawArgs(true);
+        setUploadSuccess(
+          `Plugin uploaded to ${result.install_path} — added to raw args. ` +
+          `Prepend the appropriate flag (e.g. --reasoning-parser-plugin).`
+        );
+      } else {
+        setExtraPackagesText((prev) => {
+          const trimmed = prev.trimEnd();
+          const sep = trimmed.length > 0 ? "\n" : "";
+          return `${trimmed}${sep}${result.install_path}`;
+        });
       }
-    },
-    [nodeId]
-  );
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploadingPackage(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
 
   const loadConfig = (config: DeploymentConfig) => {
     const payload = config.payload ?? {};
@@ -338,9 +377,6 @@ export function Dashboard() {
       : [];
     const rawArgsValue = typeof payload.raw_args === "string" ? payload.raw_args : "";
     const envVarsValue = Array.isArray(payload.env_vars) ? payload.env_vars : [];
-    const pipPackagesValue = Array.isArray(payload.pip_packages)
-      ? (payload.pip_packages as string[])
-      : [];
 
     setModelName(modelNameValue);
     setPort(Number.isNaN(portValue) ? 8001 : portValue);
@@ -393,13 +429,10 @@ export function Dashboard() {
       }))
     );
     envVarId.current += envVarsValue.length;
-    setPipPackages(
-      pipPackagesValue.map((value, index) => ({
-        id: pipPackageId.current + index,
-        value: String(value)
-      }))
-    );
-    pipPackageId.current += pipPackagesValue.length;
+    setVllmVersion(typeof payload.vllm_version === "string" ? payload.vllm_version : "");
+    const loadedPackages = Array.isArray(payload.extra_packages) ? payload.extra_packages.join("\n") : "";
+    setExtraPackagesText(loadedPackages);
+    setShowExtraPackages(loadedPackages.length > 0);
   };
 
   const gpuAllocationWarning = useMemo(() => {
@@ -460,7 +493,7 @@ export function Dashboard() {
           className="brand-title"
           sx={{ fontSize: 44, fontWeight: 300, marginBottom: 0 }}
         >
-          vLLM Cluster
+          vLLM Cluster Manager
         </Typography>
         <Typography
           className="brand-subtitle"
@@ -550,31 +583,37 @@ export function Dashboard() {
                   onChange={(event) => setGpuFraction(Number(event.target.value))}
                 />
               </Stack>
-              <TextField
-                fullWidth
-                select
-                label="GPU IDs"
-                SelectProps={{
-                  multiple: true,
-                  value: gpuIds,
-                  onChange: (event) => {
-                    const value = event.target.value;
-                    setGpuIds(Array.isArray(value) ? (value as number[]) : []);
-                  }
-                }}
-                disabled={!selectedNode || availableGpuIds.length === 0}
-                helperText={
-                  availableGpuIds.length === 0
-                    ? "No GPUs reported on this node."
-                    : "Select one or more GPUs."
-                }
-              >
-                {availableGpuIds.map((gpuId) => (
-                  <MenuItem key={gpuId} value={gpuId}>
-                    GPU {gpuId}
-                  </MenuItem>
-                ))}
-              </TextField>
+              <Box>
+                <Typography
+                  variant="body2"
+                  className="muted"
+                  sx={{ textTransform: "uppercase", letterSpacing: "0.16em", fontSize: "0.7rem", mb: 0.5 }}
+                >
+                  GPUs
+                </Typography>
+                {availableGpuIds.length > 0 ? (
+                  <ToggleButtonGroup
+                    value={gpuIds}
+                    onChange={(_, newIds) => setGpuIds(newIds as number[])}
+                    size="small"
+                    sx={{ flexWrap: "wrap", gap: 0.5 }}
+                  >
+                    {availableGpuIds.map((gpuId) => (
+                      <ToggleButton
+                        key={gpuId}
+                        value={gpuId}
+                        sx={{ px: 1.5, py: 0.5, fontSize: "0.8rem" }}
+                      >
+                        GPU {gpuId}
+                      </ToggleButton>
+                    ))}
+                  </ToggleButtonGroup>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    {selectedNode ? "No GPUs reported on this node." : "Select a node first."}
+                  </Typography>
+                )}
+              </Box>
               <Stack spacing={1}>
                 <Typography
                   variant="body2"
@@ -705,63 +744,68 @@ export function Dashboard() {
                   className="muted"
                   sx={{ textTransform: "uppercase", letterSpacing: "0.16em", fontSize: "0.7rem" }}
                 >
-                  Pip Packages
+                  vLLM Version
                 </Typography>
-                {pipPackages.map((entry, index) => (
-                  <Stack key={entry.id} direction="row" spacing={2} sx={{ mt: 0.5 }}>
+                <TextField
+                  fullWidth
+                  placeholder={
+                    latestVllmQuery.data?.version
+                      ? `${latestVllmQuery.data.version} (latest), nightly, or commit hash`
+                      : "version, nightly, or commit hash"
+                  }
+                  value={vllmVersion}
+                  onChange={(e) => setVllmVersion(e.target.value)}
+                  helperText="Leave blank to use the latest stable release."
+                />
+                <Box>
+                  <AppButton
+                    type="button"
+                    onClick={() => setShowExtraPackages((prev) => !prev)}
+                  >
+                    {showExtraPackages ? "Hide Extra Packages" : "Add Extra Packages"}
+                  </AppButton>
+                </Box>
+                {showExtraPackages && (
+                  <>
                     <TextField
                       fullWidth
-                      label="Pip Specifier"
-                      placeholder="vllm==0.8.0"
-                      value={entry.value}
-                      onChange={(event) => {
-                        const next = [...pipPackages];
-                        next[index] = { ...entry, value: event.target.value };
-                        setPipPackages(next);
-                      }}
+                      multiline
+                      minRows={2}
+                      maxRows={6}
+                      placeholder={"vllm-flash-attn\ncustom-plugin==1.0.0"}
+                      value={extraPackagesText}
+                      onChange={(e) => setExtraPackagesText(e.target.value)}
+                      helperText="One package per line (requirements.txt format). Or upload a .py, .whl, or .tar.gz below."
                     />
-                    <AppButton
-                      type="button"
-                      className="app-button--small"
-                      onClick={() => {
-                        const next = pipPackages.filter((_, i) => i !== index);
-                        setPipPackages(next);
-                      }}
-                    >
-                      Remove
-                    </AppButton>
-                  </Stack>
-                ))}
-                <Typography variant="caption" className="muted">
-                  Override the node's default vLLM. Accepts any pip specifier.
-                </Typography>
-                <Stack direction="row" spacing={1}>
-                  <AppButton
-                    type="button"
-                    onClick={() =>
-                      setPipPackages([
-                        ...pipPackages,
-                        { id: pipPackageId.current++, value: "" }
-                      ])
-                    }
-                  >
-                    Add Pip Package
-                  </AppButton>
-                  <AppButton
-                    type="button"
-                    disabled={nodeId === "" || uploadingPackage}
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    {uploadingPackage ? "Uploading..." : "Upload Package"}
-                  </AppButton>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".tar.gz,.tgz,.zip"
-                    style={{ display: "none" }}
-                    onChange={handlePackageUpload}
-                  />
-                </Stack>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".py,.whl,.tar.gz,.zip"
+                        style={{ display: "none" }}
+                        onChange={handlePackageUpload}
+                      />
+                      <AppButton
+                        type="button"
+                        className="app-button--small"
+                        disabled={!nodeId || uploadingPackage}
+                        onClick={() => fileInputRef.current?.click()}
+                      >
+                        {uploadingPackage ? "Uploading..." : "Upload Package"}
+                      </AppButton>
+                      {uploadError && (
+                        <Typography variant="body2" color="error" sx={{ fontSize: "0.75rem" }}>
+                          {uploadError}
+                        </Typography>
+                      )}
+                      {uploadSuccess && (
+                        <Typography variant="body2" color="success.main" sx={{ fontSize: "0.75rem" }}>
+                          {uploadSuccess}
+                        </Typography>
+                      )}
+                    </Stack>
+                  </>
+                )}
               </Stack>
               <Box>
                 <Button
@@ -778,13 +822,27 @@ export function Dashboard() {
                       gpu_ids: gpuIds,
                       extra_args: extraArgs.length > 0 ? extraArgs : undefined,
                       env_vars: extraEnvVars.length > 0 ? extraEnvVars : undefined,
-                      pip_packages:
-                        cleanedPipPackages.length > 0 ? cleanedPipPackages : undefined
+                      vllm_version: vllmVersion.trim() || undefined,
+                      extra_packages: cleanedExtraPackages.length > 0 ? cleanedExtraPackages : undefined
                     })
                   }
                 >
                   {startMutation.isPending ? "Starting..." : "Deploy Model"}
                 </Button>
+                {startMutation.isPending && (
+                  <Box sx={{ mt: 1.5 }}>
+                    <LinearProgress sx={{ mb: 0.5, borderRadius: 1 }} />
+                    <Typography variant="body2" className="muted">
+                      {vllmVersion.trim()
+                        ? `Installing vLLM ${vllmVersion.trim()}`
+                        : "Installing latest stable vLLM"}
+                      {cleanedExtraPackages.length > 0
+                        ? ` + ${cleanedExtraPackages.length} extra package(s)`
+                        : ""}
+                      {" — creating isolated environment. This may take a few minutes."}
+                    </Typography>
+                  </Box>
+                )}
                 {gpuAllocationWarning && (
                   <Typography variant="body2" color="warning.main" sx={{ mt: 1 }}>
                     {gpuAllocationWarning}
@@ -964,7 +1022,8 @@ export function Dashboard() {
                       })),
                       raw_args: rawArgs,
                       env_vars: extraEnvVars,
-                      pip_packages: cleanedPipPackages
+                      vllm_version: vllmVersion.trim(),
+                      extra_packages: cleanedExtraPackages
                     }
                   })
                 }

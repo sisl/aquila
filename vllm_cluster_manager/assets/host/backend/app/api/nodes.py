@@ -6,7 +6,7 @@ from app.db.session import get_session
 from app.models.node import Node
 from app.schemas.node import DiscoveredNode, NodeCreate, NodeRead
 from app.services.consul import consul_service
-from app.services.client_api import check_port, get_packages, upload_package
+from app.services.client_api import check_port, upload_package, get_packages
 
 router = APIRouter()
 
@@ -56,20 +56,19 @@ async def upload_node_package(
     node_id: int,
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
-) -> dict[str, str]:
+) -> dict[str, object]:
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
-    file_bytes = await file.read()
-    return await upload_package(
-        node.ip_address, node.port, file.filename or "package", file_bytes
-    )
+    content = await file.read()
+    return await upload_package(node.ip_address, node.port, file.filename or "package", content)
 
 
 @router.get("/{node_id}/packages")
 async def list_node_packages(
-    node_id: int, session: AsyncSession = Depends(get_session)
-) -> dict[str, object]:
+    node_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[dict[str, object]]:
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")

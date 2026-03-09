@@ -12,6 +12,8 @@ class DeploymentBase(BaseModel):
     extra_args: list[str] | None = None
     env_vars: list[dict[str, str]] | None = None
     pip_packages: list[str] | None = None
+    vllm_version: str | None = None
+    extra_packages: list[str] | None = None
     status: str = "stopped"
 
 
