@@ -23,8 +23,8 @@ async def start_model(
     extra_packages: list[str] | None = None,
 ) -> dict[str, object]:
     url = _satellite_url(node_ip, node_port, "/deployments/start")
-    # Always use a longer timeout since venv creation can take minutes
-    timeout = 600.0
+    # Venv creation + large model downloads can take a long time
+    timeout = 1800.0
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             response = await client.post(

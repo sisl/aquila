@@ -190,13 +190,23 @@ async def _get_or_create_vllm_venv(
         if log_deque is not None:
             log_deque.append(msg)
 
+    # Timeouts for each step
+    _VENV_CREATE_TIMEOUT = 300  # 5 minutes for venv creation
+    _PIP_INSTALL_TIMEOUT = 1500  # 25 minutes for vLLM install (large wheels)
+    _EXTRAS_INSTALL_TIMEOUT = 600  # 10 minutes for extra packages
+
     # Create venv with uv
     _log(f"[uv] Creating venv {venv_id}...")
     proc = await asyncio.create_subprocess_exec(
         uv, "venv", "--allow-existing", "--python", sys.executable, str(venv_dir),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
-    stdout, _ = await proc.communicate()
+    try:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_VENV_CREATE_TIMEOUT)
+    except asyncio.TimeoutError:
+        proc.kill()
+        _log(f"[uv] venv creation timed out after {_VENV_CREATE_TIMEOUT}s")
+        raise RuntimeError(f"venv creation timed out after {_VENV_CREATE_TIMEOUT}s")
     if proc.returncode != 0:
         _log(f"[uv] venv creation failed: {stdout.decode(errors='replace')}")
         raise RuntimeError(f"Failed to create venv: {stdout.decode(errors='replace')}")
@@ -230,7 +240,12 @@ async def _get_or_create_vllm_venv(
         *pip_cmd,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
-    stdout, _ = await proc.communicate()
+    try:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_PIP_INSTALL_TIMEOUT)
+    except asyncio.TimeoutError:
+        proc.kill()
+        _log(f"[uv] vLLM installation timed out after {_PIP_INSTALL_TIMEOUT}s")
+        raise RuntimeError(f"vLLM installation timed out after {_PIP_INSTALL_TIMEOUT}s")
     for line in stdout.decode(errors="replace").splitlines():
         _log(f"[uv] {line}")
 
@@ -247,7 +262,12 @@ async def _get_or_create_vllm_venv(
             *extras_cmd,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
-        stdout, _ = await proc.communicate()
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_EXTRAS_INSTALL_TIMEOUT)
+        except asyncio.TimeoutError:
+            proc.kill()
+            _log(f"[uv] Extra packages installation timed out after {_EXTRAS_INSTALL_TIMEOUT}s")
+            raise RuntimeError(f"Extra packages installation timed out after {_EXTRAS_INSTALL_TIMEOUT}s")
         for line in stdout.decode(errors="replace").splitlines():
             _log(f"[uv] {line}")
 
