@@ -2,7 +2,8 @@
 
 [![Docs](https://img.shields.io/badge/docs-online-30a2ff)](https://sisl.github.io/VLLMClusterManager/)
 [![PyPI](https://img.shields.io/pypi/v/vllm-cluster-manager?color=30a2ff)](https://pypi.org/project/vllm-cluster-manager/)
-[![Python](https://img.shields.io/badge/python-3.12%2B-30a2ff)](https://pypi.org/project/vllm-cluster-manager/)
+[![Tests](https://github.com/sisl/VLLMClusterManager/actions/workflows/tests.yml/badge.svg)](https://github.com/sisl/VLLMClusterManager/actions/workflows/tests.yml)
+[![Python](https://img.shields.io/badge/python-3.10--3.14-30a2ff)](https://pypi.org/project/vllm-cluster-manager/)
 
 ![VLLM Cluster Manager overview UI](img/vllm-cluster-manager-screenshot.png "VLLM Cluster Manager User Interface")
 
@@ -48,18 +49,18 @@ Define and manage model settings (weights, runtime settings, resource usage) fro
 Host:
 - Docker + Docker Compose plugin (configure the `docker` group so no sudo is required).
 - Node.js + npm.
-- Python 3.12.
+- Python 3.10–3.14.
 - `uv` (Python package manager).
 
 Client:
 - NVIDIA GPU with CUDA.
 - `nvcc` or `nvidia-smi` on PATH (used to detect CUDA version).
-- Python 3.12 + `python3.12-dev` and `build-essential` (Debian/Ubuntu).
+- Python 3.10–3.14 + `python3-dev` and `build-essential` (Debian/Ubuntu).
 
 On Debian/Ubuntu:
 ```bash
 sudo apt update
-sudo apt install -y python3.12-dev build-essential
+sudo apt install -y python3-dev build-essential
 ```
 
 Install `uv` if you don't already have it:
@@ -68,9 +69,9 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 ## Install (pip)
-Create and activate a Python 3.12 virtual environment:
+Create and activate a virtual environment:
 ```bash
-uv venv --python=3.12
+uv venv
 source .venv/bin/activate
 ```
 
