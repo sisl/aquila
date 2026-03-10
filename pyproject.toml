@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vllm-cluster-manager"
-version = "0.2.1"
+version = "0.2.2"
 description = "Deploy, manage, and monitor vLLM instances across a GPU cluster from a single web dashboard."
 requires-python = ">=3.10"
 license = {text = "MIT"}
