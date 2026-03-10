@@ -192,6 +192,31 @@ def _fetch_vllm_wheel_url_from_index(index_base_url: str, cpu_arch: str) -> str 
     return urljoin(page_url, matches[-1])
 
 
+def _find_highest_available_cuda_from_index(
+    index_base_prefix: str, cuda_compact: int, cpu_arch: str,
+) -> tuple[str, int] | None:
+    """Search downward from *cuda_compact* for an index page with a matching wheel.
+
+    *index_base_prefix* is the URL prefix before the ``cu{N}`` segment, e.g.
+    ``https://wheels.vllm.ai/nightly``.
+
+    Returns ``(wheel_url, cuda_version)`` or ``None``.
+    """
+    consecutive_misses = 0
+    highest: tuple[str, int] | None = None
+    for cu in range(128, 200):
+        url = _fetch_vllm_wheel_url_from_index(f"{index_base_prefix}/cu{cu}", cpu_arch)
+        if url:
+            highest = (url, cu)
+            consecutive_misses = 0
+        else:
+            if highest is not None:
+                consecutive_misses += 1
+                if consecutive_misses >= 5:
+                    break
+    return highest
+
+
 def _find_uv() -> str:
     """Return the path to the ``uv`` binary, or raise if not found."""
     uv = shutil.which("uv")
@@ -317,35 +342,79 @@ async def _get_or_create_vllm_venv(
         # We cannot rely on uv index resolution because PEP 440 ranks the
         # stable PyPI release higher than nightly dev wheels.
         cpu_arch = platform.machine()
+        install_cuda = cuda_compact
         if cuda_compact:
             index_base = f"https://wheels.vllm.ai/nightly/cu{cuda_compact}"
+            wheel_url = _fetch_vllm_wheel_url_from_index(index_base, cpu_arch)
+            if not wheel_url:
+                _log(
+                    f"[uv] No nightly vLLM wheel for cu{cuda_compact}, "
+                    "searching for highest compatible CUDA wheel..."
+                )
+                fallback = _find_highest_available_cuda_from_index(
+                    "https://wheels.vllm.ai/nightly", cuda_compact, cpu_arch,
+                )
+                if fallback is None:
+                    raise RuntimeError(
+                        f"No nightly vLLM wheel found for cu{cuda_compact} "
+                        f"or any fallback CUDA version on {cpu_arch}"
+                    )
+                wheel_url, install_cuda = fallback
+                fb_major, fb_minor = divmod(install_cuda, 10)
+                _log(
+                    f"[uv] Using nightly vLLM wheel for CUDA "
+                    f"{fb_major}.{fb_minor} (cu{install_cuda}) "
+                    f"instead of cu{cuda_compact}"
+                )
         else:
             index_base = "https://wheels.vllm.ai/nightly"
-        wheel_url = _fetch_vllm_wheel_url_from_index(index_base, cpu_arch)
-        if not wheel_url:
-            raise RuntimeError(f"No nightly vLLM wheel found at {index_base} for {cpu_arch}")
+            wheel_url = _fetch_vllm_wheel_url_from_index(index_base, cpu_arch)
+            if not wheel_url:
+                raise RuntimeError(f"No nightly vLLM wheel found at {index_base} for {cpu_arch}")
         _log(f"[uv] Installing vllm nightly from {wheel_url} ...")
         pip_cmd.append(wheel_url)
-        if cuda_compact:
+        if install_cuda:
             pip_cmd.extend([
-                "--extra-index-url", f"https://download.pytorch.org/whl/cu{cuda_compact}",
+                "--extra-index-url", f"https://download.pytorch.org/whl/cu{install_cuda}",
                 "--index-strategy", "unsafe-best-match",
             ])
     elif re.match(r"^[0-9a-f]{40}$", version):
         # Commit hash — fetch the direct wheel URL, same approach as nightly.
         cpu_arch = platform.machine()
+        install_cuda = cuda_compact
         if cuda_compact:
             index_base = f"https://wheels.vllm.ai/{version}/cu{cuda_compact}"
+            wheel_url = _fetch_vllm_wheel_url_from_index(index_base, cpu_arch)
+            if not wheel_url:
+                _log(
+                    f"[uv] No vLLM wheel for commit {version[:12]} cu{cuda_compact}, "
+                    "searching for highest compatible CUDA wheel..."
+                )
+                fallback = _find_highest_available_cuda_from_index(
+                    f"https://wheels.vllm.ai/{version}", cuda_compact, cpu_arch,
+                )
+                if fallback is None:
+                    raise RuntimeError(
+                        f"No vLLM wheel found for commit {version[:12]} "
+                        f"cu{cuda_compact} or any fallback CUDA version on {cpu_arch}"
+                    )
+                wheel_url, install_cuda = fallback
+                fb_major, fb_minor = divmod(install_cuda, 10)
+                _log(
+                    f"[uv] Using vLLM wheel for CUDA "
+                    f"{fb_major}.{fb_minor} (cu{install_cuda}) "
+                    f"instead of cu{cuda_compact}"
+                )
         else:
             index_base = f"https://wheels.vllm.ai/{version}"
-        wheel_url = _fetch_vllm_wheel_url_from_index(index_base, cpu_arch)
-        if not wheel_url:
-            raise RuntimeError(f"No vLLM wheel found at {index_base} for {cpu_arch}")
+            wheel_url = _fetch_vllm_wheel_url_from_index(index_base, cpu_arch)
+            if not wheel_url:
+                raise RuntimeError(f"No vLLM wheel found at {index_base} for {cpu_arch}")
         _log(f"[uv] Installing vllm from commit {version[:12]} ...")
         pip_cmd.append(wheel_url)
-        if cuda_compact:
+        if install_cuda:
             pip_cmd.extend([
-                "--extra-index-url", f"https://download.pytorch.org/whl/cu{cuda_compact}",
+                "--extra-index-url", f"https://download.pytorch.org/whl/cu{install_cuda}",
                 "--index-strategy", "unsafe-best-match",
             ])
     else:
