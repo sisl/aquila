@@ -6,6 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import platform
 import re
 import shutil
 import socket
@@ -133,6 +134,64 @@ def _detect_cuda_compact() -> int | None:
     return None
 
 
+def _vllm_wheel_url(vllm_version: str, cuda_compact: int, cpu_arch: str) -> str:
+    return (
+        "https://github.com/vllm-project/vllm/releases/download/"
+        f"v{vllm_version}/vllm-{vllm_version}+cu{cuda_compact}-"
+        f"cp38-abi3-manylinux_2_35_{cpu_arch}.whl"
+    )
+
+
+def _url_exists(url: str) -> bool:
+    request = Request(url, method="HEAD", headers={"User-Agent": "vllm-cluster-manager"})
+    try:
+        with urlopen(request, timeout=10):
+            return True
+    except Exception:
+        return False
+
+
+def _find_highest_available_cuda(vllm_version: str, cpu_arch: str) -> int | None:
+    """Search for the highest CUDA version that has a published vLLM wheel."""
+    highest: int | None = None
+    consecutive_misses = 0
+    for cu in range(128, 200):
+        if _url_exists(_vllm_wheel_url(vllm_version, cu, cpu_arch)):
+            highest = cu
+            consecutive_misses = 0
+        else:
+            if highest is not None:
+                consecutive_misses += 1
+                if consecutive_misses >= 5:
+                    break
+    return highest
+
+
+def _fetch_vllm_wheel_url_from_index(index_base_url: str, cpu_arch: str) -> str | None:
+    """Fetch the PEP 503 index page and return the wheel URL matching *cpu_arch*.
+
+    *index_base_url* is e.g. ``https://wheels.vllm.ai/nightly/cu130``.
+    The function fetches ``{index_base_url}/vllm/``, parses ``<a href="...">``
+    links, filters for wheels containing *cpu_arch*, resolves relative hrefs,
+    and returns the absolute URL of the last (most recent) match.
+    """
+    from urllib.parse import urljoin
+
+    page_url = index_base_url.rstrip("/") + "/vllm/"
+    request = Request(page_url, headers={"User-Agent": "vllm-cluster-client"})
+    try:
+        html = urlopen(request, timeout=30).read().decode("utf-8")
+    except Exception:
+        return None
+
+    hrefs = re.findall(r'href="([^"]+\.whl)"', html)
+    matches = [h for h in hrefs if cpu_arch in h]
+    if not matches:
+        return None
+    # Last entry is typically the most recent build
+    return urljoin(page_url, matches[-1])
+
+
 def _find_uv() -> str:
     """Return the path to the ``uv`` binary, or raise if not found."""
     uv = shutil.which("uv")
@@ -214,33 +273,81 @@ async def _get_or_create_vllm_venv(
     # Determine install command based on version type
     pip_cmd = [uv, "pip", "install", "--python", str(python_bin)]
 
-    # Detect CUDA version and add the matching PyTorch wheel index
+    # Detect system CUDA version
     cuda_compact = _detect_cuda_compact()
-    if cuda_compact:
-        _log(f"[uv] Detected CUDA {cuda_compact // 10}.{cuda_compact % 10}, using PyTorch cu{cuda_compact} index")
-        pip_cmd.extend([
-            "--extra-index-url", f"https://download.pytorch.org/whl/cu{cuda_compact}",
-            "--index-strategy", "unsafe-best-match",
-        ])
 
     if re.match(r"^\d+\.\d+(\.\d+)?.*$", version):
-        # Release version (e.g. 0.15.0)
-        _log(f"[uv] Installing vllm=={version} ...")
-        pip_cmd.append("vllm==" + version)
+        # Release version — install from the CUDA-specific GitHub release wheel
+        cpu_arch = platform.machine()
+        install_cuda = cuda_compact
+        if install_cuda:
+            wheel_url = _vllm_wheel_url(version, install_cuda, cpu_arch)
+            if not _url_exists(wheel_url):
+                _log(
+                    f"[uv] No vLLM wheel for cu{install_cuda}, "
+                    "searching for highest compatible CUDA wheel..."
+                )
+                fallback = _find_highest_available_cuda(version, cpu_arch)
+                if fallback is None:
+                    raise RuntimeError(
+                        f"No vLLM wheel found for CUDA "
+                        f"{install_cuda // 10}.{install_cuda % 10} "
+                        f"(cu{install_cuda}) on {cpu_arch}, "
+                        "and no fallback CUDA version wheel was found."
+                    )
+                fallback_major, fallback_minor = divmod(fallback, 10)
+                _log(
+                    f"[uv] Using vLLM wheel for CUDA "
+                    f"{fallback_major}.{fallback_minor} (cu{fallback}) "
+                    f"instead of cu{install_cuda}"
+                )
+                install_cuda = fallback
+                wheel_url = _vllm_wheel_url(version, install_cuda, cpu_arch)
+            _log(f"[uv] Installing vllm=={version}+cu{install_cuda} ...")
+            pip_cmd.extend([
+                wheel_url,
+                "--extra-index-url", f"https://download.pytorch.org/whl/cu{install_cuda}",
+                "--index-strategy", "unsafe-best-match",
+            ])
+        else:
+            _log(f"[uv] Installing vllm=={version} (no CUDA detected) ...")
+            pip_cmd.append("vllm==" + version)
     elif version.lower() == "nightly":
-        # Nightly build
-        _log("[uv] Installing vllm nightly ...")
-        pip_cmd.extend([
-            "vllm",
-            "--extra-index-url", "https://wheels.vllm.ai/nightly",
-        ])
+        # Nightly build — fetch the direct wheel URL from the vLLM index.
+        # We cannot rely on uv index resolution because PEP 440 ranks the
+        # stable PyPI release higher than nightly dev wheels.
+        cpu_arch = platform.machine()
+        if cuda_compact:
+            index_base = f"https://wheels.vllm.ai/nightly/cu{cuda_compact}"
+        else:
+            index_base = "https://wheels.vllm.ai/nightly"
+        wheel_url = _fetch_vllm_wheel_url_from_index(index_base, cpu_arch)
+        if not wheel_url:
+            raise RuntimeError(f"No nightly vLLM wheel found at {index_base} for {cpu_arch}")
+        _log(f"[uv] Installing vllm nightly from {wheel_url} ...")
+        pip_cmd.append(wheel_url)
+        if cuda_compact:
+            pip_cmd.extend([
+                "--extra-index-url", f"https://download.pytorch.org/whl/cu{cuda_compact}",
+                "--index-strategy", "unsafe-best-match",
+            ])
     elif re.match(r"^[0-9a-f]{40}$", version):
-        # Commit hash
-        _log(f"[uv] Installing vllm from commit {version[:12]}... ")
-        pip_cmd.extend([
-            "vllm",
-            "--extra-index-url", f"https://wheels.vllm.ai/{version}",
-        ])
+        # Commit hash — fetch the direct wheel URL, same approach as nightly.
+        cpu_arch = platform.machine()
+        if cuda_compact:
+            index_base = f"https://wheels.vllm.ai/{version}/cu{cuda_compact}"
+        else:
+            index_base = f"https://wheels.vllm.ai/{version}"
+        wheel_url = _fetch_vllm_wheel_url_from_index(index_base, cpu_arch)
+        if not wheel_url:
+            raise RuntimeError(f"No vLLM wheel found at {index_base} for {cpu_arch}")
+        _log(f"[uv] Installing vllm from commit {version[:12]} ...")
+        pip_cmd.append(wheel_url)
+        if cuda_compact:
+            pip_cmd.extend([
+                "--extra-index-url", f"https://download.pytorch.org/whl/cu{cuda_compact}",
+                "--index-strategy", "unsafe-best-match",
+            ])
     else:
         _log(f"[uv] Unrecognised version format '{version}', treating as release specifier")
         pip_cmd.append("vllm==" + version)
@@ -386,7 +493,7 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
     env = os.environ.copy()
 
     # Add nvidia and PyTorch library paths from venv so CUDA shared libs are found
-    venv_site = Path(python_bin).resolve().parent.parent / "lib"
+    venv_site = Path(python_bin).parent.parent / "lib"
     if venv_site.exists():
         lib_dirs: list[str] = []
         # nvidia packages: site-packages/nvidia/*/lib
@@ -402,6 +509,7 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
             env["LD_LIBRARY_PATH"] = ":".join(lib_dirs) + (
                 f":{existing_ld}" if existing_ld else ""
             )
+            logger.info("LD_LIBRARY_PATH set with %d venv lib dirs", len(lib_dirs))
 
     if payload.gpu_ids:
         env["CUDA_VISIBLE_DEVICES"] = ",".join(str(gpu) for gpu in payload.gpu_ids)
