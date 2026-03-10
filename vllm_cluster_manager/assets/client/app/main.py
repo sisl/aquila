@@ -214,6 +214,15 @@ async def _get_or_create_vllm_venv(
     # Determine install command based on version type
     pip_cmd = [uv, "pip", "install", "--python", str(python_bin)]
 
+    # Detect CUDA version and add the matching PyTorch wheel index
+    cuda_compact = _detect_cuda_compact()
+    if cuda_compact:
+        _log(f"[uv] Detected CUDA {cuda_compact // 10}.{cuda_compact % 10}, using PyTorch cu{cuda_compact} index")
+        pip_cmd.extend([
+            "--extra-index-url", f"https://download.pytorch.org/whl/cu{cuda_compact}",
+            "--index-strategy", "unsafe-best-match",
+        ])
+
     if re.match(r"^\d+\.\d+(\.\d+)?.*$", version):
         # Release version (e.g. 0.15.0)
         _log(f"[uv] Installing vllm=={version} ...")
@@ -376,17 +385,21 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
 
     env = os.environ.copy()
 
-    # Add nvidia library paths from venv so CUDA shared libs are found
+    # Add nvidia and PyTorch library paths from venv so CUDA shared libs are found
     venv_site = Path(python_bin).resolve().parent.parent / "lib"
     if venv_site.exists():
-        # Find all site-packages nvidia dirs that contain .so files
-        nvidia_lib_dirs: list[str] = []
+        lib_dirs: list[str] = []
+        # nvidia packages: site-packages/nvidia/*/lib
         for sp in venv_site.rglob("site-packages/nvidia/*/lib"):
             if sp.is_dir():
-                nvidia_lib_dirs.append(str(sp))
-        if nvidia_lib_dirs:
+                lib_dirs.append(str(sp))
+        # PyTorch bundles CUDA runtime libs in torch/lib
+        for sp in venv_site.rglob("site-packages/torch/lib"):
+            if sp.is_dir():
+                lib_dirs.append(str(sp))
+        if lib_dirs:
             existing_ld = env.get("LD_LIBRARY_PATH", "")
-            env["LD_LIBRARY_PATH"] = ":".join(nvidia_lib_dirs) + (
+            env["LD_LIBRARY_PATH"] = ":".join(lib_dirs) + (
                 f":{existing_ld}" if existing_ld else ""
             )
 
