@@ -6,22 +6,23 @@ import json
 import logging
 import os
 from pathlib import Path
-import platform
 import re
 import shutil
 import socket
 import subprocess
-import sys
-from urllib.request import Request, urlopen
 
 import tarfile
 import tempfile
 import zipfile
 
+import docker
+from docker.errors import APIError, ImageNotFound, NotFound
+from docker.types import DeviceRequest
 import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
 import psutil
+from urllib.request import Request, urlopen
 
 from app.config import settings
 from app.consul import register_node, register_loop
@@ -67,21 +68,84 @@ def _get_latest_vllm_version() -> str:
     return _latest_vllm_version
 
 
+# ---------------------------------------------------------------------------
+# Module state
+# ---------------------------------------------------------------------------
+
+# key -> docker Container object for the running deployment
+_containers: dict[str, "docker.models.containers.Container"] = {}
+_statuses: dict[str, dict[str, object]] = {}
+_logs: dict[str, deque[str]] = {}
+
+_CLIENT_ROOT = Path(os.environ.get("VLLM_CLIENT_ROOT", Path.home() / ".vllm-client"))
+_PACKAGES_DIR = _CLIENT_ROOT / ".packages"
+
+# Container labels so the agent can rediscover and reconcile its deployments
+# after a restart. Docker is the source of truth, not in-memory state.
+_LABEL_MANAGED = "vllm-cluster-manager.managed"
+_LABEL_KEY = "vllm-cluster-manager.key"
+_LABEL_PORT = "vllm-cluster-manager.port"
+_LABEL_VERSION = "vllm-cluster-manager.version"
+
+# Where the uploaded packages dir is mounted inside every vLLM container, so
+# uploaded plugin (.py) files referenced in extra_args remain accessible.
+_CONTAINER_PACKAGES_MOUNT = "/packages"
+
+_LOCAL_IMAGE_REPO = "vllm-cluster-manager/local"
+
+_ANSI_ESCAPE = re.compile(r"(?:\x1B|␛|\x9B)\[[0-?]*[ -/]*[@-~]")
+_ANSI_ESCAPE_ALT = re.compile(r"(?:\x1B|␛|\x9B)[@-Z\\-_]")
+
+
+def _strip_ansi(line: str) -> str:
+    """Remove ANSI escape sequences and trailing whitespace from a log line."""
+    cleaned = _ANSI_ESCAPE.sub("", line)
+    cleaned = _ANSI_ESCAPE_ALT.sub("", cleaned)
+    return cleaned.replace("␛", "").rstrip()
+
+
+_docker_client: "docker.DockerClient | None" = None
+
+
+def _docker() -> "docker.DockerClient":
+    """Return a cached Docker client, raising a clear error if unavailable."""
+    global _docker_client
+    if _docker_client is None:
+        try:
+            _docker_client = docker.from_env()
+            _docker_client.ping()
+        except Exception as exc:  # pragma: no cover - environment dependent
+            _docker_client = None
+            raise RuntimeError(
+                "Cannot talk to the Docker daemon. Ensure Docker is installed and "
+                "running, and that this user can access it (add the user to the "
+                f"'docker' group or run as root). Underlying error: {exc}"
+            ) from exc
+    return _docker_client
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Pre-fetch latest vLLM version at startup
     _get_latest_vllm_version()
-    register_node()
+    # Rediscover deployments that survived an agent restart (containers keep
+    # running independently of this process).
+    try:
+        _reconcile_containers()
+    except Exception as exc:  # best effort — never block startup
+        logger.warning("Container reconciliation skipped: %s", exc)
+    # Best-effort initial registration: if Consul is unreachable at boot, the
+    # agent still starts and register_loop keeps retrying, instead of crashing.
+    try:
+        register_node()
+    except Exception as exc:
+        logger.warning("Initial Consul registration failed (will keep retrying): %s", exc)
     task = asyncio.create_task(register_loop())
     yield
     task.cancel()
 
 
 app = FastAPI(title="vLLM Satellite", lifespan=lifespan)
-
-_processes: dict[str, subprocess.Popen] = {}
-_statuses: dict[str, dict[str, object]] = {}
-_logs: dict[str, deque[str]] = {}
 
 
 class StartRequest(BaseModel):
@@ -97,373 +161,268 @@ class StartRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Per-deployment venv management
+# Image resolution
 # ---------------------------------------------------------------------------
 
-_CLIENT_ROOT = Path(os.environ.get("VLLM_CLIENT_ROOT", Path.home() / ".vllm-client"))
-_VENVS_DIR = _CLIENT_ROOT / ".venvs"
-_PACKAGES_DIR = _CLIENT_ROOT / ".packages"
+_RELEASE_RE = re.compile(r"^\d+\.\d+(\.\d+)?.*$")
+_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
-def _venv_hash(version: str, deployment_key: str = "") -> str:
-    """Deterministic short hash for a version string and deployment key."""
-    canonical = version + "\n" + deployment_key
-    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+def _resolve_image_tag(version: str | None) -> tuple[str, str]:
+    """Map a requested vLLM version to an official image ref + resolved version.
 
+    Returns ``(image_ref, resolved_version)`` where ``resolved_version`` is the
+    string stored in the database for display.
 
-def _detect_cuda_compact() -> int | None:
-    """Return the CUDA version as a compact int (e.g. 130 for 13.0).
-
-    Tries nvcc first, then nvidia-smi.  Returns None when detection fails.
+    | input              | image tag           |
+    | ------------------ | ------------------- |
+    | blank / None       | v{latest release}   |
+    | ``0.8.5``          | v0.8.5              |
+    | ``nightly``        | nightly             |
+    | 40-char commit     | nightly-{commit}    |
+    | anything else      | used as a literal tag |
     """
-    import re as _re
+    repo = settings.vllm_image_repo
+    raw = (version or "").strip()
 
-    for cmd, pattern in (
-        (["nvcc", "--version"], r"release\s+(\d+)\.(\d+)"),
-        (["nvidia-smi"], r"CUDA Version:\s*(\d+)\.(\d+)"),
-    ):
-        if not shutil.which(cmd[0]):
-            continue
+    if not raw:
+        resolved = _get_latest_vllm_version()
+        if not resolved:
+            raise RuntimeError(
+                "Could not determine the latest vLLM version. "
+                "Set the vLLM version explicitly."
+            )
+        return f"{repo}:v{resolved}", resolved
+    if raw.lower() == "nightly":
+        return f"{repo}:nightly", "nightly"
+    if _COMMIT_RE.match(raw):
+        return f"{repo}:nightly-{raw}", raw
+    if _RELEASE_RE.match(raw):
+        return f"{repo}:v{raw}", raw
+    # Unknown format — treat the value as a literal image tag.
+    return f"{repo}:{raw}", raw
+
+
+def _derived_image_tag(base_ref: str, tokens: list[str]) -> str:
+    """Deterministic tag for an image derived from *base_ref* + extra packages."""
+    canonical = base_ref + " " + " ".join(sorted(tokens))
+    digest = hashlib.sha256(canonical.encode()).hexdigest()[:16]
+    base_part = re.sub(r"[^A-Za-z0-9._-]", "-", base_ref.split("/")[-1])
+    return f"{_LOCAL_IMAGE_REPO}:{base_part}-{digest}"
+
+
+def _pull_image(client: "docker.DockerClient", image_ref: str, log) -> None:
+    """Pull *image_ref*, streaming layer progress into the deployment log."""
+    repository, _, tag = image_ref.partition(":")
+    tag = tag or "latest"
+    log(f"[docker] Pulling {image_ref} ...")
+    seen: dict[str, str] = {}
+    try:
+        for chunk in client.api.pull(repository, tag=tag, stream=True, decode=True):
+            if "error" in chunk:
+                raise RuntimeError(chunk["error"])
+            layer = chunk.get("id", "")
+            status = chunk.get("status", "")
+            if not status:
+                continue
+            line = f"{layer}: {status}" if layer else status
+            # Collapse repeated per-layer progress lines to keep logs readable.
+            if seen.get(layer) != status:
+                seen[layer] = status
+                log(f"[docker] {line}")
+    except (APIError, RuntimeError) as exc:
+        raise RuntimeError(
+            f"Failed to pull image {image_ref}: {exc}. "
+            "Verify the vLLM version/tag exists on Docker Hub."
+        ) from exc
+    log(f"[docker] Pulled {image_ref}")
+
+
+def _build_derived_image(
+    client: "docker.DockerClient",
+    base_ref: str,
+    derived_tag: str,
+    extra_packages: list[str],
+    log,
+) -> None:
+    """Build a thin image ``FROM base_ref`` with *extra_packages* installed.
+
+    Local package paths (uploaded wheels/sdists under the packages dir) are
+    copied into the build context; everything else is treated as a pip
+    specifier. Built once and cached by *derived_tag*.
+    """
+    ctx = Path(tempfile.mkdtemp(prefix="vllm-build-"))
+    try:
+        pkgs_dir = ctx / "pkgs"
+        install_tokens: list[str] = []
+        has_local = False
+        for idx, token in enumerate(extra_packages):
+            candidate = Path(token)
+            if candidate.exists():
+                has_local = True
+                pkgs_dir.mkdir(exist_ok=True)
+                dest_name = f"{idx}_{candidate.name}"
+                dest = pkgs_dir / dest_name
+                if candidate.is_dir():
+                    shutil.copytree(candidate, dest)
+                else:
+                    shutil.copy2(candidate, dest)
+                install_tokens.append(f"/tmp/pkgs/{dest_name}")
+            else:
+                install_tokens.append(token)
+
+        dockerfile_lines = [f"FROM {base_ref}"]
+        if has_local:
+            dockerfile_lines.append("COPY pkgs/ /tmp/pkgs/")
+        # exec-form RUN avoids shell interpretation of specifiers like
+        # "transformers>=4.40".
+        run_argv = ["python3", "-m", "pip", "install", "--no-cache-dir", *install_tokens]
+        dockerfile_lines.append("RUN " + json.dumps(run_argv))
+        (ctx / "Dockerfile").write_text("\n".join(dockerfile_lines) + "\n", encoding="utf-8")
+
+        log(f"[docker] Building image with extra packages: {', '.join(extra_packages)}")
         try:
-            out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
+            for chunk in client.api.build(
+                path=str(ctx), tag=derived_tag, rm=True, decode=True
+            ):
+                if "error" in chunk:
+                    raise RuntimeError(chunk["error"])
+                stream = chunk.get("stream", "")
+                if stream and stream.strip():
+                    log(f"[docker] {stream.rstrip()}")
+        except (APIError, RuntimeError) as exc:
+            raise RuntimeError(f"Failed to build derived image: {exc}") from exc
+        log(f"[docker] Built {derived_tag}")
+    finally:
+        shutil.rmtree(ctx, ignore_errors=True)
+
+
+def _ensure_image(
+    image_ref: str, extra_packages: list[str] | None, log
+) -> str:
+    """Ensure the runtime image exists locally, returning the ref to run.
+
+    When *extra_packages* are requested, returns a cached derived image tag.
+    """
+    client = _docker()
+
+    # Base image: reuse if already present, otherwise pull.
+    try:
+        client.images.get(image_ref)
+        log(f"[docker] Using cached image {image_ref}")
+    except ImageNotFound:
+        _pull_image(client, image_ref, log)
+
+    if not extra_packages:
+        return image_ref
+
+    derived_tag = _derived_image_tag(image_ref, extra_packages)
+    try:
+        client.images.get(derived_tag)
+        log(f"[docker] Reusing cached derived image {derived_tag}")
+        return derived_tag
+    except ImageNotFound:
+        pass
+    _build_derived_image(client, image_ref, derived_tag, extra_packages, log)
+    return derived_tag
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _container_name(key: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "-", key)
+    return f"vllm-cluster-{safe}"
+
+
+def _rewrite_paths_for_container(args: list[str]) -> list[str]:
+    """Rewrite host package paths in CLI args to their in-container mount path."""
+    prefix = str(_PACKAGES_DIR)
+    rewritten: list[str] = []
+    for arg in args:
+        if arg.startswith(prefix):
+            rewritten.append(_CONTAINER_PACKAGES_MOUNT + arg[len(prefix):])
+        else:
+            rewritten.append(arg)
+    return rewritten
+
+
+def _gpu_count() -> int | None:
+    """Best-effort count of GPUs on the host; None when it can't be determined."""
+    try:
+        import pynvml  # type: ignore
+
+        pynvml.nvmlInit()
+        try:
+            return int(pynvml.nvmlDeviceGetCount())
+        finally:
+            pynvml.nvmlShutdown()
+    except Exception:
+        pass
+    if shutil.which("nvidia-smi"):
+        try:
+            out = subprocess.check_output(
+                ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"], text=True
+            )
+            return len([line for line in out.splitlines() if line.strip()])
         except Exception:
-            continue
-        m = _re.search(pattern, out)
-        if m:
-            return int(m.group(1)) * 10 + int(m.group(2))
+            return None
     return None
 
 
-def _vllm_wheel_url(vllm_version: str, cuda_compact: int, cpu_arch: str) -> str:
-    return (
-        "https://github.com/vllm-project/vllm/releases/download/"
-        f"v{vllm_version}/vllm-{vllm_version}+cu{cuda_compact}-"
-        f"cp38-abi3-manylinux_2_35_{cpu_arch}.whl"
-    )
-
-
-def _url_exists(url: str) -> bool:
-    request = Request(url, method="HEAD", headers={"User-Agent": "vllm-cluster-manager"})
-    try:
-        with urlopen(request, timeout=10):
-            return True
-    except Exception:
-        return False
-
-
-def _find_highest_available_cuda(vllm_version: str, cpu_arch: str) -> int | None:
-    """Search for the highest CUDA version that has a published vLLM wheel."""
-    highest: int | None = None
-    consecutive_misses = 0
-    for cu in range(128, 200):
-        if _url_exists(_vllm_wheel_url(vllm_version, cu, cpu_arch)):
-            highest = cu
-            consecutive_misses = 0
+def _build_environment(payload: "StartRequest") -> dict[str, str]:
+    env: dict[str, str] = {}
+    for pair in payload.env_vars or []:
+        env_key = pair.get("key")
+        if not env_key:
+            continue
+        raw_value = str(pair.get("value", ""))
+        trimmed = raw_value.strip()
+        if (
+            len(trimmed) >= 2
+            and trimmed[0] == trimmed[-1]
+            and trimmed[0] in {"'", '"'}
+        ):
+            env[env_key] = trimmed[1:-1]
         else:
-            if highest is not None:
-                consecutive_misses += 1
-                if consecutive_misses >= 5:
-                    break
-    return highest
+            env[env_key] = raw_value
+    return env
 
 
-def _fetch_vllm_wheel_url_from_index(index_base_url: str, cpu_arch: str) -> str | None:
-    """Fetch the PEP 503 index page and return the wheel URL matching *cpu_arch*.
-
-    *index_base_url* is e.g. ``https://wheels.vllm.ai/nightly/cu130``.
-    The function fetches ``{index_base_url}/vllm/``, parses ``<a href="...">``
-    links, filters for wheels containing *cpu_arch*, resolves relative hrefs,
-    and returns the absolute URL of the last (most recent) match.
-    """
-    from urllib.parse import urljoin
-
-    page_url = index_base_url.rstrip("/") + "/vllm/"
-    request = Request(page_url, headers={"User-Agent": "vllm-cluster-client"})
-    try:
-        html = urlopen(request, timeout=30).read().decode("utf-8")
-    except Exception:
-        return None
-
-    hrefs = re.findall(r'href="([^"]+\.whl)"', html)
-    matches = [h for h in hrefs if cpu_arch in h]
-    if not matches:
-        return None
-    # Last entry is typically the most recent build
-    return urljoin(page_url, matches[-1])
+def _mask_env_value(key_name: str, value: str) -> str:
+    upper = key_name.upper()
+    if any(token in upper for token in ["TOKEN", "SECRET", "KEY", "PASSWORD"]):
+        if len(value) <= 8:
+            return "*" * len(value)
+        return f"{value[:4]}...{value[-4:]}"
+    return value
 
 
-def _find_highest_available_cuda_from_index(
-    index_base_prefix: str, cuda_compact: int, cpu_arch: str,
-) -> tuple[str, int] | None:
-    """Search downward from *cuda_compact* for an index page with a matching wheel.
-
-    *index_base_prefix* is the URL prefix before the ``cu{N}`` segment, e.g.
-    ``https://wheels.vllm.ai/nightly``.
-
-    Returns ``(wheel_url, cuda_version)`` or ``None``.
-    """
-    consecutive_misses = 0
-    highest: tuple[str, int] | None = None
-    for cu in range(128, 200):
-        url = _fetch_vllm_wheel_url_from_index(f"{index_base_prefix}/cu{cu}", cpu_arch)
-        if url:
-            highest = (url, cu)
-            consecutive_misses = 0
-        else:
-            if highest is not None:
-                consecutive_misses += 1
-                if consecutive_misses >= 5:
-                    break
-    return highest
+def _mask_env_for_log(env_map: dict[str, str]) -> dict[str, str]:
+    return {k: _mask_env_value(k, str(v)) for k, v in env_map.items()}
 
 
-def _find_uv() -> str:
-    """Return the path to the ``uv`` binary, or raise if not found."""
-    uv = shutil.which("uv")
-    if uv is not None:
-        return uv
-    # uv may not be on PATH in systemd; check common install locations.
-    candidates: list[Path] = [
-        Path("/usr/local/bin/uv"),
-        Path("/usr/bin/uv"),
-    ]
-    # Check home dirs (current user, root, and all /home/* users)
-    homes = [Path.home(), Path("/root")]
-    try:
-        homes.extend(sorted(Path("/home").iterdir()))
-    except OSError:
-        pass
-    for home in homes:
-        candidates.append(home / ".local" / "bin" / "uv")
-        candidates.append(home / ".cargo" / "bin" / "uv")
-    for candidate in candidates:
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return str(candidate)
-    raise RuntimeError(
-        "uv is not installed or not on PATH. "
-        "Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh"
-    )
+def _device_requests(gpu_ids: list[int] | None) -> list[DeviceRequest]:
+    if gpu_ids:
+        return [DeviceRequest(device_ids=[str(i) for i in gpu_ids], capabilities=[["gpu"]])]
+    return [DeviceRequest(count=-1, capabilities=[["gpu"]])]
 
 
-async def _get_or_create_vllm_venv(
-    version: str,
-    deployment_key: str = "",
-    log_deque: deque | None = None,
-    extra_packages: list[str] | None = None,
-) -> str:
-    """Create (or reuse) an isolated venv and install vLLM using uv.
+def _volumes() -> dict[str, dict[str, str]]:
+    volumes: dict[str, dict[str, str]] = {}
+    hf_cache = Path(os.path.expanduser(settings.hf_cache_dir)).resolve()
+    hf_cache.mkdir(parents=True, exist_ok=True)
+    volumes[str(hf_cache)] = {"bind": "/root/.cache/huggingface", "mode": "rw"}
+    if _PACKAGES_DIR.exists():
+        volumes[str(_PACKAGES_DIR)] = {"bind": _CONTAINER_PACKAGES_MOUNT, "mode": "ro"}
+    return volumes
 
-    Returns the path to the venv's Python binary.
-    """
-    venv_id = _venv_hash(version, deployment_key)
-    venv_dir = _VENVS_DIR / venv_id
-    python_bin = venv_dir / "bin" / "python"
-    marker = venv_dir / ".installed"
 
-    if marker.exists() and python_bin.exists():
-        logger.info("Reusing cached venv %s", venv_id)
-        if log_deque is not None:
-            log_deque.append(f"[uv] Reusing cached venv {venv_id}")
-        return str(python_bin)
-
-    venv_dir.mkdir(parents=True, exist_ok=True)
-    uv = _find_uv()
-
-    def _log(msg: str) -> None:
-        logger.info(msg)
-        if log_deque is not None:
-            log_deque.append(msg)
-
-    # Timeouts for each step
-    _VENV_CREATE_TIMEOUT = 300  # 5 minutes for venv creation
-    _PIP_INSTALL_TIMEOUT = 1500  # 25 minutes for vLLM install (large wheels)
-    _EXTRAS_INSTALL_TIMEOUT = 600  # 10 minutes for extra packages
-
-    # Create venv with uv
-    _log(f"[uv] Creating venv {venv_id}...")
-    proc = await asyncio.create_subprocess_exec(
-        uv, "venv", "--allow-existing", "--python", sys.executable, str(venv_dir),
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-    )
-    try:
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_VENV_CREATE_TIMEOUT)
-    except asyncio.TimeoutError:
-        proc.kill()
-        _log(f"[uv] venv creation timed out after {_VENV_CREATE_TIMEOUT}s")
-        raise RuntimeError(f"venv creation timed out after {_VENV_CREATE_TIMEOUT}s")
-    if proc.returncode != 0:
-        _log(f"[uv] venv creation failed: {stdout.decode(errors='replace')}")
-        raise RuntimeError(f"Failed to create venv: {stdout.decode(errors='replace')}")
-
-    # Determine install command based on version type
-    pip_cmd = [uv, "pip", "install", "--python", str(python_bin)]
-
-    # Detect system CUDA version
-    cuda_compact = _detect_cuda_compact()
-
-    if re.match(r"^\d+\.\d+(\.\d+)?.*$", version):
-        # Release version — install from the CUDA-specific GitHub release wheel
-        cpu_arch = platform.machine()
-        install_cuda = cuda_compact
-        if install_cuda:
-            wheel_url = _vllm_wheel_url(version, install_cuda, cpu_arch)
-            if not _url_exists(wheel_url):
-                _log(
-                    f"[uv] No vLLM wheel for cu{install_cuda}, "
-                    "searching for highest compatible CUDA wheel..."
-                )
-                fallback = _find_highest_available_cuda(version, cpu_arch)
-                if fallback is None:
-                    raise RuntimeError(
-                        f"No vLLM wheel found for CUDA "
-                        f"{install_cuda // 10}.{install_cuda % 10} "
-                        f"(cu{install_cuda}) on {cpu_arch}, "
-                        "and no fallback CUDA version wheel was found."
-                    )
-                fallback_major, fallback_minor = divmod(fallback, 10)
-                _log(
-                    f"[uv] Using vLLM wheel for CUDA "
-                    f"{fallback_major}.{fallback_minor} (cu{fallback}) "
-                    f"instead of cu{install_cuda}"
-                )
-                install_cuda = fallback
-                wheel_url = _vllm_wheel_url(version, install_cuda, cpu_arch)
-            _log(f"[uv] Installing vllm=={version}+cu{install_cuda} ...")
-            pip_cmd.extend([
-                wheel_url,
-                "--extra-index-url", f"https://download.pytorch.org/whl/cu{install_cuda}",
-                "--index-strategy", "unsafe-best-match",
-            ])
-        else:
-            _log(f"[uv] Installing vllm=={version} (no CUDA detected) ...")
-            pip_cmd.append("vllm==" + version)
-    elif version.lower() == "nightly":
-        # Nightly build — fetch the direct wheel URL from the vLLM index.
-        # We cannot rely on uv index resolution because PEP 440 ranks the
-        # stable PyPI release higher than nightly dev wheels.
-        cpu_arch = platform.machine()
-        install_cuda = cuda_compact
-        if cuda_compact:
-            index_base = f"https://wheels.vllm.ai/nightly/cu{cuda_compact}"
-            wheel_url = _fetch_vllm_wheel_url_from_index(index_base, cpu_arch)
-            if not wheel_url:
-                _log(
-                    f"[uv] No nightly vLLM wheel for cu{cuda_compact}, "
-                    "searching for highest compatible CUDA wheel..."
-                )
-                fallback = _find_highest_available_cuda_from_index(
-                    "https://wheels.vllm.ai/nightly", cuda_compact, cpu_arch,
-                )
-                if fallback is None:
-                    raise RuntimeError(
-                        f"No nightly vLLM wheel found for cu{cuda_compact} "
-                        f"or any fallback CUDA version on {cpu_arch}"
-                    )
-                wheel_url, install_cuda = fallback
-                fb_major, fb_minor = divmod(install_cuda, 10)
-                _log(
-                    f"[uv] Using nightly vLLM wheel for CUDA "
-                    f"{fb_major}.{fb_minor} (cu{install_cuda}) "
-                    f"instead of cu{cuda_compact}"
-                )
-        else:
-            index_base = "https://wheels.vllm.ai/nightly"
-            wheel_url = _fetch_vllm_wheel_url_from_index(index_base, cpu_arch)
-            if not wheel_url:
-                raise RuntimeError(f"No nightly vLLM wheel found at {index_base} for {cpu_arch}")
-        _log(f"[uv] Installing vllm nightly from {wheel_url} ...")
-        pip_cmd.append(wheel_url)
-        if install_cuda:
-            pip_cmd.extend([
-                "--extra-index-url", f"https://download.pytorch.org/whl/cu{install_cuda}",
-                "--index-strategy", "unsafe-best-match",
-            ])
-    elif re.match(r"^[0-9a-f]{40}$", version):
-        # Commit hash — fetch the direct wheel URL, same approach as nightly.
-        cpu_arch = platform.machine()
-        install_cuda = cuda_compact
-        if cuda_compact:
-            index_base = f"https://wheels.vllm.ai/{version}/cu{cuda_compact}"
-            wheel_url = _fetch_vllm_wheel_url_from_index(index_base, cpu_arch)
-            if not wheel_url:
-                _log(
-                    f"[uv] No vLLM wheel for commit {version[:12]} cu{cuda_compact}, "
-                    "searching for highest compatible CUDA wheel..."
-                )
-                fallback = _find_highest_available_cuda_from_index(
-                    f"https://wheels.vllm.ai/{version}", cuda_compact, cpu_arch,
-                )
-                if fallback is None:
-                    raise RuntimeError(
-                        f"No vLLM wheel found for commit {version[:12]} "
-                        f"cu{cuda_compact} or any fallback CUDA version on {cpu_arch}"
-                    )
-                wheel_url, install_cuda = fallback
-                fb_major, fb_minor = divmod(install_cuda, 10)
-                _log(
-                    f"[uv] Using vLLM wheel for CUDA "
-                    f"{fb_major}.{fb_minor} (cu{install_cuda}) "
-                    f"instead of cu{cuda_compact}"
-                )
-        else:
-            index_base = f"https://wheels.vllm.ai/{version}"
-            wheel_url = _fetch_vllm_wheel_url_from_index(index_base, cpu_arch)
-            if not wheel_url:
-                raise RuntimeError(f"No vLLM wheel found at {index_base} for {cpu_arch}")
-        _log(f"[uv] Installing vllm from commit {version[:12]} ...")
-        pip_cmd.append(wheel_url)
-        if install_cuda:
-            pip_cmd.extend([
-                "--extra-index-url", f"https://download.pytorch.org/whl/cu{install_cuda}",
-                "--index-strategy", "unsafe-best-match",
-            ])
-    else:
-        _log(f"[uv] Unrecognised version format '{version}', treating as release specifier")
-        pip_cmd.append("vllm==" + version)
-
-    proc = await asyncio.create_subprocess_exec(
-        *pip_cmd,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-    )
-    try:
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_PIP_INSTALL_TIMEOUT)
-    except asyncio.TimeoutError:
-        proc.kill()
-        _log(f"[uv] vLLM installation timed out after {_PIP_INSTALL_TIMEOUT}s")
-        raise RuntimeError(f"vLLM installation timed out after {_PIP_INSTALL_TIMEOUT}s")
-    for line in stdout.decode(errors="replace").splitlines():
-        _log(f"[uv] {line}")
-
-    if proc.returncode != 0:
-        _log(f"[uv] Installation failed (exit {proc.returncode})")
-        tail = "\n".join(stdout.decode(errors="replace").splitlines()[-20:])
-        raise RuntimeError(f"uv pip install failed (exit {proc.returncode}):\n{tail}")
-
-    # Install extra packages if provided
-    if extra_packages:
-        _log(f"[uv] Installing {len(extra_packages)} extra package(s)...")
-        extras_cmd = [uv, "pip", "install", "--python", str(python_bin)] + extra_packages
-        proc = await asyncio.create_subprocess_exec(
-            *extras_cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        )
-        try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_EXTRAS_INSTALL_TIMEOUT)
-        except asyncio.TimeoutError:
-            proc.kill()
-            _log(f"[uv] Extra packages installation timed out after {_EXTRAS_INSTALL_TIMEOUT}s")
-            raise RuntimeError(f"Extra packages installation timed out after {_EXTRAS_INSTALL_TIMEOUT}s")
-        for line in stdout.decode(errors="replace").splitlines():
-            _log(f"[uv] {line}")
-
-        if proc.returncode != 0:
-            _log(f"[uv] Extra packages installation failed (exit {proc.returncode})")
-            tail = "\n".join(stdout.decode(errors="replace").splitlines()[-20:])
-            raise RuntimeError(f"uv pip install (extra packages) failed (exit {proc.returncode}):\n{tail}")
-
-    marker.touch()
-    _log(f"[uv] Venv {venv_id} ready")
-    return str(python_bin)
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
 
 @app.get("/health")
@@ -482,7 +441,7 @@ def metrics() -> dict[str, object]:
 
 @app.get("/deployments")
 def list_deployments() -> dict[str, list[str]]:
-    return {"running": list(_processes.keys())}
+    return {"running": list(_containers.keys())}
 
 
 @app.get("/deployments/status")
@@ -492,6 +451,7 @@ def deployment_status() -> dict[str, list[dict[str, object]]]:
         deployments.append({"key": key, **meta})
     return {"deployments": deployments}
 
+
 @app.get("/deployments/logs")
 def deployment_logs(key: str, tail: int = 200) -> dict[str, object]:
     logs = _logs.get(key)
@@ -499,6 +459,7 @@ def deployment_logs(key: str, tail: int = 200) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Deployment not found")
     tail = max(1, min(tail, 2000))
     return {"key": key, "lines": list(logs)[-tail:]}
+
 
 @app.get("/ports/check")
 def check_port(port: int) -> dict[str, object]:
@@ -514,7 +475,7 @@ def check_port(port: int) -> dict[str, object]:
 @app.post("/deployments/start")
 async def start_deployment(payload: StartRequest) -> dict[str, str]:
     key = f"{payload.model_name}:{payload.port}"
-    if key in _processes:
+    if key in _containers:
         raise HTTPException(status_code=400, detail="Deployment already running")
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -527,103 +488,71 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
                 detail=f"Port {payload.port} is already in use on this node.",
             )
 
-    # Resolve Python binary: always use a venv with the requested or latest vLLM version
+    # Validate requested GPUs exist on this host.
+    if payload.gpu_ids:
+        count = _gpu_count()
+        if count is not None:
+            bad = [g for g in payload.gpu_ids if g < 0 or g >= count]
+            if bad:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Requested GPU id(s) {bad} not available; node has {count} GPU(s).",
+                )
+
     log_buf = _logs[key] = deque(maxlen=2000)
-    resolved_version = payload.vllm_version or _get_latest_vllm_version()
-    if not resolved_version:
-        raise HTTPException(
-            status_code=500,
-            detail="Could not determine vLLM version. Set vllm_version explicitly.",
-        )
+
+    def _log(msg: str) -> None:
+        logger.info(msg)
+        log_buf.append(_strip_ansi(msg))
+
     try:
-        venv_id = _venv_hash(resolved_version, key)
-        python_bin = await _get_or_create_vllm_venv(
-            resolved_version, key, log_buf, payload.extra_packages,
+        image_ref, resolved_version = _resolve_image_tag(payload.vllm_version)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    try:
+        run_image = await asyncio.to_thread(
+            _ensure_image, image_ref, payload.extra_packages, _log
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    cmd = [
-        python_bin,
-        "-m",
-        "vllm.entrypoints.openai.api_server",
-        "--model",
-        payload.model_name,
-        "--port",
-        str(payload.port),
-        "--gpu-memory-utilization",
-        str(payload.gpu_memory_fraction),
+    command = [
+        "--model", payload.model_name,
+        "--port", str(payload.port),
+        "--gpu-memory-utilization", str(payload.gpu_memory_fraction),
     ]
     if payload.tensor_parallel_size:
-        cmd.extend(["--tensor-parallel-size", str(payload.tensor_parallel_size)])
+        command.extend(["--tensor-parallel-size", str(payload.tensor_parallel_size)])
     if payload.extra_args:
-        cmd.extend(payload.extra_args)
+        command.extend(_rewrite_paths_for_container(payload.extra_args))
 
-    env = os.environ.copy()
-
-    # Add nvidia and PyTorch library paths from venv so CUDA shared libs are found
-    venv_site = Path(python_bin).parent.parent / "lib"
-    if venv_site.exists():
-        lib_dirs: list[str] = []
-        # nvidia packages: site-packages/nvidia/*/lib
-        for sp in venv_site.rglob("site-packages/nvidia/*/lib"):
-            if sp.is_dir():
-                lib_dirs.append(str(sp))
-        # PyTorch bundles CUDA runtime libs in torch/lib
-        for sp in venv_site.rglob("site-packages/torch/lib"):
-            if sp.is_dir():
-                lib_dirs.append(str(sp))
-        if lib_dirs:
-            existing_ld = env.get("LD_LIBRARY_PATH", "")
-            env["LD_LIBRARY_PATH"] = ":".join(lib_dirs) + (
-                f":{existing_ld}" if existing_ld else ""
-            )
-            logger.info("LD_LIBRARY_PATH set with %d venv lib dirs", len(lib_dirs))
-
-    if payload.gpu_ids:
-        env["CUDA_VISIBLE_DEVICES"] = ",".join(str(gpu) for gpu in payload.gpu_ids)
-    if payload.env_vars:
-        for pair in payload.env_vars:
-            env_key = pair.get("key")
-            if not env_key:
-                continue
-            raw_value = str(pair.get("value", ""))
-            trimmed = raw_value.strip()
-            if (
-                len(trimmed) >= 2
-                and trimmed[0] == trimmed[-1]
-                and trimmed[0] in {"'", '"'}
-            ):
-                env[env_key] = trimmed[1:-1]
-            else:
-                env[env_key] = raw_value
-
-    def _mask_env_value(key_name: str, value: str) -> str:
-        upper = key_name.upper()
-        if any(token in upper for token in ["TOKEN", "SECRET", "KEY", "PASSWORD"]):
-            if len(value) <= 8:
-                return "*" * len(value)
-            return f"{value[:4]}...{value[-4:]}"
-        return value
-
-    def _mask_env_for_log(env_map: dict[str, str]) -> dict[str, str]:
-        return {k: _mask_env_value(k, str(v)) for k, v in env_map.items()}
+    environment = _build_environment(payload)
+    name = _container_name(key)
+    labels = {
+        _LABEL_MANAGED: "true",
+        _LABEL_KEY: key,
+        _LABEL_PORT: str(payload.port),
+        _LABEL_VERSION: resolved_version,
+    }
 
     try:
         logger.info("Starting deployment %s", key)
-        logger.info("Command: %s", " ".join(cmd))
-        logger.info("Env overrides: %s", _mask_env_for_log(env))
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            env=env,
+        logger.info("Image: %s  Command: %s", run_image, " ".join(command))
+        logger.info("Env overrides: %s", _mask_env_for_log(environment))
+        container = await asyncio.to_thread(
+            _run_container,
+            run_image,
+            command,
+            name,
+            environment,
+            _device_requests(payload.gpu_ids),
+            labels,
         )
-    except FileNotFoundError as exc:
+    except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    _processes[key] = process
+
+    _containers[key] = container
     _statuses[key] = {
         "model_name": payload.model_name,
         "port": payload.port,
@@ -631,84 +560,190 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
         "gpu_ids": payload.gpu_ids or [],
         "tensor_parallel_size": payload.tensor_parallel_size,
         "vllm_version": resolved_version,
-        "venv_id": venv_id,
+        "image": run_image,
+        "container_id": container.id,
         "status": "loading",
         "desired_state": "running",
     }
-    asyncio.create_task(_stream_output(key, process))
-    asyncio.create_task(_monitor_process(key, process))
+    _log(f"[docker] Started container {name}")
+    asyncio.create_task(_stream_container_logs(key, container))
+    asyncio.create_task(_monitor_container(key, container))
     return {"status": "started", "key": key, "vllm_version": resolved_version}
+
+
+def _run_container(
+    image: str,
+    command: list[str],
+    name: str,
+    environment: dict[str, str],
+    device_requests: list[DeviceRequest],
+    labels: dict[str, str],
+) -> "docker.models.containers.Container":
+    client = _docker()
+    # Remove any stale container left over from a previous run with this name.
+    try:
+        existing = client.containers.get(name)
+        existing.remove(force=True)
+    except NotFound:
+        pass
+    try:
+        return client.containers.run(
+            image,
+            command=command,
+            name=name,
+            detach=True,
+            network_mode="host",
+            ipc_mode="host",
+            device_requests=device_requests,
+            environment=environment,
+            volumes=_volumes(),
+            labels=labels,
+            restart_policy={"Name": "unless-stopped"},
+        )
+    except (APIError, RuntimeError) as exc:
+        raise RuntimeError(f"Failed to start container: {exc}") from exc
 
 
 class StopRequest(BaseModel):
     key: str
 
 
-async def _force_kill(key: str, process: subprocess.Popen, timeout: float = 10.0) -> None:
-    try:
-        await asyncio.wait_for(asyncio.to_thread(process.wait), timeout=timeout)
-        return
-    except asyncio.TimeoutError:
-        logger.warning("Force killing deployment %s after %.1fs", key, timeout)
-    except Exception as exc:
-        logger.warning("Failed waiting for deployment %s to exit: %s", key, exc)
-
-    try:
-        process.kill()
-    except Exception as exc:
-        logger.warning("Failed to kill deployment %s: %s", key, exc)
-
-
 @app.post("/deployments/stop")
 async def stop_deployment(payload: StopRequest) -> dict[str, str]:
     key = payload.key
-    process = _processes.get(key)
-    if not process:
+    container = _containers.get(key)
+    if not container:
         raise HTTPException(status_code=404, detail="Deployment not found")
-
-    venv_id = _statuses.get(key, {}).get("venv_id") if key in _statuses else None
 
     if key in _statuses:
         _statuses[key]["status"] = "stopping"
         _statuses[key]["desired_state"] = "stopped"
 
-    process.terminate()
-    asyncio.create_task(_force_kill(key, process))
-    _processes.pop(key, None)
-
-    # Tear down the deployment venv
-    if venv_id:
-        venv_dir = _VENVS_DIR / venv_id
-        if venv_dir.exists():
-            try:
-                shutil.rmtree(venv_dir)
-                logger.info("Removed venv %s for deployment %s", venv_id, key)
-            except Exception as exc:
-                logger.warning("Failed to remove venv %s: %s", venv_id, exc)
-
+    await asyncio.to_thread(_remove_container, container)
+    _containers.pop(key, None)
+    if key in _statuses:
+        _statuses[key]["status"] = "stopped"
     return {"status": "stopped", "key": key}
 
 
-async def _monitor_process(key: str, process: subprocess.Popen) -> None:
-    # Mark running only after the vLLM HTTP server responds.
-    port = _statuses[key].get("port")
+def _remove_container(container: "docker.models.containers.Container") -> None:
+    # Stop (SIGTERM, then SIGKILL after the grace period) and remove. The image
+    # is kept — it is the warm-start cache for future deployments.
+    try:
+        container.stop(timeout=30)
+    except NotFound:
+        return
+    except Exception as exc:
+        logger.warning("Error stopping container %s: %s", container.id[:12], exc)
+    try:
+        container.remove(force=True)
+    except NotFound:
+        pass
+    except Exception as exc:
+        logger.warning("Error removing container %s: %s", container.id[:12], exc)
+
+
+# A deployment that keeps restarting without ever becoming ready is
+# mis-configured (bad args, GPU OOM, missing token, ...). After this many failed
+# restarts the agent stops it so it doesn't loop forever under the
+# unless-stopped policy — which otherwise still recovers healthy deployments
+# across transient crashes and host reboots.
+_MAX_FAILED_RESTARTS = 3
+
+
+async def _monitor_container(
+    key: str, container: "docker.models.containers.Container"
+) -> None:
+    """Track container state; flip the deployment to running once /health is up.
+
+    Containers use the unless-stopped restart policy, so a non-zero exit is NOT
+    terminal — Docker restarts it. A deployment is therefore considered finished
+    only when (a) the user stopped it, (b) the container disappeared, or (c) it
+    crash-loops without ever becoming ready (the breaker below stops it).
+    """
+    port = _statuses.get(key, {}).get("port")
+    last_restart_count = 0
+    ever_ready = False
     while True:
         await asyncio.sleep(2)
-        code = process.poll()
-        if code is not None:
+        try:
+            await asyncio.to_thread(container.reload)
+        except NotFound:
+            # Container was removed out from under us.
             desired = _statuses.get(key, {}).get("desired_state")
-            if desired == "stopped":
-                _statuses[key]["status"] = "stopped"
-            else:
-                _statuses[key]["status"] = "error"
-                _statuses[key]["exit_code"] = code
-            _processes.pop(key, None)
+            if key in _statuses:
+                _statuses[key]["status"] = "stopped" if desired == "stopped" else "error"
+            _containers.pop(key, None)
             break
+        except Exception as exc:
+            logger.warning("Error inspecting container for %s: %s", key, exc)
+            continue
+
+        status = container.status
+        state = container.attrs.get("State", {})
+        desired = _statuses.get(key, {}).get("desired_state")
+
+        # The user asked it to stop: terminal once it actually exits.
+        if desired == "stopped":
+            if status in ("exited", "dead"):
+                if key in _statuses:
+                    _statuses[key]["status"] = "stopped"
+                _containers.pop(key, None)
+                break
+            continue
+
+        # desired == "running" below.
+        restart_count = int(container.attrs.get("RestartCount", 0) or 0)
+        if restart_count > last_restart_count:
+            last_restart_count = restart_count
+            _logs.setdefault(key, deque(maxlen=2000)).append(
+                f"[docker] Container restarted (exit code {state.get('ExitCode')}); Docker is retrying."
+            )
+            if key in _statuses:
+                _statuses[key]["status"] = "error"
+
+            # Crash-loop breaker: a deployment that never became ready and keeps
+            # restarting is mis-configured (bad args, GPU OOM, ...). Stop it so
+            # unless-stopped does not retry forever; healthy deployments
+            # (ever_ready) are left alone so transient crashes and reboots recover.
+            if not ever_ready and restart_count >= _MAX_FAILED_RESTARTS:
+                logger.warning(
+                    "Crash-loop breaker tripped for %s after %d failed restarts",
+                    key, restart_count,
+                )
+                _logs.setdefault(key, deque(maxlen=2000)).append(
+                    f"[docker] Deployment failed to start after {restart_count} attempts and "
+                    "never became ready; stopping retries and removing the container. See the "
+                    "log above for the root cause (e.g. GPU out of memory, bad args), then fix "
+                    "it and redeploy. The vLLM image stays cached for a fast retry."
+                )
+                if key in _statuses:
+                    _statuses[key]["status"] = "error"
+                    _statuses[key]["error"] = (
+                        f"Stopped after {restart_count} failed starts without becoming ready."
+                    )
+                # Stop AND remove the container: stopping halts the unless-stopped
+                # restart loop, and removing keeps `docker ps -a` clean. The failure
+                # logs are preserved in this deployment's log buffer (shown in the
+                # UI), and the pulled image stays cached for a fast redeploy.
+                await asyncio.to_thread(_remove_container, container)
+                _containers.pop(key, None)
+                break
+
+        if status in ("exited", "dead"):
+            # Transient under unless-stopped — Docker will restart it. Reflect
+            # that it isn't healthy and keep watching; the breaker handles the
+            # repeated-failure case via RestartCount above.
+            if key in _statuses:
+                _statuses[key]["status"] = "error"
+                _statuses[key]["exit_code"] = state.get("ExitCode")
+            continue
 
         if await _is_ready(port):
-            if _statuses.get(key, {}).get("desired_state") == "running":
+            ever_ready = True
+            if key in _statuses:
                 _statuses[key]["status"] = "running"
-            # Once running, continue to monitor for exits.
+            # Keep monitoring for exits/crash loops.
             continue
 
 
@@ -716,7 +751,7 @@ async def _is_ready(port: object) -> bool:
     if not isinstance(port, int):
         return False
 
-    async with httpx.AsyncClient(timeout=2.0) as client:
+    async with httpx.AsyncClient(timeout=5.0) as client:
         # Try common vLLM readiness endpoints.
         for path in ("/health", "/v1/models"):
             try:
@@ -728,53 +763,111 @@ async def _is_ready(port: object) -> bool:
     return False
 
 
-async def _stream_output(key: str, process: subprocess.Popen) -> None:
-    if process.stdout is None:
-        return
-
-    ansi_escape = re.compile(r"(?:\x1B|\u241B|\x9B)\[[0-?]*[ -/]*[@-~]")
-    ansi_escape_alt = re.compile(r"(?:\x1B|\u241B|\x9B)[@-Z\\-_]")
-
+async def _stream_container_logs(
+    key: str, container: "docker.models.containers.Container"
+) -> None:
     def _reader() -> None:
-        for line in iter(process.stdout.readline, ""):
-            cleaned = ansi_escape.sub("", line)
-            cleaned = ansi_escape_alt.sub("", cleaned)
-            cleaned = cleaned.replace("\u241b", "").rstrip()
-            _logs.setdefault(key, deque(maxlen=2000)).append(cleaned)
+        try:
+            stream = container.logs(stream=True, follow=True, tail=200)
+        except Exception as exc:  # pragma: no cover - environment dependent
+            logger.warning("Failed to attach to logs for %s: %s", key, exc)
+            return
+        buf = _logs.setdefault(key, deque(maxlen=2000))
+        for raw in stream:
+            try:
+                line = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+            except Exception:
+                continue
+            cleaned = _strip_ansi(line)
+            if cleaned:
+                buf.append(cleaned)
 
     await asyncio.to_thread(_reader)
 
 
+def _reconcile_containers() -> None:
+    """Rebuild in-memory state from managed containers after an agent restart."""
+    client = _docker()
+    containers = client.containers.list(
+        all=True, filters={"label": f"{_LABEL_MANAGED}=true"}
+    )
+    recovered = 0
+    for container in containers:
+        labels = container.labels or {}
+        key = labels.get(_LABEL_KEY)
+        if not key:
+            continue
+        if container.status in ("exited", "dead"):
+            # A previously-stopped deployment; leave it for cleanup, don't track.
+            continue
+        try:
+            port = int(labels.get(_LABEL_PORT, "0"))
+        except ValueError:
+            port = 0
+        _containers[key] = container
+        _logs.setdefault(key, deque(maxlen=2000))
+        _statuses[key] = {
+            "model_name": key.rsplit(":", 1)[0],
+            "port": port,
+            "vllm_version": labels.get(_LABEL_VERSION),
+            "image": (container.image.tags[0] if container.image.tags else None),
+            "container_id": container.id,
+            "status": "loading",
+            "desired_state": "running",
+        }
+        asyncio.create_task(_stream_container_logs(key, container))
+        asyncio.create_task(_monitor_container(key, container))
+        recovered += 1
+    if recovered:
+        logger.info("Reconciled %d running deployment(s) from Docker", recovered)
+
+
 # ---------------------------------------------------------------------------
-# Venv cache management endpoints
+# Image cache management endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/venvs")
-def list_venvs() -> dict[str, list[dict[str, object]]]:
-    venvs: list[dict[str, object]] = []
-    if _VENVS_DIR.exists():
-        for entry in sorted(_VENVS_DIR.iterdir()):
-            if entry.is_dir():
-                venvs.append({
-                    "id": entry.name,
-                    "path": str(entry),
-                    "installed": (entry / ".installed").exists(),
-                })
-    return {"venvs": venvs}
+
+@app.get("/images")
+def list_images() -> dict[str, list[dict[str, object]]]:
+    """List cached vLLM images (official + locally derived) on this node."""
+    images: list[dict[str, object]] = []
+    try:
+        client = _docker()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    repo = settings.vllm_image_repo
+    for image in client.images.list():
+        tags = list(image.tags or [])
+        relevant = [t for t in tags if t.startswith(repo) or t.startswith(_LOCAL_IMAGE_REPO)]
+        if not relevant:
+            continue
+        images.append({
+            "id": image.short_id,
+            "tags": relevant,
+            "size_mb": round((image.attrs.get("Size", 0) or 0) / (1024 * 1024)),
+        })
+    return {"images": images}
 
 
-@app.delete("/venvs/{venv_id}")
-def delete_venv(venv_id: str) -> dict[str, str]:
-    venv_dir = _VENVS_DIR / venv_id
-    if not venv_dir.exists() or not venv_dir.is_dir():
-        raise HTTPException(status_code=404, detail="Venv not found")
-    shutil.rmtree(venv_dir)
-    return {"status": "deleted", "id": venv_id}
+@app.delete("/images/{image_id}")
+def delete_image(image_id: str) -> dict[str, str]:
+    try:
+        client = _docker()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    try:
+        client.images.remove(image_id)
+    except ImageNotFound:
+        raise HTTPException(status_code=404, detail="Image not found")
+    except APIError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "deleted", "id": image_id}
 
 
 # ---------------------------------------------------------------------------
 # Package upload endpoints
 # ---------------------------------------------------------------------------
+
 
 @app.post("/packages/upload")
 async def upload_package(file: UploadFile = File(...)) -> dict[str, str]:

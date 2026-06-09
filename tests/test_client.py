@@ -1,6 +1,5 @@
 """Tests for the client (satellite) application."""
 
-import hashlib
 import sys
 from pathlib import Path
 from unittest import mock
@@ -14,8 +13,10 @@ if str(_CLIENT_DIR) not in sys.path:
 
 # Stub out consul registration before importing the app (it runs on import via lifespan).
 with mock.patch.dict("sys.modules", {"app.consul": mock.MagicMock()}):
+    import app.main as client_main
     from app.main import (
-        _venv_hash,
+        _resolve_image_tag,
+        _derived_image_tag,
         StartRequest,
         StopRequest,
         app,
@@ -25,36 +26,53 @@ from httpx import AsyncClient, ASGITransport
 
 
 # ---------------------------------------------------------------------------
-# _venv_hash
+# _resolve_image_tag
 # ---------------------------------------------------------------------------
 
 
-class TestVenvHash:
-    def test_deterministic(self):
-        h1 = _venv_hash("0.8.5", "model:8000")
-        h2 = _venv_hash("0.8.5", "model:8000")
-        assert h1 == h2
+class TestResolveImageTag:
+    def test_release_version(self):
+        image, resolved = _resolve_image_tag("0.8.5")
+        assert image == "vllm/vllm-openai:v0.8.5"
+        assert resolved == "0.8.5"
 
-    def test_different_versions(self):
-        h1 = _venv_hash("0.8.5", "model:8000")
-        h2 = _venv_hash("0.9.0", "model:8000")
-        assert h1 != h2
+    def test_nightly(self):
+        image, resolved = _resolve_image_tag("nightly")
+        assert image == "vllm/vllm-openai:nightly"
+        assert resolved == "nightly"
 
-    def test_different_keys(self):
-        h1 = _venv_hash("0.8.5", "model:8000")
-        h2 = _venv_hash("0.8.5", "model:9000")
-        assert h1 != h2
+    def test_commit_hash(self):
+        commit = "a" * 40
+        image, resolved = _resolve_image_tag(commit)
+        assert image == f"vllm/vllm-openai:nightly-{commit}"
+        assert resolved == commit
 
-    def test_length(self):
-        h = _venv_hash("0.8.5")
-        assert len(h) == 16
+    def test_blank_uses_latest(self):
+        with mock.patch.object(client_main, "_get_latest_vllm_version", return_value="1.2.3"):
+            image, resolved = _resolve_image_tag("")
+        assert image == "vllm/vllm-openai:v1.2.3"
+        assert resolved == "1.2.3"
 
-    def test_matches_sha256(self):
-        version = "0.8.5"
-        key = "model:8000"
-        canonical = version + "\n" + key
-        expected = hashlib.sha256(canonical.encode()).hexdigest()[:16]
-        assert _venv_hash(version, key) == expected
+    def test_none_uses_latest(self):
+        with mock.patch.object(client_main, "_get_latest_vllm_version", return_value="1.2.3"):
+            image, _ = _resolve_image_tag(None)
+        assert image == "vllm/vllm-openai:v1.2.3"
+
+
+class TestDerivedImageTag:
+    def test_order_independent(self):
+        a = _derived_image_tag("vllm/vllm-openai:v0.8.5", ["transformers", "numpy"])
+        b = _derived_image_tag("vllm/vllm-openai:v0.8.5", ["numpy", "transformers"])
+        assert a == b
+
+    def test_varies_by_packages(self):
+        a = _derived_image_tag("vllm/vllm-openai:v0.8.5", ["transformers"])
+        b = _derived_image_tag("vllm/vllm-openai:v0.8.5", ["numpy"])
+        assert a != b
+
+    def test_repo_prefix(self):
+        tag = _derived_image_tag("vllm/vllm-openai:v0.8.5", ["transformers"])
+        assert tag.startswith("vllm-cluster-manager/local:")
 
 
 # ---------------------------------------------------------------------------
@@ -142,21 +160,28 @@ async def test_stop_not_found():
 
 
 @pytest.mark.anyio
-async def test_venvs_list():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/venvs")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "venvs" in data
+async def test_images_list():
+    fake = mock.MagicMock()
+    fake.images.list.return_value = []
+    with mock.patch.object(client_main, "_docker", return_value=fake):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/images")
+            assert resp.status_code == 200
+            assert "images" in resp.json()
 
 
 @pytest.mark.anyio
-async def test_delete_venv_not_found():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.delete("/venvs/nonexistent")
-        assert resp.status_code == 404
+async def test_delete_image_not_found():
+    # Use the ImageNotFound class the module itself imported so the endpoint's
+    # `except` matches it regardless of how docker was imported under test.
+    fake = mock.MagicMock()
+    fake.images.remove.side_effect = client_main.ImageNotFound("nope")
+    with mock.patch.object(client_main, "_docker", return_value=fake):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.delete("/images/nonexistent")
+            assert resp.status_code == 404
 
 
 @pytest.mark.anyio

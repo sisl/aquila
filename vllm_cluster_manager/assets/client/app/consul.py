@@ -1,10 +1,13 @@
 from urllib.parse import urlparse
 import asyncio
+import logging
 import socket
 
 import consul
 
 from app.config import settings
+
+logger = logging.getLogger("vllm-cluster-client")
 
 
 def _resolve_advertise_ip() -> str:
@@ -51,9 +54,21 @@ def register_node() -> None:
 
 
 async def register_loop(interval_seconds: int = 10) -> None:
+    consecutive_failures = 0
     while True:
         try:
             register_node()
-        except Exception:
-            pass
+            if consecutive_failures:
+                logger.info("Re-registered with Consul after %d failure(s)", consecutive_failures)
+            consecutive_failures = 0
+        except Exception as exc:
+            consecutive_failures += 1
+            # Log the first failure loudly, then back off the log volume so a
+            # persistently unreachable Consul does not flood the journal.
+            if consecutive_failures == 1 or consecutive_failures % 12 == 0:
+                logger.warning(
+                    "Consul registration failed (attempt %d): %s",
+                    consecutive_failures,
+                    exc,
+                )
         await asyncio.sleep(interval_seconds)

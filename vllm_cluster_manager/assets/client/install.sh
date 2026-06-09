@@ -26,38 +26,73 @@ ensure_uv() {
   fi
 }
 
-require_debian_pkg() {
-  local pkg="$1"
-  if ! command -v dpkg-query >/dev/null 2>&1; then
-    echo "dpkg-query not found; cannot verify package $pkg." >&2
-    echo "Ensure required system packages are installed and retry." >&2
+# vLLM now runs inside the official vllm/vllm-openai Docker containers, so the
+# client node needs a working Docker engine with GPU access via the NVIDIA
+# Container Toolkit. We verify these prerequisites and print precise install
+# instructions if they are missing — we never mutate the system ourselves.
+check_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    cat >&2 <<'EOF'
+Docker is not installed. The client runs vLLM in official Docker containers.
+
+Install Docker Engine, e.g. on Ubuntu:
+  curl -fsSL https://get.docker.com | sudo sh
+  sudo usermod -aG docker "$USER"   # then log out/in so the group takes effect
+
+Docs: https://docs.docker.com/engine/install/
+EOF
     exit 1
   fi
-  if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
-    echo "Missing required system package: $pkg" >&2
-    echo "Install with: sudo apt install -y $pkg" >&2
+
+  if ! docker info >/dev/null 2>&1; then
+    cat >&2 <<EOF
+Docker is installed but the daemon is not reachable by user '$(id -un)'.
+
+Fixes:
+  - Start the daemon:    sudo systemctl enable --now docker
+  - Grant access:        sudo usermod -aG docker "$USER"  (then log out/in)
+EOF
     exit 1
   fi
 }
 
-check_system_requirements() {
-  require_debian_pkg python3.12-dev
-  require_debian_pkg build-essential
-}
+check_nvidia_runtime() {
+  # Authoritative check: can Docker actually expose GPUs to a container? This
+  # covers both the legacy 'nvidia' runtime and modern CDI setups, and avoids
+  # false negatives from only inspecting docker info.
+  local test_img=""
+  for img in ubuntu:22.04 ubuntu:latest busybox:latest; do
+    if docker image inspect "$img" >/dev/null 2>&1; then test_img="$img"; break; fi
+  done
+  [[ -z "$test_img" ]] && test_img="busybox:latest"  # tiny; pulled if absent
+  if docker run --rm --gpus all "$test_img" true >/dev/null 2>&1; then
+    return
+  fi
+  # Fallback heuristic in case the test image could not be pulled (offline):
+  # the NVIDIA Container Toolkit registers an 'nvidia' runtime and/or nvidia-ctk.
+  if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q nvidia \
+     || command -v nvidia-ctk >/dev/null 2>&1 \
+     || command -v nvidia-container-runtime >/dev/null 2>&1; then
+    return
+  fi
+  cat >&2 <<'EOF'
+The NVIDIA Container Toolkit was not detected. vLLM containers need GPU access.
 
-detect_cuda_version() {
-  local cuda_ver=""
-  if command -v nvcc >/dev/null 2>&1; then
-    cuda_ver="$(nvcc --version | sed -n 's/.*release \([0-9]\+\.[0-9]\+\).*/\1/p' | tail -n 1)"
-  fi
-  if [[ -z "$cuda_ver" ]] && command -v nvidia-smi >/dev/null 2>&1; then
-    cuda_ver="$(nvidia-smi | sed -n 's/.*CUDA Version: \([0-9]\+\.[0-9]\+\).*/\1/p' | head -n 1)"
-  fi
-  if [[ -z "$cuda_ver" ]]; then
-    echo "Unable to detect CUDA version. Ensure nvcc or nvidia-smi is available on PATH." >&2
-    exit 1
-  fi
-  echo "$cuda_ver"
+Install it, e.g. on Ubuntu:
+  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+    | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+  curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+    | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+    | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+  sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+  sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
+
+Verify with:
+  docker run --rm --gpus all ubuntu nvidia-smi
+
+Docs: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
+EOF
+  exit 1
 }
 
 prompt_default() {
@@ -72,79 +107,6 @@ prompt_default() {
   fi
 }
 
-find_highest_available_cuda() {
-  local vllm_version="$1"
-  local cpu_arch="$2"
-  local max_search=200  # Reasonable upper limit to prevent infinite loop
-  local highest_found=""
-  local found_versions=()
-  
-  # Search from cu100 up to max_search
-  for cu_ver in $(seq 100 "$max_search"); do
-    local wheel_url="https://github.com/vllm-project/vllm/releases/download/v${vllm_version}/vllm-${vllm_version}+cu${cu_ver}-cp38-abi3-manylinux_2_35_${cpu_arch}.whl"
-    if curl -sSfI "$wheel_url" >/dev/null 2>&1; then
-      highest_found="$cu_ver"
-      found_versions+=("$cu_ver")
-    else
-      # If we've found at least one and now hit a miss, check a few more to be sure
-      if [[ -n "$highest_found" ]]; then
-        # Check if we've hit a gap of 5 consecutive misses
-        local consecutive_misses=1
-        local check_ahead=5
-        for offset in $(seq 1 "$check_ahead"); do
-          local next_cu=$((cu_ver + offset))
-          local next_url="https://github.com/vllm-project/vllm/releases/download/v${vllm_version}/vllm-${vllm_version}+cu${next_cu}-cp38-abi3-manylinux_2_35_${cpu_arch}.whl"
-          if curl -sSfI "$next_url" >/dev/null 2>&1; then
-            highest_found="$next_cu"
-            found_versions+=("$next_cu")
-            consecutive_misses=0
-            break
-          else
-            ((consecutive_misses++))
-          fi
-        done
-        
-        # If we had consecutive misses, we've likely found the highest
-        if [[ $consecutive_misses -ge $check_ahead ]]; then
-          break
-        fi
-      fi
-    fi
-  done
-  
-  # Echo all found CUDA versions
-  if [[ ${#found_versions[@]} -gt 0 ]]; then
-    echo "Found CUDA versions: ${found_versions[*]}" >&2
-    local formatted_versions=""
-    for v in "${found_versions[@]}"; do
-      local major="$((v / 10))"
-      local minor="$((v % 10))"
-      formatted_versions="${formatted_versions}${major}.${minor} "
-    done
-    echo "Available CUDA versions: ${formatted_versions% }" >&2
-  fi
-  
-  if [[ -n "$highest_found" ]]; then
-    echo "$highest_found"
-    return 0
-  fi
-  
-  return 1
-}
-
-prompt_yes_no() {
-  local prompt="$1"
-  local response
-  while true; do
-    read -r -p "$prompt (y/n): " response
-    case "$response" in
-      [Yy]|[Yy][Ee][Ss]) return 0 ;;
-      [Nn]|[Nn][Oo]) return 1 ;;
-      *) echo "Please answer y or n." ;;
-    esac
-  done
-}
-
 ensure_uv
 require_cmd systemctl
 require_cmd curl
@@ -153,56 +115,11 @@ echo "VLLM Cluster Client installer"
 echo "Working directory: $ROOT_DIR"
 echo
 
-check_system_requirements
-
-CUDA_VERSION_RAW="$(detect_cuda_version)"
-CUDA_MAJOR="${CUDA_VERSION_RAW%%.*}"
-CUDA_MINOR="${CUDA_VERSION_RAW##*.}"
-CUDA_VERSION="$((CUDA_MAJOR * 10 + CUDA_MINOR))"
-CPU_ARCH="$(uname -m)"
-VLLM_VERSION="$(curl -s https://api.github.com/repos/vllm-project/vllm/releases/latest | sed -n 's/.*"tag_name":[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p' | head -n 1)"
-if [[ -z "$VLLM_VERSION" ]]; then
-  echo "Unable to determine latest vLLM version from GitHub releases." >&2
-  exit 1
-fi
-
-VLLM_WHEEL_URL="https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cu${CUDA_VERSION}-cp38-abi3-manylinux_2_35_${CPU_ARCH}.whl"
-
-# Check if exact match exists
-if ! curl -sSfI "$VLLM_WHEEL_URL" >/dev/null 2>&1; then
-  echo "No vLLM wheel found for exact CUDA version ${CUDA_VERSION_RAW} (cu${CUDA_VERSION})." >&2
-  
-  # Try to find the highest available CUDA version
-  echo "Searching for highest available CUDA version wheel..." >&2
-  HIGHEST_CUDA="$(find_highest_available_cuda "$VLLM_VERSION" "$CPU_ARCH")"
-  
-  if [[ -z "$HIGHEST_CUDA" ]]; then
-    echo "No compatible vLLM wheel found for any CUDA version on ${CPU_ARCH}." >&2
-    exit 1
-  fi
-  
-  HIGHEST_CUDA_MAJOR="$((HIGHEST_CUDA / 10))"
-  HIGHEST_CUDA_MINOR="$((HIGHEST_CUDA % 10))"
-  HIGHEST_CUDA_VERSION_RAW="${HIGHEST_CUDA_MAJOR}.${HIGHEST_CUDA_MINOR}"
-  
-  echo
-  echo "WARNING: Your CUDA version (${CUDA_VERSION_RAW}) is newer than the highest available vLLM wheel."
-  echo "Highest available CUDA version: ${HIGHEST_CUDA_VERSION_RAW} (cu${HIGHEST_CUDA})"
-  echo
-  echo "This may work due to CUDA forward compatibility, but is not guaranteed."
-  echo
-  
-  if ! prompt_yes_no "Do you want to continue with CUDA ${HIGHEST_CUDA_VERSION_RAW} wheel?"; then
-    echo "Installation cancelled by user." >&2
-    exit 1
-  fi
-  
-  # Update to use the highest available version
-  CUDA_VERSION="$HIGHEST_CUDA"
-  VLLM_WHEEL_URL="https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cu${CUDA_VERSION}-cp38-abi3-manylinux_2_35_${CPU_ARCH}.whl"
-  echo
-  echo "Proceeding with CUDA ${HIGHEST_CUDA_VERSION_RAW} wheel..."
-fi
+echo "Checking Docker + NVIDIA Container Toolkit..."
+check_docker
+check_nvidia_runtime
+echo "Docker with GPU access detected."
+echo
 
 API_HOST="$(prompt_default "Client URI (bind host)" "0.0.0.0")"
 API_PORT="$(prompt_default "Client port" "9000")"
@@ -220,13 +137,7 @@ uv venv --python=3.12 "$ROOT_DIR/.venv"
 source "$ROOT_DIR/.venv/bin/activate"
 
 echo "Installing client dependencies..."
-REQ_NO_VLLM="$ROOT_DIR/.requirements-no-vllm.txt"
-grep -v -E '^[[:space:]]*vllm([[:space:]]|$)' "$ROOT_DIR/requirements.txt" > "$REQ_NO_VLLM"
-uv pip install -r "$REQ_NO_VLLM"
-rm -f "$REQ_NO_VLLM"
-
-echo "Installing vLLM matching CUDA version cu${CUDA_VERSION}..."
-uv pip install "$VLLM_WHEEL_URL" --extra-index-url "https://download.pytorch.org/whl/cu${CUDA_VERSION}"
+uv pip install -r "$ROOT_DIR/requirements.txt"
 
 ENV_FILE="$ROOT_DIR/.env"
 echo
@@ -241,13 +152,17 @@ EOF
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 echo
 echo "Creating systemd service at $SERVICE_FILE (requires sudo)..."
+echo "Note: the service runs as $(id -un); this user must be able to use Docker"
+echo "      (member of the 'docker' group or root)."
 sudo tee "$SERVICE_FILE" >/dev/null <<EOF
 [Unit]
 Description=VLLM Cluster Client
-After=network.target
+After=network.target docker.service
+Wants=docker.service
 
 [Service]
 Type=simple
+User=$(id -un)
 WorkingDirectory=$ROOT_DIR
 EnvironmentFile=$ENV_FILE
 ExecStart=$ROOT_DIR/.venv/bin/python -m app.main

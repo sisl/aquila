@@ -16,8 +16,8 @@ vLLM Cluster Manager runs three host services and a client agent on each GPU nod
     <strong>Client agent</strong>
     <ul>
       <li>Python service that registers with Consul</li>
-      <li>Creates isolated per-deployment venvs with <code>uv</code></li>
-      <li>Executes vLLM workloads on the node</li>
+      <li>Runs each deployment as an official <code>vllm/vllm-openai</code> Docker container</li>
+      <li>Pulls/builds and caches images; reconciles running containers on restart</li>
       <li>Reports deployment status, version, and GPU metrics</li>
     </ul>
   </div>
@@ -30,7 +30,7 @@ Consul provides service discovery so the UI and backend can list connected clien
 1. Client registers with Consul.
 2. Backend discovers clients and stores state in Postgres.
 3. UI calls the backend API and subscribes to WebSocket streams for logs and status.
-4. On deploy, the backend proxies the request to the client, which creates an isolated venv, installs the requested vLLM version and extra packages, then starts the vLLM server.
+4. On deploy, the backend proxies the request to the client, which pulls the matching `vllm/vllm-openai` image (building a derived image if extra packages are requested) and starts a vLLM container.
 5. The sync loop periodically polls clients for deployment status and GPU metrics, updating the database. If the backend restarts, it rediscovers running deployments from clients automatically.
 
 ## Ports

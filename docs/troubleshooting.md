@@ -32,37 +32,35 @@ Explanation:
 - The host maps Consul's container port `8500` to a host port (default `47528`).
 - Clients must use the host port (`--host-discover-port`, default `47528`).
 
-## CUDA detection fails
-**Symptoms**: Client install fails with an error about CUDA detection.
+## Docker daemon not reachable
+**Symptoms**: Client install or a deployment fails with "Cannot talk to the Docker daemon".
 
 Checks:
-- Ensure `nvcc` or `nvidia-smi` is on PATH.
-- Verify NVIDIA drivers are installed and the GPU is visible.
+- Verify Docker is running: `docker info`.
+- Ensure the client user can use Docker without sudo: `sudo usermod -aG docker "$USER"` then log out/in (or run the client as root).
+- The client systemd unit runs as the installing user — that user must be in the `docker` group.
 
-## vLLM wheel not found
-**Symptoms**: Install fails after detecting CUDA.
-
-Checks:
-- The vLLM wheel must exist for your CUDA version and CPU architecture.
-- If no wheel matches your exact CUDA version, the installer automatically tries the highest compatible version. If that also fails, consider installing a supported CUDA version or building vLLM from source.
-
-## `uv` not found when running as a systemd service
-**Symptoms**: Deploying a model fails with "uv is not installed or not on PATH".
-
-Explanation:
-- Systemd services run with a minimal PATH that may not include user-local directories.
+## GPUs not visible to containers
+**Symptoms**: A deployment fails to start, or the container cannot see the GPUs.
 
 Checks:
-- Verify `uv` is installed: `which uv` or check `~/.local/bin/uv` and `~/.cargo/bin/uv`.
-- The client automatically searches common locations (`/usr/local/bin`, `/usr/bin`, `/home/*/.local/bin`, `/home/*/.cargo/bin`), but if `uv` is installed elsewhere, add its directory to the systemd service's `Environment=PATH=...` line.
+- Confirm the NVIDIA Container Toolkit is installed and configured: `docker run --rm --gpus all ubuntu nvidia-smi` should list your GPUs.
+- If it fails, install the toolkit and run `sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker`.
+
+## Image pull fails
+**Symptoms**: The deployment log shows a "Failed to pull image" error.
+
+Checks:
+- Confirm the requested vLLM version exists as a tag on [Docker Hub](https://hub.docker.com/r/vllm/vllm-openai/tags) (releases use the `v<version>` form; commits use `nightly-<commit>`).
+- Ensure the node has outbound network access to Docker Hub. The first pull is multi-GB and may take a while; progress is streamed to the deployment log.
 
 ## Deployment stuck in "loading"
 **Symptoms**: A deployment stays in the `loading` state and never transitions to `running`.
 
 Checks:
-- Open the deployment logs to see venv creation or vLLM startup errors.
-- Common causes: network issues downloading packages, insufficient GPU memory, model not found on Hugging Face, or missing `HF_TOKEN` for gated models.
-- The readiness check polls `/health` and `/v1/models` on the deployment port. Ensure no firewall blocks localhost access on the client node.
+- Open the deployment logs to see image pull/build (`[docker]`) or vLLM startup errors.
+- Common causes: a large image still pulling, insufficient GPU memory, model not found on Hugging Face, or missing `HF_TOKEN` for gated models.
+- The readiness check polls `/health` and `/v1/models` on the deployment port. With host networking the container binds the node port directly; ensure no firewall blocks localhost access on the client node.
 
 ## Deployments missing after backend restart
 **Symptoms**: Running models disappear from the dashboard after restarting the host backend.

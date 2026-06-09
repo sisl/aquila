@@ -14,33 +14,33 @@ From the dashboard, select a target node, fill in the deployment form, and click
 
 ## vLLM version
 
-Every deployment runs inside its own isolated virtual environment. You can control which vLLM version is installed.
+Every deployment runs in an official [`vllm/vllm-openai`](https://hub.docker.com/r/vllm/vllm-openai/tags) Docker container. The version you choose maps directly to an image tag — the image already bundles a matching CUDA runtime and PyTorch, so the node needs no local CUDA/PyTorch setup.
 
-| Input | Behavior |
+| Input | Image tag |
 | --- | --- |
-| *(blank)* | Installs the **latest stable release** from GitHub automatically. |
-| `0.8.5` | Installs that specific release (`vllm==0.8.5`). |
-| `nightly` | Installs the latest nightly build from `wheels.vllm.ai/nightly`. |
-| 40-character hex string | Installs from a specific commit via `wheels.vllm.ai/<commit>`. |
+| *(blank)* | `vllm/vllm-openai:v<latest release>` (latest stable, resolved from GitHub). |
+| `0.8.5` | `vllm/vllm-openai:v0.8.5`. |
+| `nightly` | `vllm/vllm-openai:nightly`. |
+| 40-character hex string | `vllm/vllm-openai:nightly-<commit>`. |
 
 The version field placeholder dynamically shows the current latest release so you always know what "blank" resolves to.
 
 !!! note
     The resolved version is stored in the database and displayed in the deployments table, even when you leave the field blank. This way you always know exactly which vLLM version a deployment is running.
 
-### How venvs work
+### How images work
 
-- Each deployment gets its own venv, keyed by a hash of the version string and deployment key (`model:port`).
-- Venvs are cached and reused if the same version + key combination is deployed again.
-- When a deployment is stopped, its venv is automatically cleaned up.
-- `uv` is used for venv creation and package installation for speed and reliability.
+- The requested image is pulled once and cached on the node; subsequent deployments of the same version start instantly (no re-download).
+- Each deployment runs as its own container, labelled so the agent can rediscover it after a restart.
+- Model weights are cached in a shared HuggingFace cache mounted into every container, so a model is downloaded only once per node.
+- When a deployment is stopped, its container is removed; the image stays cached for reuse.
 
 ## GPU selection
 
 Select which GPUs to use with the toggle buttons in the deploy form. Each button corresponds to a GPU index reported by the node. You can select one or more GPUs.
 
-- If no GPUs are selected, vLLM uses its default GPU assignment.
-- Selecting multiple GPUs sets `CUDA_VISIBLE_DEVICES` accordingly.
+- If no GPUs are selected, the container is given access to all GPUs (`--gpus all`).
+- Selecting specific GPUs passes only those devices into the container (`--gpus "device=..."`).
 
 ### Tensor parallel
 
@@ -48,14 +48,14 @@ When using multiple GPUs for a single model, set **Tensor Parallel Size** to the
 
 ## Extra packages
 
-Expand the **Add Extra Packages** section to install additional pip packages into the deployment's venv. Enter one package per line, using standard pip syntax:
+Expand the **Add Extra Packages** section to install additional pip packages on top of the base vLLM image. Enter one package per line, using standard pip syntax:
 
 ```
 transformers>=4.40
 flash-attn
 ```
 
-These packages are installed after vLLM, into the same isolated venv.
+When extra packages are present, the client builds a thin derived image (`FROM vllm/vllm-openai:<tag>` + `pip install ...`) and caches it by a hash of the base image and package list, so the build happens once and is reused across identical deployments.
 
 ## Plugins
 
@@ -99,7 +99,7 @@ A deployment goes through these states:
 
 | Status | Meaning |
 | --- | --- |
-| **loading** | Venv is being created and/or the vLLM server is starting up. |
+| **loading** | The image is being pulled/built and/or the vLLM container is starting up. |
 | **running** | The vLLM server is healthy and responding to requests. |
 | **stopping** | A stop was requested and the process is shutting down. |
 | **stopped** | The process has exited cleanly. |
@@ -114,8 +114,8 @@ After starting, the backend polls the vLLM server's `/health` and `/v1/models` e
 
 Click the terminal icon on any deployment to stream its logs in real time. Logs include:
 
-- Venv creation and package installation output (`[uv]` prefixed lines).
-- vLLM server startup and runtime output.
+- Image pull/build progress (`[docker]` prefixed lines).
+- vLLM server startup and runtime output (streamed from the container).
 - ANSI escape codes are automatically stripped for clean display.
 
 Logs are buffered (up to 2000 lines per deployment) and available as long as the deployment exists.

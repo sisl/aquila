@@ -53,14 +53,13 @@ Host:
 - `uv` (Python package manager).
 
 Client:
-- NVIDIA GPU with CUDA.
-- `nvcc` or `nvidia-smi` on PATH (used to detect CUDA version).
-- Python 3.10–3.14 + `python3-dev` and `build-essential` (Debian/Ubuntu).
+- NVIDIA GPU with a recent driver (`nvidia-smi` working).
+- Docker Engine + the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). vLLM runs in the official `vllm/vllm-openai` containers, so the node no longer needs a local CUDA/PyTorch toolchain. Add the client user to the `docker` group so no sudo is required.
+- Python 3.10–3.14 (for the lightweight client agent).
 
-On Debian/Ubuntu:
+Verify Docker can see the GPUs before installing the client:
 ```bash
-sudo apt update
-sudo apt install -y python3-dev build-essential
+docker run --rm --gpus all ubuntu nvidia-smi
 ```
 
 Install `uv` if you don't already have it:

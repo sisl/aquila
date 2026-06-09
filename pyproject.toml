@@ -39,10 +39,10 @@ Then open the dashboard at `http://<host-ip>:5173` to deploy and monitor models 
 ## Features
 
 - Web dashboard for deploying and managing vLLM models across multiple GPU nodes
-- Automatic vLLM version management with isolated per-deployment virtual environments
+- Runs each model in the official `vllm/vllm-openai` Docker container — no per-node CUDA/PyTorch setup; the version maps to an image tag
 - Live GPU utilization metrics and deployment status monitoring
 - Consul-based automatic node discovery
-- Support for custom pip packages and vLLM plugins
+- Support for custom pip packages (via cached derived images) and vLLM plugins
 """, content-type = "text/markdown"}
 keywords = ["vllm", "llm", "gpu", "cluster", "inference", "deployment"]
 classifiers = [

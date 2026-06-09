@@ -262,40 +262,47 @@ export function Dashboard() {
     return `'${value.replace(/'/g, `'\"'\"'`)}'`;
   };
 
+  const resolveImageTag = (version?: string | null) => {
+    const repo = "vllm/vllm-openai";
+    const raw = (version ?? "").trim();
+    if (!raw) return `${repo}:latest`;
+    if (raw.toLowerCase() === "nightly") return `${repo}:nightly`;
+    if (/^[0-9a-f]{40}$/.test(raw)) return `${repo}:nightly-${raw}`;
+    if (/^\d+\.\d+(\.\d+)?/.test(raw)) return `${repo}:v${raw}`;
+    return `${repo}:${raw}`;
+  };
+
   const buildVllmCommand = (deployment: Deployment) => {
     const lines: string[] = [];
-    if (deployment.vllm_version) {
-      lines.push(`# vllm_version: ${deployment.vllm_version}`);
-      lines.push(`# (uses isolated per-deployment venv)`);
-    } else if (deployment.pip_packages && deployment.pip_packages.length > 0) {
-      lines.push(`# pip_packages: ${deployment.pip_packages.join(", ")}`);
-      lines.push(`# (uses isolated per-deployment venv)`);
-    }
     if (deployment.extra_packages && deployment.extra_packages.length > 0) {
       lines.push(`# extra_packages: ${deployment.extra_packages.join(", ")}`);
+      lines.push(`# (a derived image is built FROM the base tag and cached)`);
     }
 
-    const envParts: string[] = [];
-    if (deployment.gpu_ids && deployment.gpu_ids.length > 0) {
-      envParts.push(`CUDA_VISIBLE_DEVICES=${shellQuote(deployment.gpu_ids.join(","))}`);
-    }
+    const image = resolveImageTag(deployment.vllm_version);
+    const gpus =
+      deployment.gpu_ids && deployment.gpu_ids.length > 0
+        ? `'"device=${deployment.gpu_ids.join(",")}"'`
+        : "all";
+
+    const dockerParts = [
+      "docker", "run", "-d",
+      "--gpus", gpus,
+      "--ipc=host",
+      "--network", "host",
+      "-v", "~/.cache/huggingface:/root/.cache/huggingface"
+    ];
     if (deployment.env_vars && deployment.env_vars.length > 0) {
       for (const pair of deployment.env_vars) {
         if (!pair.key) {
           continue;
         }
-        envParts.push(`${pair.key}=${shellQuote(String(pair.value ?? ""))}`);
+        dockerParts.push("-e", `${pair.key}=${shellQuote(String(pair.value ?? ""))}`);
       }
     }
+    dockerParts.push(image);
 
-    const hasCustomEnv = deployment.vllm_version ||
-      (deployment.pip_packages && deployment.pip_packages.length > 0) ||
-      (deployment.extra_packages && deployment.extra_packages.length > 0);
-    const pythonBin = hasCustomEnv ? "<venv>/bin/python" : "python";
-    const cmdParts = [
-      pythonBin,
-      "-m",
-      "vllm.entrypoints.openai.api_server",
+    const vllmArgs = [
       "--model",
       deployment.model_name,
       "--port",
@@ -303,12 +310,14 @@ export function Dashboard() {
       "--gpu-memory-utilization",
       String(deployment.gpu_memory_fraction)
     ];
+    if (deployment.tensor_parallel_size) {
+      vllmArgs.push("--tensor-parallel-size", String(deployment.tensor_parallel_size));
+    }
     if (deployment.extra_args && deployment.extra_args.length > 0) {
-      cmdParts.push(...deployment.extra_args);
+      vllmArgs.push(...deployment.extra_args);
     }
 
-    const envPrefix = envParts.length > 0 ? `${envParts.join(" ")} ` : "";
-    lines.push(`${envPrefix}${cmdParts.map(shellQuote).join(" ")}`);
+    lines.push([...dockerParts, ...vllmArgs.map(shellQuote)].join(" "));
     return lines.join("\n");
   };
 

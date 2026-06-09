@@ -60,16 +60,19 @@ If you proxy the frontend under a path like `/vllm/`, pass `--base-path /vllm/` 
 
 For Nginx, make sure `/vllm/api` and `/vllm/ws` are proxied to the backend (port 8000 by default). The frontend uses the configured base path for API and WebSocket URLs, so it works both at `/` and under a subpath.
 
-## GPU wheel selection
-The client bootstrapper detects CUDA from `nvcc` or `nvidia-smi` and installs a vLLM wheel that matches the detected version. If no wheel exists for your exact CUDA version, the installer automatically falls back to the highest compatible CUDA wheel and displays a warning.
+## vLLM images
+Each deployment runs the official `vllm/vllm-openai` container; the requested version maps to an image tag and the image bundles its own matching CUDA runtime and PyTorch. There is no host-side CUDA detection or wheel selection — the client only needs Docker and the NVIDIA Container Toolkit. Images are pulled once and cached on the node; warm starts are instant. When extra pip packages are requested, the client builds and caches a thin derived image (`FROM vllm/vllm-openai:<tag>`).
 
-## Per-deployment venvs
-Each deployment creates an isolated virtual environment under `~/.vllm-client/.venvs/`. Venvs are managed with `uv` for fast creation and installs. When a deployment is stopped, its venv is automatically removed. Cached venvs are reused when deploying the same version + model + port combination.
+You can inspect and manage cached images via the client API:
 
-You can inspect and manage venvs via the client API:
+- `GET /images` — list cached vLLM images (official + locally derived).
+- `DELETE /images/<id>` — remove a specific image.
 
-- `GET /venvs` — list all cached venvs.
-- `DELETE /venvs/<id>` — remove a specific venv.
+## Model cache
+Model weights are cached in a shared HuggingFace cache mounted into every container (host `~/.cache/huggingface` by default, configurable via the client's `HF_CACHE_DIR`). Bind-mounting it means a model is downloaded only once per node and reused across deployments and versions.
+
+## Per-deployment containers
+Containers are labelled (`vllm-cluster-manager.managed=true`) and started with `--restart unless-stopped`, so they survive a client-agent or host reboot. On startup the agent reconciles its in-memory state from the running containers, and stopping a deployment removes its container (the image stays cached).
 
 ## Uploaded packages and plugins
 Uploaded files (`.py`, `.whl`, `.tar.gz`, `.zip`) are stored under `~/.vllm-client/.packages/`. Each upload is content-hashed to avoid duplicates.

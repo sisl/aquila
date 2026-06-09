@@ -7,3 +7,5 @@ pydantic
 pydantic-settings
 python-consul2
 httpx
+docker
+python-multipart

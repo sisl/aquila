@@ -1,8 +1,6 @@
 import argparse
-import json
 import hashlib
 import os
-import platform
 import shutil
 import socket
 import subprocess
@@ -12,7 +10,6 @@ from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 from typing import Iterable
-from urllib.request import Request, urlopen
 import time
 
 DEFAULT_CONSUL_PORT = 47528
@@ -290,12 +287,19 @@ def remove_runtime_dir(kind: str) -> None:
         shutil.rmtree(runtime_dir, ignore_errors=True)
 
 
+# Build artifacts that must never be copied into the runtime dir: stale
+# bytecode causes permission collisions on re-runs and serves outdated code.
+_ASSET_IGNORE = shutil.ignore_patterns(
+    "__pycache__", "*.pyc", "*.pyo", ".venv", "node_modules"
+)
+
+
 def copy_assets(kind: str, dest: Path) -> None:
     src_root = resources.files("vllm_cluster_manager.assets") / kind
     if not src_root.is_dir():
         raise RuntimeError(f"Missing packaged assets for {kind}.")
     with resources.as_file(src_root) as src_path:
-        shutil.copytree(src_path, dest, dirs_exist_ok=True)
+        shutil.copytree(src_path, dest, dirs_exist_ok=True, ignore=_ASSET_IGNORE)
 
 
 def write_host_env_files(runtime_dir: Path, config: HostConfig) -> None:
@@ -348,7 +352,7 @@ def copy_assets_subdir(kind: str, subdir: str, dest: Path) -> None:
     if not src_root.is_dir():
         raise RuntimeError(f"Missing packaged assets for {kind}/{subdir}.")
     with resources.as_file(src_root) as src_path:
-        shutil.copytree(src_path, dest, dirs_exist_ok=True)
+        shutil.copytree(src_path, dest, dirs_exist_ok=True, ignore=_ASSET_IGNORE)
 
 
 def write_client_env_file(runtime_dir: Path, config: ClientConfig) -> None:
@@ -371,30 +375,23 @@ def ensure_backend_venv(runtime_dir: Path) -> None:
 
 
 def ensure_client_venv(runtime_dir: Path) -> None:
+    # The client agent is a lightweight FastAPI service; vLLM itself runs in
+    # official Docker containers, so the venv only needs the agent's own deps.
     venv_dir = runtime_dir / ".venv"
     requirements = runtime_dir / "requirements.txt"
-    if not venv_dir.exists():
-        create_venv(venv_dir)
-    if needs_install(requirements, runtime_dir / ".deps.sha256"):
-        install_requirements_without_vllm(venv_dir, requirements)
-        write_hash_marker(requirements, runtime_dir / ".deps.sha256")
-    try:
-        install_vllm_wheel(venv_dir)
-    except RuntimeError as exc:
-        raise RuntimeError(build_vllm_install_error(venv_dir, exc)) from exc
-    python_bin = venv_dir / "bin" / "python"
-    if not vllm_installed(python_bin):
-        raise RuntimeError(
-            "vLLM is not installed in the client runtime venv.\n"
-            f"Checked: {python_bin}\n"
-            "Delete the venv and rerun `vllm-cluster-manager client up` to retry."
-        )
+    ensure_venv(venv_dir, requirements, runtime_dir / ".deps.sha256")
 
 
 def ensure_venv(venv_dir: Path, requirements: Path, marker: Path) -> None:
-    if not venv_dir.exists():
+    # Validate the interpreter, not just the directory: an interrupted run (or a
+    # partially-failed cleanup) can leave a .venv dir with no bin/python.
+    python_bin = venv_dir / "bin" / "python"
+    fresh = not python_bin.exists()
+    if fresh:
         create_venv(venv_dir)
-    if needs_install(requirements, marker):
+    # Force a reinstall when the venv was (re)created, even if the deps marker
+    # still matches — otherwise a fresh venv would be left without dependencies.
+    if fresh or needs_install(requirements, marker):
         install_requirements(venv_dir, requirements)
         write_hash_marker(requirements, marker)
 
@@ -402,7 +399,9 @@ def ensure_venv(venv_dir: Path, requirements: Path, marker: Path) -> None:
 def create_venv(venv_dir: Path) -> None:
     uv = shutil.which("uv")
     if uv:
-        run([uv, "venv", "--python=3.12", str(venv_dir)])
+        # --allow-existing repairs/reuses a partially-created venv dir instead of
+        # erroring or prompting interactively.
+        run([uv, "venv", "--allow-existing", "--python=3.12", str(venv_dir)])
         return
     run([sys.executable, "-m", "venv", str(venv_dir)])
 
@@ -414,187 +413,6 @@ def install_requirements(venv_dir: Path, requirements: Path) -> None:
         run([uv, "pip", "install", "--python", str(python_bin), "-r", str(requirements)])
         return
     run([str(python_bin), "-m", "pip", "install", "-r", str(requirements)])
-
-
-def install_requirements_without_vllm(venv_dir: Path, requirements: Path) -> None:
-    filtered = []
-    for line in requirements.read_text(encoding="utf-8").splitlines():
-        if line.strip().startswith("vllm"):
-            continue
-        filtered.append(line)
-    tmp = venv_dir / "requirements-no-vllm.txt"
-    tmp.write_text("\n".join(filtered) + "\n", encoding="utf-8")
-    try:
-        install_requirements(venv_dir, tmp)
-    finally:
-        tmp.unlink(missing_ok=True)
-
-
-def install_vllm_wheel(venv_dir: Path) -> None:
-    python_bin = venv_dir / "bin" / "python"
-    if vllm_installed(python_bin):
-        return
-
-    cuda_version = detect_cuda_version()
-    cuda_major, cuda_minor = cuda_version.split(".")
-    cuda_compact = int(cuda_major) * 10 + int(cuda_minor)
-    cpu_arch = platform.machine()
-    vllm_version = fetch_latest_vllm_version()
-
-    wheel_url = _vllm_wheel_url(vllm_version, cuda_compact, cpu_arch)
-
-    if not url_exists(wheel_url):
-        print(
-            f"No vLLM wheel found for exact CUDA version "
-            f"{cuda_version} (cu{cuda_compact}). "
-            f"Searching for highest compatible wheel..."
-        )
-        fallback = _find_highest_available_cuda(vllm_version, cpu_arch)
-        if fallback is None:
-            raise RuntimeError(
-                "No vLLM wheel found for CUDA "
-                f"{cuda_version} (cu{cuda_compact}) on {cpu_arch}, "
-                "and no fallback CUDA version wheel was found.\n"
-                f"Checked: {wheel_url}"
-            )
-        fallback_major, fallback_minor = divmod(fallback, 10)
-        print(
-            f"Using vLLM wheel for CUDA {fallback_major}.{fallback_minor} "
-            f"(cu{fallback}) instead of {cuda_version} (cu{cuda_compact})."
-        )
-        cuda_compact = fallback
-        wheel_url = _vllm_wheel_url(vllm_version, cuda_compact, cpu_arch)
-
-    uv = shutil.which("uv")
-    if uv:
-        run(
-            [
-                uv,
-                "pip",
-                "install",
-                "--python",
-                str(python_bin),
-                wheel_url,
-                "--extra-index-url",
-                f"https://download.pytorch.org/whl/cu{cuda_compact}",
-                "--index-strategy",
-                "unsafe-best-match",
-            ]
-        )
-        return
-    run(
-        [
-            str(python_bin),
-            "-m",
-            "pip",
-            "install",
-            wheel_url,
-            "--extra-index-url",
-            f"https://download.pytorch.org/whl/cu{cuda_compact}",
-        ]
-    )
-
-
-def _vllm_wheel_url(vllm_version: str, cuda_compact: int, cpu_arch: str) -> str:
-    return (
-        "https://github.com/vllm-project/vllm/releases/download/"
-        f"v{vllm_version}/vllm-{vllm_version}+cu{cuda_compact}-"
-        f"cp38-abi3-manylinux_2_35_{cpu_arch}.whl"
-    )
-
-
-def _find_highest_available_cuda(vllm_version: str, cpu_arch: str) -> int | None:
-    """Search for the highest CUDA version that has a published vLLM wheel."""
-    highest: int | None = None
-    consecutive_misses = 0
-    for cu in range(128, 200):
-        if url_exists(_vllm_wheel_url(vllm_version, cu, cpu_arch)):
-            highest = cu
-            consecutive_misses = 0
-        else:
-            if highest is not None:
-                consecutive_misses += 1
-                if consecutive_misses >= 5:
-                    break
-    return highest
-
-
-def build_vllm_install_error(venv_dir: Path, exc: Exception) -> str:
-    return "\n".join(
-        [
-            "Failed to install vLLM into the client runtime venv.",
-            f"venv: {venv_dir}",
-            "",
-            "Reason:",
-            str(exc),
-            "",
-            "Common fixes:",
-            "- Ensure NVIDIA drivers are installed and `nvidia-smi` or `nvcc` is available.",
-            "- Ensure outbound HTTPS access to GitHub releases and the PyTorch wheel index.",
-            "- Ensure your CUDA version and CPU architecture match an available vLLM wheel.",
-            "",
-            "Retry:",
-            f"  rm -rf {venv_dir}",
-            "  vllm-cluster-manager client up",
-        ]
-    )
-
-
-def detect_cuda_version() -> str:
-    for cmd, parser in (
-        (["nvcc", "--version"], parse_nvcc_version),
-        (["nvidia-smi"], parse_smi_version),
-    ):
-        if shutil.which(cmd[0]) is None:
-            continue
-        output = run(cmd, capture=True)
-        version = parser(output)
-        if version:
-            return version
-    raise RuntimeError("Unable to detect CUDA version. Ensure nvcc or nvidia-smi is available.")
-
-
-def vllm_installed(python_bin: Path) -> bool:
-    try:
-        run([str(python_bin), "-c", "import vllm"], capture=True)
-        return True
-    except RuntimeError:
-        return False
-
-
-def parse_nvcc_version(output: str) -> str | None:
-    for line in output.splitlines():
-        if "release" in line:
-            parts = line.split("release", maxsplit=1)[-1].strip()
-            return parts.split(",", maxsplit=1)[0].strip()
-    return None
-
-
-def parse_smi_version(output: str) -> str | None:
-    for line in output.splitlines():
-        if "CUDA Version" in line:
-            return line.split("CUDA Version:", maxsplit=1)[-1].strip().split()[0]
-    return None
-
-
-def fetch_latest_vllm_version() -> str:
-    url = "https://api.github.com/repos/vllm-project/vllm/releases/latest"
-    request = Request(url, headers={"User-Agent": "vllm-cluster-manager"})
-    data = json.loads(urlopen(request, timeout=15).read().decode("utf-8"))
-    tag = data.get("tag_name", "")
-    version = tag.lstrip("v")
-    if not version:
-        raise RuntimeError("Unable to determine latest vLLM version from GitHub releases.")
-    return version
-
-
-def url_exists(url: str) -> bool:
-    request = Request(url, method="HEAD", headers={"User-Agent": "vllm-cluster-manager"})
-    try:
-        with urlopen(request, timeout=10):
-            return True
-    except Exception:
-        return False
 
 
 def ensure_frontend_deps(runtime_dir: Path) -> None:

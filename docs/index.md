@@ -29,7 +29,7 @@
 
 ## What you can do
 - Register and manage GPU nodes that run vLLM workloads.
-- Deploy models with a specific vLLM version, nightly build, or commit hash — each deployment gets its own isolated venv.
+- Deploy models with a specific vLLM version, nightly build, or commit hash — each runs in the matching official `vllm/vllm-openai` container.
 - Install extra pip packages and upload vLLM plugins (`.py`, `.whl`) per deployment.
 - Select GPUs with toggle buttons and configure tensor parallelism.
 - Save and reload deployment configurations for one-click redeployment.

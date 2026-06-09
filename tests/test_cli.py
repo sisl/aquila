@@ -3,7 +3,6 @@
 import argparse
 import hashlib
 import os
-import textwrap
 from pathlib import Path
 from unittest import mock
 
@@ -23,9 +22,6 @@ from vllm_cluster_manager.cli import (
     write_pid,
     remove_pid,
     stop_pid,
-    parse_nvcc_version,
-    parse_smi_version,
-    _vllm_wheel_url,
 )
 
 
@@ -203,50 +199,6 @@ def test_stop_pid_no_such_process(tmp_path):
     pid_file.write_text("999999999", encoding="utf-8")
     stop_pid(pid_file)
     assert not pid_file.exists()
-
-
-# ---------------------------------------------------------------------------
-# CUDA version parsers
-# ---------------------------------------------------------------------------
-
-
-def test_parse_nvcc_version():
-    output = textwrap.dedent("""\
-        nvcc: NVIDIA (R) Cuda compiler driver
-        Copyright (c) 2005-2024 NVIDIA Corporation
-        Cuda compilation tools, release 12.4, V12.4.131
-    """)
-    assert parse_nvcc_version(output) == "12.4"
-
-
-def test_parse_nvcc_version_no_match():
-    assert parse_nvcc_version("random output") is None
-
-
-def test_parse_smi_version():
-    output = textwrap.dedent("""\
-        +-----------------------------------------------------------------------------------------+
-        | NVIDIA-SMI 550.54.14              Driver Version: 550.54.14      CUDA Version: 12.4     |
-        +-----------------------------------------------------------------------------------------+
-    """)
-    assert parse_smi_version(output) == "12.4"
-
-
-def test_parse_smi_version_no_match():
-    assert parse_smi_version("no cuda here") is None
-
-
-# ---------------------------------------------------------------------------
-# _vllm_wheel_url
-# ---------------------------------------------------------------------------
-
-
-def test_vllm_wheel_url():
-    url = _vllm_wheel_url("0.8.5", 124, "x86_64")
-    assert "v0.8.5" in url
-    assert "cu124" in url
-    assert "x86_64" in url
-    assert url.endswith(".whl")
 
 
 # ---------------------------------------------------------------------------
