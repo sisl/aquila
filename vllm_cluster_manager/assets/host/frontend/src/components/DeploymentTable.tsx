@@ -8,6 +8,7 @@ import {
   Chip,
   IconButton,
   InputAdornment,
+  LinearProgress,
   Menu,
   MenuItem,
   Table,
@@ -128,8 +129,11 @@ function usageTooltip(deployment: Deployment): string {
 // Show the client-reported load phase while a deployment is loading, so a
 // multi-minute start reads as progress rather than a stall.
 function statusLabel(deployment: Deployment): string {
-  if (deployment.status === "loading" && deployment.detail) {
-    return `loading (${deployment.detail.replace(/_/g, " ")})`;
+  if (
+    (deployment.status === "loading" || deployment.status === "starting") &&
+    deployment.detail
+  ) {
+    return `${deployment.status} (${deployment.detail.replace(/_/g, " ")})`;
   }
   return deployment.status;
 }
@@ -482,6 +486,22 @@ export function DeploymentTable({
                           {deployment.last_error}
                         </Typography>
                       )}
+                      {(deployment.status === "starting" ||
+                        deployment.status === "loading") &&
+                        deployment.pull_total_mb != null &&
+                        deployment.pull_total_mb > 0 && (
+                          <>
+                            <LinearProgress
+                              variant="determinate"
+                              value={Math.min(100, deployment.pull_percent ?? 0)}
+                              sx={{ width: 96, height: 4, borderRadius: 1 }}
+                            />
+                            <Typography variant="caption" className="muted">
+                              {((deployment.pull_downloaded_mb ?? 0) / 1024).toFixed(1)}{" "}
+                              / {(deployment.pull_total_mb / 1024).toFixed(1)} GB
+                            </Typography>
+                          </>
+                        )}
                     </Box>
                   </Tooltip>
                 </TableCell>

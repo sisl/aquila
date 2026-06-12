@@ -90,6 +90,12 @@ async def list_deployments(session: AsyncSession = Depends(get_session)) -> list
             read.tokens_per_second = live.get("tokens_per_second")
             read.requests_running = live.get("requests_running")
             read.requests_waiting = live.get("requests_waiting")
+        # Attach image-pull progress to rows still starting up.
+        elif deployment.status in ("starting", "loading"):
+            progress = sync_service.pull_progress.get(deployment.id, {})
+            read.pull_percent = progress.get("percent")
+            read.pull_downloaded_mb = progress.get("downloaded_mb")
+            read.pull_total_mb = progress.get("total_mb")
         reads.append(read)
     return reads
 

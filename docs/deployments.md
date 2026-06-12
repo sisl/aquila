@@ -158,8 +158,8 @@ A deployment goes through these states:
 
 | Status | Meaning |
 | --- | --- |
-| **starting** | The start request has been accepted and is being sent to the client. |
-| **loading** | The image is being pulled/built and/or the vLLM container is starting up. The detail column shows the current phase (downloading weights, loading weights, compiling). |
+| **starting** | The client is preparing the vLLM image and starting the container. While a new image version is being pulled (20+ GB on first use), the status chip shows the phase and the row shows a live progress bar with downloaded/total GB; warm starts of cached versions skip this entirely. |
+| **loading** | The vLLM container is starting up. The status shows the current engine phase (downloading weights, loading weights, compiling). |
 | **running** | The vLLM server is healthy and responding to requests. |
 | **stopping** | A stop was requested and the process is shutting down. |
 | **stopped** | The process has exited cleanly (or its serve duration expired). |

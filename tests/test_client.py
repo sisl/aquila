@@ -617,6 +617,149 @@ class TestLocalModelPull:
 
 
 # ---------------------------------------------------------------------------
+# Image pull progress
+# ---------------------------------------------------------------------------
+
+
+class TestPullTracker:
+    def test_accumulates_per_layer(self):
+        tracker = client_main._PullTracker()
+        tracker.update({"id": "a", "status": "Downloading", "progressDetail": {"current": 10, "total": 100}})
+        downloaded, total = tracker.update(
+            {"id": "b", "status": "Downloading", "progressDetail": {"current": 5, "total": 50}}
+        )
+        assert (downloaded, total) == (15, 150)
+        downloaded, total = tracker.update(
+            {"id": "a", "status": "Downloading", "progressDetail": {"current": 60, "total": 100}}
+        )
+        assert (downloaded, total) == (65, 150)
+
+    def test_download_complete_snaps_to_total(self):
+        tracker = client_main._PullTracker()
+        tracker.update({"id": "a", "status": "Downloading", "progressDetail": {"current": 10, "total": 100}})
+        downloaded, total = tracker.update({"id": "a", "status": "Download complete"})
+        assert (downloaded, total) == (100, 100)
+
+    def test_ignores_chunks_without_progress(self):
+        tracker = client_main._PullTracker()
+        assert tracker.update({"status": "Pulling from vllm/vllm-openai"}) == (0, 0)
+        assert tracker.update({"id": "a", "status": "Already exists"}) == (0, 0)
+        assert tracker.update({"id": "a", "status": "Pulling fs layer"}) == (0, 0)
+
+
+class TestPullImageProgress:
+    def _fake_client(self, chunks):
+        fake = mock.MagicMock()
+        fake.api.pull.return_value = iter(chunks)
+        return fake
+
+    def test_progress_cb_receives_aggregates(self):
+        chunks = [
+            {"id": "a", "status": "Pulling fs layer"},
+            {"id": "a", "status": "Downloading", "progressDetail": {"current": 10, "total": 100}},
+            {"id": "b", "status": "Downloading", "progressDetail": {"current": 20, "total": 100}},
+            {"id": "a", "status": "Download complete"},
+            {"id": "b", "status": "Download complete"},
+        ]
+        reports: list[tuple[int, int]] = []
+        client_main._pull_image(
+            self._fake_client(chunks),
+            "vllm/vllm-openai:v0.9.1",
+            lambda _m: None,
+            lambda d, t: reports.append((d, t)),
+        )
+        assert reports[-1] == (200, 200)
+        assert all(reports[i][0] <= reports[i + 1][0] for i in range(len(reports) - 1))
+
+    def test_without_progress_cb_still_works(self):
+        logged: list[str] = []
+        client_main._pull_image(
+            self._fake_client([{"id": "a", "status": "Pull complete"}]),
+            "vllm/vllm-openai:v0.9.1",
+            logged.append,
+        )
+        assert logged[0].startswith("[docker] Pulling")
+        assert logged[-1].startswith("[docker] Pulled")
+
+
+class TestStartProvisionalStatus:
+    @pytest.mark.anyio
+    async def test_pull_progress_visible_then_replaced(self, logs_dir):
+        key = "org/model:38473"
+        seen_during_pull: dict[str, object] = {}
+
+        def fake_ensure(image_ref, extra_packages, log, progress_cb=None):
+            assert client_main._statuses[key]["status"] == "starting"
+            progress_cb(50 * 1024 * 1024, 100 * 1024 * 1024)
+            seen_during_pull.update(client_main._statuses[key])
+            return image_ref
+
+        container = mock.MagicMock()
+        container.id = "cid"
+        with mock.patch.object(client_main, "_ensure_image", fake_ensure), mock.patch.object(
+            client_main, "_run_container", return_value=container
+        ), mock.patch.object(client_main, "_image_digest", return_value="sha256:d"), mock.patch.object(
+            client_main, "_stream_container_logs", mock.MagicMock()
+        ), mock.patch.object(
+            client_main, "_monitor_container", mock.MagicMock()
+        ), mock.patch(
+            "asyncio.create_task"
+        ), mock.patch.dict(
+            client_main._statuses, {}, clear=True
+        ), mock.patch.dict(client_main._containers, {}, clear=True), mock.patch.dict(
+            client_main._logs, {}, clear=True
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/deployments/start",
+                    json={
+                        "model_name": "org/model",
+                        "port": 38473,
+                        "gpu_memory_fraction": 0.5,
+                        "vllm_version": "0.9.1",
+                        "skip_resource_check": True,
+                    },
+                )
+            assert resp.status_code == 200
+            assert seen_during_pull["phase"] == "pulling image"
+            assert seen_during_pull["pull_progress"] == {
+                "downloaded_mb": 50,
+                "total_mb": 100,
+                "percent": 50.0,
+            }
+            # After start, the provisional entry is replaced: no progress left.
+            final = client_main._statuses[key]
+            assert final["status"] == "loading"
+            assert "pull_progress" not in final
+
+    @pytest.mark.anyio
+    async def test_failed_pull_leaves_no_ghost_status(self, logs_dir):
+        def fake_ensure(image_ref, extra_packages, log, progress_cb=None):
+            raise RuntimeError("registry unreachable")
+
+        with mock.patch.object(client_main, "_ensure_image", fake_ensure), mock.patch.dict(
+            client_main._statuses, {}, clear=True
+        ), mock.patch.dict(client_main._containers, {}, clear=True), mock.patch.dict(
+            client_main._logs, {}, clear=True
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/deployments/start",
+                    json={
+                        "model_name": "org/model",
+                        "port": 38474,
+                        "gpu_memory_fraction": 0.5,
+                        "vllm_version": "0.9.1",
+                        "skip_resource_check": True,
+                    },
+                )
+            assert resp.status_code == 500
+            assert "org/model:38474" not in client_main._statuses
+
+
+# ---------------------------------------------------------------------------
 # Persistent deployment logs
 # ---------------------------------------------------------------------------
 

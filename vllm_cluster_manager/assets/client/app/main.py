@@ -775,12 +775,48 @@ def _derived_image_tag(base_ref: str, tokens: list[str]) -> str:
     return f"{_LOCAL_IMAGE_REPO}:{base_part}-{digest}"
 
 
-def _pull_image(client: "docker.DockerClient", image_ref: str, log) -> None:
-    """Pull *image_ref*, streaming layer progress into the deployment log."""
+class _PullTracker:
+    """Aggregate docker pull progress chunks into overall (downloaded, total).
+
+    Docker streams per-layer chunks like {"id": <layer>, "status": "Downloading",
+    "progressDetail": {"current": n, "total": m}}. Totals grow as layers are
+    enumerated, so the percentage converging upward early is expected. Layers
+    that "Already exist" never report byte totals and simply stay out of the
+    sums, so progress reflects actual transfer.
+    """
+
+    def __init__(self) -> None:
+        self._layers: dict[str, tuple[int, int]] = {}
+
+    def update(self, chunk: dict) -> tuple[int, int]:
+        layer = chunk.get("id")
+        status = chunk.get("status", "")
+        if layer:
+            detail = chunk.get("progressDetail") or {}
+            total = int(detail.get("total") or 0)
+            current = int(detail.get("current") or 0)
+            if status == "Downloading" and total > 0:
+                self._layers[layer] = (current, total)
+            elif status in ("Download complete", "Pull complete") and layer in self._layers:
+                _, known_total = self._layers[layer]
+                self._layers[layer] = (known_total, known_total)
+        downloaded = sum(current for current, _ in self._layers.values())
+        total = sum(total for _, total in self._layers.values())
+        return downloaded, total
+
+
+def _pull_image(client: "docker.DockerClient", image_ref: str, log, progress_cb=None) -> None:
+    """Pull *image_ref*, streaming layer progress into the deployment log.
+
+    progress_cb, when given, receives throttled (downloaded_bytes, total_bytes)
+    aggregates across all layers.
+    """
     repository, _, tag = image_ref.partition(":")
     tag = tag or "latest"
     log(f"[docker] Pulling {image_ref} ...")
     seen: dict[str, str] = {}
+    tracker = _PullTracker()
+    last_report = (0.0, -1.0)  # (monotonic ts, percent)
     try:
         for chunk in client.api.pull(repository, tag=tag, stream=True, decode=True):
             if "error" in chunk:
@@ -794,6 +830,14 @@ def _pull_image(client: "docker.DockerClient", image_ref: str, log) -> None:
             if seen.get(layer) != status:
                 seen[layer] = status
                 log(f"[docker] {line}")
+            if progress_cb is not None:
+                downloaded, total = tracker.update(chunk)
+                if total > 0:
+                    percent = downloaded / total * 100
+                    now = time.monotonic()
+                    if now - last_report[0] >= 2.0 or percent - last_report[1] >= 1.0:
+                        last_report = (now, percent)
+                        progress_cb(downloaded, total)
     except (APIError, RuntimeError) as exc:
         raise RuntimeError(
             f"Failed to pull image {image_ref}: {exc}. "
@@ -862,7 +906,7 @@ def _build_derived_image(
 
 
 def _ensure_image(
-    image_ref: str, extra_packages: list[str] | None, log
+    image_ref: str, extra_packages: list[str] | None, log, progress_cb=None
 ) -> str:
     """Ensure the runtime image exists locally, returning the ref to run.
 
@@ -876,13 +920,13 @@ def _ensure_image(
     # cheap when nothing upstream changed. Immutable tags reuse the local cache.
     if mutable:
         log(f"[docker] '{image_ref}' is a moving tag — checking for a newer build ...")
-        _pull_image(client, image_ref, log)
+        _pull_image(client, image_ref, log, progress_cb)
     else:
         try:
             client.images.get(image_ref)
             log(f"[docker] Using cached image {image_ref}")
         except ImageNotFound:
-            _pull_image(client, image_ref, log)
+            _pull_image(client, image_ref, log, progress_cb)
 
     if not extra_packages:
         return image_ref
@@ -1205,43 +1249,77 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
     def _log(msg: str) -> None:
         logger.info(msg)
         _append_agent_log(key, msg)
+        # Surface the derived-image build in the reported phase (builds have
+        # no byte totals, unlike pulls).
+        if msg.startswith("[docker] Building image") and key in _statuses:
+            _statuses[key]["phase"] = "building image"
+            _statuses[key].pop("pull_progress", None)
 
     try:
         image_ref, resolved_version = _resolve_image_tag(payload.vllm_version)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    try:
-        run_image = await asyncio.to_thread(
-            _ensure_image, image_ref, payload.extra_packages, _log
-        )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    command = [
-        "--model", payload.model_name,
-        "--port", str(payload.port),
-        "--gpu-memory-utilization", str(payload.gpu_memory_fraction),
-    ]
-    if payload.tensor_parallel_size:
-        command.extend(["--tensor-parallel-size", str(payload.tensor_parallel_size)])
-    command.extend(_engine_args_to_cli(payload.engine_args))
-    command.extend(lora_args)
-    if payload.extra_args:
-        command.extend(_rewrite_paths_for_container(payload.extra_args))
-
-    environment = _build_environment(payload)
-    name = _container_name(key)
     manifest = _launch_manifest(payload)
-    labels = {
-        _LABEL_MANAGED: "true",
-        _LABEL_KEY: key,
-        _LABEL_PORT: str(payload.port),
-        _LABEL_VERSION: resolved_version,
-        _LABEL_LAUNCH: json.dumps(manifest, separators=(",", ":")),
+    # Provisional status so the host (and UI) can see image pull/build progress
+    # during the potentially very long _ensure_image call. Replaced by the full
+    # entry once the container starts; removed again on any failure before that.
+    _statuses[key] = {
+        "model_name": payload.model_name,
+        "port": payload.port,
+        "status": "starting",
+        "phase": "preparing image",
+        "desired_state": "running",
+        "launch_manifest": manifest,
     }
 
+    def _pull_progress(downloaded: int, total: int) -> None:
+        status = _statuses.get(key)
+        if status is None:
+            return
+        status["phase"] = (
+            "extracting image" if downloaded >= total > 0 else "pulling image"
+        )
+        status["pull_progress"] = {
+            "downloaded_mb": round(downloaded / (1024 * 1024)),
+            "total_mb": round(total / (1024 * 1024)),
+            "percent": round(downloaded / total * 100, 1) if total else 0.0,
+        }
+
     try:
+        run_image = await asyncio.to_thread(
+            _ensure_image, image_ref, payload.extra_packages, _log, _pull_progress
+        )
+    except RuntimeError as exc:
+        _statuses.pop(key, None)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    # Pull/build done; drop transfer progress but keep reporting "starting".
+    _statuses[key].pop("pull_progress", None)
+    _statuses[key]["phase"] = "starting container"
+
+    try:
+        command = [
+            "--model", payload.model_name,
+            "--port", str(payload.port),
+            "--gpu-memory-utilization", str(payload.gpu_memory_fraction),
+        ]
+        if payload.tensor_parallel_size:
+            command.extend(["--tensor-parallel-size", str(payload.tensor_parallel_size)])
+        command.extend(_engine_args_to_cli(payload.engine_args))
+        command.extend(lora_args)
+        if payload.extra_args:
+            command.extend(_rewrite_paths_for_container(payload.extra_args))
+
+        environment = _build_environment(payload)
+        name = _container_name(key)
+        labels = {
+            _LABEL_MANAGED: "true",
+            _LABEL_KEY: key,
+            _LABEL_PORT: str(payload.port),
+            _LABEL_VERSION: resolved_version,
+            _LABEL_LAUNCH: json.dumps(manifest, separators=(",", ":")),
+        }
+
         logger.info("Starting deployment %s", key)
         logger.info("Image: %s  Command: %s", run_image, " ".join(command))
         logger.info("Env overrides: %s", _mask_env_for_log(environment))
@@ -1255,7 +1333,13 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
             labels,
         )
     except RuntimeError as exc:
+        _statuses.pop(key, None)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except HTTPException:
+        # Validation failures after the provisional entry must not leave a
+        # ghost "starting" deployment in the status report.
+        _statuses.pop(key, None)
+        raise
 
     _containers[key] = container
     _statuses[key] = {

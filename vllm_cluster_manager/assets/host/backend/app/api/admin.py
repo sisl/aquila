@@ -30,6 +30,7 @@ async def purge_database(session: AsyncSession) -> dict[str, int]:
     # Drop in-memory state keyed by the now-deleted ids.
     sync._usage_last_seen.clear()
     sync.live_usage.clear()
+    sync.pull_progress.clear()
     sync._deployment_fail_counts.clear()
     rogue_container_counts.clear()
     _warned_expiring.clear()

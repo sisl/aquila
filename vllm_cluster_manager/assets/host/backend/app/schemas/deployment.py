@@ -51,6 +51,11 @@ class DeploymentRead(DeploymentBase):
     tokens_per_second: float | None = None
     requests_running: int | None = None
     requests_waiting: int | None = None
+    # Image-pull progress while starting (not persisted; attached by the list
+    # endpoint from the client's transfer report).
+    pull_percent: float | None = None
+    pull_downloaded_mb: int | None = None
+    pull_total_mb: int | None = None
 
     model_config = {"from_attributes": True}
 

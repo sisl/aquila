@@ -175,6 +175,11 @@ _usage_last_seen: dict[int, dict[str, int]] = {}
 # deployments API and attached to running deployments only.
 live_usage: dict[int, dict[str, float | int]] = {}
 
+# Transient image-pull progress reported by clients while a deployment is
+# starting: {deployment_id: {downloaded_mb, total_mb, percent}}. Attached to
+# DeploymentRead by the deployments API; never persisted.
+pull_progress: dict[int, dict[str, float | int]] = {}
+
 _LIVE_USAGE_KEYS = ("tokens_per_second", "requests_running", "requests_waiting")
 
 
@@ -386,9 +391,18 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
                             phase = client_dep.get("phase")
                             deployment.detail = (
                                 str(phase)
-                                if phase and client_status == "loading"
+                                if phase and client_status in ("starting", "loading")
                                 else None
                             )
+                            # Transient image-pull progress (starting only).
+                            progress = client_dep.get("pull_progress")
+                            if isinstance(progress, dict) and client_status in (
+                                "starting",
+                                "loading",
+                            ):
+                                pull_progress[deployment.id] = progress
+                            else:
+                                pull_progress.pop(deployment.id, None)
                             # Backfill vllm_version if missing
                             if not deployment.vllm_version and client_dep.get("vllm_version"):
                                 deployment.vllm_version = str(client_dep["vllm_version"])
@@ -438,6 +452,8 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
                             )
                         else:
                             set_status(deployment, "stopped")
+                        if not client_dep:
+                            pull_progress.pop(deployment.id, None)
                         if (deployment.status, deployment.detail) != before:
                             changed_ids.append(deployment.id)
                             event = _transition_event(deployment, before[0], node)

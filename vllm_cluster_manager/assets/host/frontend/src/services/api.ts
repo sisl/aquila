@@ -54,6 +54,10 @@ export type Deployment = {
   tokens_per_second?: number | null;
   requests_running?: number | null;
   requests_waiting?: number | null;
+  // Image-pull progress while starting (transient).
+  pull_percent?: number | null;
+  pull_downloaded_mb?: number | null;
+  pull_total_mb?: number | null;
   // Failure reason (client error or watchdog timeout) for error states.
   last_error?: string | null;
   // Load phase while status is "loading" (downloading/loading_weights/compiling).
