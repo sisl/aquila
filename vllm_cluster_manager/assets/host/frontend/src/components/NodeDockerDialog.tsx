@@ -40,6 +40,7 @@ import { AppButton } from "./AppButton";
 import { AppDialog } from "./AppDialog";
 import { Mono } from "./Mono";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { DialogSection } from "./DialogSection";
 import { useToast } from "./ToastProvider";
 
 type NodeDockerDialogProps = {
@@ -354,54 +355,44 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
           </Typography>
         )}
 
-        {/* Container runtime ------------------------------------------------ */}
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 1,
-            mb: 0.5
-          }}
+        <DialogSection
+          first
+          title="Container Runtime"
+          hint={
+            node?.available_runtimes && node.available_runtimes.length > 0
+              ? `Detected: ${node.available_runtimes.join(", ")}. Applies to new deployments; running containers keep the runtime they started with.`
+              : "None detected — install Docker or enable the Podman socket on this node."
+          }
+          action={
+            <TextField
+              size="small"
+              select
+              label="Runtime"
+              // Sentinel value: MUI renders nothing for "", which left the
+              // select looking permanently unselected.
+              value={node?.container_runtime ?? "auto"}
+              disabled={busy || !(node?.available_runtimes ?? []).length}
+              onChange={(event) =>
+                runtimeMutation.mutate(
+                  event.target.value === "auto" ? null : event.target.value
+                )
+              }
+              sx={{ width: 170 }}
+            >
+              <MenuItem value="auto">Auto (preferred)</MenuItem>
+              {(node?.available_runtimes ?? []).map((runtime) => (
+                <MenuItem key={runtime} value={runtime}>
+                  {runtime}
+                </MenuItem>
+              ))}
+            </TextField>
+          }
+        />
+
+        <DialogSection
+          title="vLLM Containers"
+          hint={'"Active" containers back a tracked deployment (stop them from the Deployments table). "Rogue" containers are untracked leftovers safe to stop & remove here.'}
         >
-          <Box>
-            <Typography variant="h6">Container Runtime</Typography>
-            <Typography variant="body2" className="muted">
-              {node?.available_runtimes && node.available_runtimes.length > 0
-                ? `Detected: ${node.available_runtimes.join(", ")}. Applies to new deployments; running containers keep the runtime they started with.`
-                : "None detected — install Docker or enable the Podman socket on this node."}
-            </Typography>
-          </Box>
-          <TextField
-            size="small"
-            select
-            label="Runtime"
-            value={node?.container_runtime ?? ""}
-            disabled={busy || !(node?.available_runtimes ?? []).length}
-            onChange={(event) =>
-              runtimeMutation.mutate(event.target.value === "" ? null : event.target.value)
-            }
-            sx={{ width: 170, flexShrink: 0 }}
-          >
-            <MenuItem value="">Auto (preferred)</MenuItem>
-            {(node?.available_runtimes ?? []).map((runtime) => (
-              <MenuItem key={runtime} value={runtime}>
-                {runtime}
-              </MenuItem>
-            ))}
-          </TextField>
-        </Box>
-
-        <Divider sx={{ my: 2 }} />
-
-        {/* Containers ----------------------------------------------------- */}
-        <Typography variant="h6" sx={{ mb: 0.5 }}>
-          vLLM Containers
-        </Typography>
-        <Typography variant="body2" className="muted" sx={{ mb: 1 }}>
-          "Active" containers back a tracked deployment (stop them from the Deployments
-          table). "Rogue" containers are untracked leftovers safe to stop & remove here.
-        </Typography>
         {containersQuery.isLoading ? (
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
             <CircularProgress size={20} />
@@ -473,34 +464,22 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
             </TableBody>
           </Table>
         )}
+        </DialogSection>
 
-        <Divider sx={{ my: 2 }} />
-
-        {/* Image cache ---------------------------------------------------- */}
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            mb: 0.5
-          }}
+        <DialogSection
+          title="vLLM Image Cache"
+          hint={`Cached images total ${(totalImageMb / 1024).toFixed(1)} GB. "Prune unused" removes images (and dangling derived layers) not backing any container.`}
+          action={
+            <AppButton
+              type="button"
+              className="app-button--small"
+              disabled={busy || images.length === 0}
+              onClick={() => setConfirmPrune(true)}
+            >
+              {pruneMutation.isPending ? "Pruning..." : "Prune Unused"}
+            </AppButton>
+          }
         >
-          <Box>
-            <Typography variant="h6">vLLM Image Cache</Typography>
-            <Typography variant="body2" className="muted">
-              Cached images total {(totalImageMb / 1024).toFixed(1)} GB. "Prune unused"
-              removes images (and dangling derived layers) not backing any container.
-            </Typography>
-          </Box>
-          <AppButton
-            type="button"
-            className="app-button--small"
-            disabled={busy || images.length === 0}
-            onClick={() => setConfirmPrune(true)}
-          >
-            {pruneMutation.isPending ? "Pruning..." : "Prune Unused"}
-          </AppButton>
-        </Box>
         {pruneResult && (
           <Typography variant="body2" className="muted" sx={{ mb: 1 }}>
             Pruned {pruneResult.removed.length} image(s), freed{" "}
@@ -566,28 +545,13 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
             </TableBody>
           </Table>
         )}
+        </DialogSection>
 
-        <Divider sx={{ my: 2 }} />
-
-        {/* Local models ----------------------------------------------------- */}
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "flex-start",
-            justifyContent: "space-between",
-            gap: 1,
-            mb: 0.5
-          }}
-        >
-          <Box>
-            <Typography variant="h6">Local Models</Typography>
-            <Typography variant="body2" className="muted">
-              Checkpoints uploaded here live in ~/.vllm-client/.models on the node and
-              are deployable without MODEL_DIRS configuration. Keep this dialog open
-              while an upload runs.
-            </Typography>
-          </Box>
-          <Box sx={{ display: "flex", gap: 0.5, flexShrink: 0 }}>
+        <DialogSection
+          title="Local Models"
+          hint="Checkpoints uploaded here live in ~/.vllm-client/.models on the node and are deployable without MODEL_DIRS configuration. Keep this dialog open while an upload runs."
+          action={
+            <Box sx={{ display: "flex", gap: 0.5 }}>
             <AppButton
               type="button"
               className="app-button--small"
@@ -612,8 +576,9 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
             >
               Pull from URL
             </AppButton>
-          </Box>
-        </Box>
+            </Box>
+          }
+        >
         {/* Hidden pickers; webkitdirectory is non-standard but universal. */}
         <input
           ref={folderInputRef}
@@ -825,17 +790,12 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
             </TableBody>
           </Table>
         )}
+        </DialogSection>
 
-        <Divider sx={{ my: 2 }} />
-
-        {/* HF model cache --------------------------------------------------- */}
-        <Box sx={{ mb: 0.5 }}>
-          <Typography variant="h6">Model Cache</Typography>
-          <Typography variant="body2" className="muted">
-            Downloaded model weights total {(totalModelMb / 1024).toFixed(1)} GB. They are
-            shared across deployments; deleting one forces a re-download on next use.
-          </Typography>
-        </Box>
+        <DialogSection
+          title="Model Cache"
+          hint={`Downloaded model weights total ${(totalModelMb / 1024).toFixed(1)} GB. They are shared across deployments; deleting one forces a re-download on next use.`}
+        >
         {modelCacheQuery.isLoading ? (
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
             <CircularProgress size={20} />
@@ -900,6 +860,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
             </TableBody>
           </Table>
         )}
+        </DialogSection>
       </AppDialog>
 
       <ConfirmDialog

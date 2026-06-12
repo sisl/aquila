@@ -274,6 +274,112 @@ class TestStartRuntimeSelection:
         assert "none" in resp.json()["detail"]
 
 
+class TestPodmanGpuPassthrough:
+    def test_device_requests_docker_unchanged(self):
+        reqs = client_main._device_requests(None)
+        assert reqs[0]["Count"] == -1
+        assert reqs[0]["Capabilities"] == [["gpu"]]
+        reqs = client_main._device_requests([0, 2], "docker")
+        assert reqs[0]["DeviceIDs"] == ["0", "2"]
+
+    def test_device_requests_podman_uses_cdi(self):
+        # Podman's compat API ignores capability-based requests; only
+        # driver="cdi" with qualified device names reaches the container.
+        reqs = client_main._device_requests(None, "podman")
+        assert reqs[0]["Driver"] == "cdi"
+        assert reqs[0]["DeviceIDs"] == ["nvidia.com/gpu=all"]
+        reqs = client_main._device_requests([1, 3], "podman")
+        assert reqs[0]["DeviceIDs"] == ["nvidia.com/gpu=1", "nvidia.com/gpu=3"]
+
+    def test_podman_server_version_parsing(self):
+        fake = mock.MagicMock()
+        fake.version.return_value = {"Version": "5.8.2"}
+        with mock.patch.object(client_main, "_podman", return_value=fake):
+            assert client_main._podman_server_version() == (5, 8, 2)
+        fake.version.return_value = {
+            "Version": "",
+            "Components": [{"Name": "Podman Engine", "Version": "4.9.4-rhel"}],
+        }
+        with mock.patch.object(client_main, "_podman", return_value=fake):
+            assert client_main._podman_server_version() == (4, 9, 4)
+        fake.version.side_effect = RuntimeError("socket gone")
+        with mock.patch.object(client_main, "_podman", return_value=fake):
+            assert client_main._podman_server_version() is None
+
+    def test_cdi_spec_detection(self, tmp_path):
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        with mock.patch.object(client_main, "_CDI_SPEC_DIRS", (str(empty),)):
+            assert client_main._nvidia_cdi_specs_present() is False
+        (empty / "nvidia.yaml").write_text("devices:\n- name: all\nkind: nvidia.com/gpu\n")
+        with mock.patch.object(client_main, "_CDI_SPEC_DIRS", (str(empty),)):
+            assert client_main._nvidia_cdi_specs_present() is True
+        with mock.patch.object(
+            client_main, "_CDI_SPEC_DIRS", (str(tmp_path / "missing"),)
+        ):
+            assert client_main._nvidia_cdi_specs_present() is False
+
+    def test_gpu_error_old_podman(self):
+        with mock.patch.object(
+            client_main, "_podman_server_version", return_value=(4, 9, 4)
+        ):
+            reason = client_main._podman_gpu_error()
+        assert reason is not None and "5.4" in reason
+
+    def test_gpu_error_missing_cdi_spec(self):
+        with mock.patch.object(
+            client_main, "_podman_server_version", return_value=(5, 8, 2)
+        ), mock.patch.object(
+            client_main, "_nvidia_cdi_specs_present", return_value=False
+        ):
+            reason = client_main._podman_gpu_error()
+        assert reason is not None and "nvidia-ctk cdi generate" in reason
+
+    def test_gpu_error_all_good(self):
+        with mock.patch.object(
+            client_main, "_podman_server_version", return_value=(5, 8, 2)
+        ), mock.patch.object(
+            client_main, "_nvidia_cdi_specs_present", return_value=True
+        ):
+            assert client_main._podman_gpu_error() is None
+
+    def test_gpu_error_unknown_version_not_blocking(self):
+        # An unparsable version must not block deployments on its own.
+        with mock.patch.object(
+            client_main, "_podman_server_version", return_value=None
+        ), mock.patch.object(
+            client_main, "_nvidia_cdi_specs_present", return_value=True
+        ):
+            assert client_main._podman_gpu_error() is None
+
+    @pytest.mark.anyio
+    async def test_start_rejected_when_podman_cannot_pass_gpus(self):
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["podman"]
+        ), mock.patch.object(
+            client_main,
+            "_podman_gpu_error",
+            return_value="No NVIDIA CDI spec found in /etc/cdi",
+        ), mock.patch.dict(client_main._statuses, {}, clear=True), mock.patch.dict(
+            client_main._containers, {}, clear=True
+        ), mock.patch.dict(client_main._logs, {}, clear=True):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/deployments/start",
+                    json={
+                        "model_name": "org/model",
+                        "port": 38477,
+                        "gpu_memory_fraction": 0.5,
+                        "vllm_version": "0.9.1",
+                        "skip_resource_check": True,
+                        "container_runtime": "podman",
+                    },
+                )
+        assert resp.status_code == 409
+        assert "CDI" in resp.json()["detail"]
+
+
 class TestCrossRuntimeEnumeration:
     def test_reconcile_unions_runtimes(self, logs_dir):
         docker_container = mock.MagicMock()

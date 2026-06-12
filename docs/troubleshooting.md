@@ -115,11 +115,14 @@ The agent talks to Podman through its Docker-compatible API socket — **install
 - The user socket service is enabled but not running (`systemctl --user status podman.socket` shows `inactive (dead)`). Start it: `systemctl --user enable --now podman.socket`. If the agent runs as a systemd service for a user that isn't logged in, also enable lingering: `loginctl enable-linger <user>`.
 - Only the **rootful** socket (`/run/podman/podman.sock`, owned `root:root`) exists, which the agent user cannot access. Use the rootless socket instead (command above); the agent logs a warning naming this case.
 
-A non-standard socket path can be supplied via `PODMAN_SOCK` in the client `.env`. Detection refreshes within ~1 minute of the socket appearing.
+A non-standard socket path can be supplied via `PODMAN_SOCK` in the client `.env` (e.g. when starting the API service manually on clusters without systemd user sessions: `podman system service --time=0 unix:///path/sock &`). Detection refreshes within ~1 minute of the socket appearing; the agent log names the cause when a socket exists but is unusable.
 
-Version note: Podman 3.x works for deployments, but its API streams no byte-level pull progress (the status chip shows `pulling image` without GB figures) and GPU support via CDI needs Podman ≥ 4.1 — prefer Podman 4+ where available.
+Version note: **GPU deployments need Podman ≥ 5.4** — older versions silently drop GPU requests sent over the Docker-compatible API (see below). Podman 3.x additionally streams no byte-level pull progress (the status chip shows `pulling image` without GB figures). See [Operations → Podman on restricted clusters](operations.md#podman-on-restricted-clusters) for SELinux, user-namespace, and NFS-home caveats.
 
 ## GPU deployment fails on a Podman node
-**Symptoms**: Deployments on a Podman node error immediately; the log mentions devices or CDI.
+**Symptoms**: The deployment is rejected with a message about Podman versions or CDI specs — or, on manager versions before this check existed, the container started but crash-looped with `RuntimeError: Failed to infer device type` / `No CUDA runtime is found` in the vLLM log.
 
-Podman uses CDI for NVIDIA GPU access. Install the NVIDIA Container Toolkit and generate the CDI specs: `sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`, then redeploy.
+Two preconditions must hold for GPUs to reach a Podman container; the agent verifies both before starting and rejects the deployment with the specific remedy:
+
+- **Podman ≥ 5.4.** Podman's Docker-compatible API ignores Docker's native GPU request mechanism (`DeviceRequests` with GPU capabilities) — the container starts without any GPU and vLLM crash-loops on `Failed to infer device type`. The manager therefore requests GPUs as **CDI device requests** (`nvidia.com/gpu=...`), which Podman's compat API only honors from 5.4 on. There is no working GPU path over the compat API in older versions — upgrade Podman or switch the node's runtime to Docker.
+- **NVIDIA CDI specs generated.** Install the NVIDIA Container Toolkit (≥ 1.12) and generate the specs once (and again after driver updates): `sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`, then redeploy.

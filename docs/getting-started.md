@@ -11,7 +11,7 @@ Host:
 
 Client:
 - NVIDIA GPU with a recent driver (`nvidia-smi` working)
-- A container runtime: **Docker Engine** (add the client user to the `docker` group) **or Podman ≥ 4** (rootless works; enable the API socket with `systemctl --user enable --now podman.socket`). vLLM runs in the official `vllm/vllm-openai` containers either way.
+- A container runtime: **Docker Engine** (add the client user to the `docker` group) **or Podman ≥ 5.4** (rootless works; enable the API socket with `systemctl --user enable --now podman.socket`; older Podman cannot pass GPUs through its Docker-compatible API). vLLM runs in the official `vllm/vllm-openai` containers either way.
 - The [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) for GPU access. On Podman nodes, additionally generate CDI specs: `sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`.
 - Python 3.10–3.14 (for the lightweight client agent)
 - `uv` (Python package manager)

@@ -1,8 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Box,
   Checkbox,
   FormControlLabel,
@@ -12,7 +9,6 @@ import {
   TextField,
   Typography
 } from "@mui/material";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -24,7 +20,7 @@ import {
 import { AppButton } from "./AppButton";
 import { AppDialog } from "./AppDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { SectionLabel } from "./SectionLabel";
+import { DialogSection } from "./DialogSection";
 import { useToast } from "./ToastProvider";
 
 type SettingsDialogProps = {
@@ -164,22 +160,19 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           </Typography>
         )}
 
-        <Stack spacing={3}>
-          {/* Gateway ----------------------------------------------------- */}
-          <Box>
-            <SectionLabel sx={{ mb: 1 }}>Gateway</SectionLabel>
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={draft.gateway_enabled ?? true}
-                  onChange={(event) => set("gateway_enabled", event.target.checked)}
-                />
-              }
-              label="OpenAI gateway enabled"
-            />
-            <Typography variant="caption" className="muted" sx={{ display: "block", mb: 1.5 }}>
-              When disabled, /v1 requests get a 503; direct node URLs keep working.
-            </Typography>
+        <Box>
+          <DialogSection
+            first
+            title="Gateway"
+            hint="When disabled, /v1 requests get a 503; direct node URLs keep working."
+            action={
+              <Switch
+                checked={draft.gateway_enabled ?? true}
+                onChange={(event) => set("gateway_enabled", event.target.checked)}
+                inputProps={{ "aria-label": "OpenAI gateway enabled" }}
+              />
+            }
+          >
             <TextField
               size="small"
               label="Request timeout (s)"
@@ -189,11 +182,12 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               helperText="Non-streaming requests; streams are never read-limited."
               sx={{ width: 220 }}
             />
-          </Box>
+          </DialogSection>
 
-          {/* Deployments --------------------------------------------------- */}
-          <Box>
-            <SectionLabel sx={{ mb: 1 }}>Deployments</SectionLabel>
+          <DialogSection
+            title="Deployments"
+            hint="Start watchdog, runtime preference, and the deploy form's pre-filled defaults."
+          >
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 2 }}>
               <TextField
                 size="small"
@@ -279,11 +273,12 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 sx={{ width: 180 }}
               />
             </Stack>
-          </Box>
+          </DialogSection>
 
-          {/* Notifications ----------------------------------------------- */}
-          <Box>
-            <SectionLabel sx={{ mb: 1 }}>Notifications</SectionLabel>
+          <DialogSection
+            title="Notifications"
+            hint="Webhook messages for ready / failed / expiring deployments. Slack URLs get Slack formatting automatically."
+          >
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
               <TextField
                 size="small"
@@ -303,11 +298,12 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 sx={{ width: 180 }}
               />
             </Stack>
-          </Box>
+          </DialogSection>
 
-          {/* Data ----------------------------------------------------------- */}
-          <Box>
-            <SectionLabel sx={{ mb: 1 }}>Data</SectionLabel>
+          <DialogSection
+            title="Data"
+            hint="How long node metric history is kept for the charts."
+          >
             <TextField
               size="small"
               label="Metric history retention (h)"
@@ -316,15 +312,14 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               onChange={(event) =>
                 set("node_metrics_retention_hours", num(event.target.value))
               }
-              sx={{ width: 220, mb: 2 }}
+              sx={{ width: 220 }}
             />
-            <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
-              Danger zone
-            </Typography>
-            <Typography variant="caption" className="muted" sx={{ display: "block", mb: 1 }}>
-              Purge selected records. Running models are not stopped — active nodes
-              re-register and their deployments are re-adopted automatically.
-            </Typography>
+          </DialogSection>
+
+          <DialogSection
+            title="Danger Zone"
+            hint="Purge selected records. Running models are not stopped — active nodes re-register and their deployments are re-adopted automatically."
+          >
             <Box sx={{ display: "flex", flexDirection: "column", mb: 1 }}>
               {PURGE_OPTIONS.map((option) => (
                 <FormControlLabel
@@ -360,17 +355,12 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             >
               Purge Selected
             </AppButton>
-          </Box>
+          </DialogSection>
 
-          {/* Advanced ------------------------------------------------------ */}
-          <Accordion disableGutters elevation={0}>
-            <AccordionSummary expandIcon={<ExpandMoreIcon fontSize="small" />}>
-              <SectionLabel>Advanced</SectionLabel>
-            </AccordionSummary>
-            <AccordionDetails>
-              <Typography variant="caption" className="muted" sx={{ display: "block", mb: 1.5 }}>
-                Sync tuning — the defaults are sensible; changes apply live.
-              </Typography>
+          <DialogSection
+            title="Advanced"
+            hint="Sync tuning — the defaults are sensible; changes apply live."
+          >
               <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 2 }}>
                 <TextField
                   size="small"
@@ -427,9 +417,8 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   sx={{ width: 250 }}
                 />
               </Stack>
-            </AccordionDetails>
-          </Accordion>
-        </Stack>
+          </DialogSection>
+        </Box>
       </AppDialog>
 
       <ConfirmDialog

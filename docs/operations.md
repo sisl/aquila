@@ -42,6 +42,7 @@ These act as defaults for the corresponding [dashboard settings](#global-setting
 | `HF_CACHE_DIR` | `~/.cache/huggingface` | Host directory used as the shared HuggingFace cache. |
 | `LOG_MAX_MB` | `50` | Rotate a deployment's persistent log file (`~/.vllm-client/.logs`) once it exceeds this size; the overflow is kept as `<file>.1`. |
 | `LOG_RETENTION_DAYS` | `14` | Delete persistent deployment log files untouched for this many days. |
+| `PODMAN_SOCK` | *(auto)* | Non-standard Podman API socket path. By default the agent probes the rootless socket (`$XDG_RUNTIME_DIR/podman/podman.sock`) and the rootful one (`/run/podman/podman.sock`). |
 
 ## Notifications
 
@@ -101,6 +102,25 @@ The runtime for a **new** deployment resolves as: the node's per-node override (
 A reachable node with **no** runtime at all shows status `no runtime` in the node table and cannot be selected for deployments.
 
 The host's own infrastructure (Postgres + Consul via docker compose) still requires Docker on the **host** machine; the Podman option applies to client GPU nodes.
+
+### Setting up Podman on a node
+
+1. Install Podman — **version ≥ 5.4 required for GPU deployments**. Older versions silently ignore GPU requests sent over the Docker-compatible API; the manager passes GPUs as CDI device requests, which the compat API only honors from 5.4 on. (Podman 3.x also streams no byte-level pull progress — the status chip shows `pulling image` without GB figures.)
+2. Start the API socket (installing the package does **not** start it):
+   `systemctl --user enable --now podman.socket`. The socket is activation-based — the API service only runs while the agent talks to it; there is no persistent daemon.
+3. Generate NVIDIA CDI specs once (and after driver updates): `sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml` (ships with nvidia-container-toolkit ≥ 1.12). The agent checks both preconditions before starting a deployment and rejects it with the specific remedy when one is missing.
+4. If the agent runs unattended (systemd service) as a user without a login session, enable lingering so user processes survive logout: `loginctl enable-linger <user>`.
+
+Rootless notes: containers run entirely as the agent's user — model files in the shared HF cache end up user-owned (no root-owned files, unlike Docker). The user needs `/etc/subuid`/`/etc/subgid` ranges (one-time admin step; rootless containers won't start without them).
+
+### Podman on restricted clusters
+
+The integration was designed for environments that disallow the Docker daemon: it is rootless, daemonless, and connects only to a socket the user owns. Site lockdowns that still need attention:
+
+- **No systemd user sessions** (common on HPC compute nodes): start the API service manually next to the agent — `podman system service --time=0 unix:///path/of/your/choice &` — and point the agent at it with `PODMAN_SOCK` in the client `.env`.
+- **SELinux enforcing** (RHEL-family): bind-mounted volumes (HF cache, model dirs) may hit permission denials because mounts are not relabeled (`:z`). If deployments fail with `Permission denied` on mounted paths despite correct ownership, check `sudo ausearch -m AVC -ts recent`; relabel the directories (`chcon -Rt container_file_t <dir>`) or run the affected dirs with a permissive policy.
+- **User namespaces disabled kernel-wide** (`user.max_user_namespaces=0`): rootless Podman cannot work at all — the node will correctly report `no runtime` unless Docker or rootful Podman is permitted.
+- **NFS home directories**: rootless Podman stores images under `~/.local/share/containers`, which performs poorly (or fails) on NFS. Point `graphroot` in `~/.config/containers/storage.conf` at local scratch storage before pulling 20+ GB vLLM images.
 
 ## Service management
 Systemd unit names (service mode):

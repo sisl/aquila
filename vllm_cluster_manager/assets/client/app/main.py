@@ -1225,10 +1225,89 @@ def _mask_env_for_log(env_map: dict[str, str]) -> dict[str, str]:
     return {k: _mask_env_value(k, str(v)) for k, v in env_map.items()}
 
 
-def _device_requests(gpu_ids: list[int] | None) -> list[DeviceRequest]:
+def _device_requests(
+    gpu_ids: list[int] | None, runtime: str = "docker"
+) -> list[DeviceRequest]:
+    if runtime == "podman":
+        # Podman's Docker-compat API silently drops NVIDIA-style device
+        # requests (capabilities=[["gpu"]]) — the container starts without any
+        # GPU. CDI device requests (driver="cdi") are the only form it honors,
+        # and only since Podman 5.4; _podman_gpu_error() gates on that.
+        names = (
+            [f"nvidia.com/gpu={i}" for i in gpu_ids]
+            if gpu_ids
+            else ["nvidia.com/gpu=all"]
+        )
+        return [DeviceRequest(driver="cdi", device_ids=names)]
     if gpu_ids:
         return [DeviceRequest(device_ids=[str(i) for i in gpu_ids], capabilities=[["gpu"]])]
     return [DeviceRequest(count=-1, capabilities=[["gpu"]])]
+
+
+# Podman forwards DeviceRequests with driver="cdi" to its device handling only
+# from 5.4 on; earlier versions ignore every DeviceRequests entry.
+_PODMAN_GPU_MIN_VERSION = (5, 4)
+_CDI_SPEC_DIRS = ("/etc/cdi", "/var/run/cdi")
+
+
+def _podman_server_version() -> tuple[int, ...] | None:
+    try:
+        info = _podman().version()
+    except Exception:
+        return None
+    version = str(info.get("Version") or "")
+    if not version:
+        for component in info.get("Components") or []:
+            if "podman" in str(component.get("Name", "")).lower():
+                version = str(component.get("Version") or "")
+                break
+    parts: list[int] = []
+    for token in version.split("."):
+        digits = "".join(ch for ch in token if ch.isdigit())
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts) if parts else None
+
+
+def _nvidia_cdi_specs_present() -> bool:
+    for spec_dir in _CDI_SPEC_DIRS:
+        base = Path(spec_dir)
+        if not base.is_dir():
+            continue
+        for spec in base.iterdir():
+            if spec.suffix not in {".yaml", ".yml", ".json"}:
+                continue
+            try:
+                if "nvidia.com/gpu" in spec.read_text(errors="ignore"):
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def _podman_gpu_error() -> str | None:
+    """Why a GPU deployment cannot work via Podman right now (None if it can).
+
+    Without these preconditions the container would start CPU-only and vLLM
+    would crash-loop on "Failed to infer device type" — fail fast instead.
+    """
+    version = _podman_server_version()
+    if version and version < _PODMAN_GPU_MIN_VERSION:
+        return (
+            f"Podman {'.'.join(map(str, version))} cannot pass GPUs through "
+            "its Docker-compatible API — CDI device requests need Podman >= "
+            f"{'.'.join(map(str, _PODMAN_GPU_MIN_VERSION))}. Upgrade Podman "
+            "on this node, or set the node's runtime to Docker."
+        )
+    if not _nvidia_cdi_specs_present():
+        return (
+            "No NVIDIA CDI spec found in /etc/cdi or /var/run/cdi — Podman "
+            "passes GPUs to containers via CDI. Generate one on this node "
+            "with: sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml "
+            "(ships with nvidia-container-toolkit >= 1.12), then redeploy."
+        )
+    return None
 
 
 def _volumes() -> dict[str, dict[str, str]]:
@@ -1384,6 +1463,10 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
                 f"{', '.join(available_runtimes) or 'none'})."
             ),
         )
+    if runtime == "podman":
+        gpu_reason = _podman_gpu_error()
+        if gpu_reason:
+            raise HTTPException(status_code=409, detail=gpu_reason)
 
     manifest = _launch_manifest(payload, runtime)
     # Provisional status so the host (and UI) can see image pull/build progress
@@ -1456,7 +1539,7 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
             command,
             name,
             environment,
-            _device_requests(payload.gpu_ids),
+            _device_requests(payload.gpu_ids, runtime),
             labels,
             runtime,
         )
@@ -1647,7 +1730,8 @@ async def _monitor_container(
             last_restart_count = restart_count
             _append_agent_log(
                 key,
-                f"[docker] Container restarted (exit code {state.get('ExitCode')}); Docker is retrying.",
+                f"[docker] Container restarted (exit code {state.get('ExitCode')}); "
+                "the runtime is retrying.",
             )
             if key in _statuses:
                 _statuses[key]["status"] = "error"

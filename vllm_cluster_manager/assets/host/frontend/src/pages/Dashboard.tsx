@@ -1900,7 +1900,11 @@ export function Dashboard() {
       </AppDialog>
 
       <NodeDockerDialog
-        node={dockerNode}
+        node={
+          // Resolve against the live query so the dialog reflects mutations
+          // (runtime changes, fresh metrics) instead of the open-time snapshot.
+          (nodesQuery.data ?? []).find((n) => n.id === dockerNode?.id) ?? dockerNode
+        }
         open={dockerNode !== null}
         onClose={() => setDockerNode(null)}
       />

@@ -18,7 +18,7 @@ The form's pre-filled defaults (port, GPU fraction, serve duration, vLLM version
 
 ## vLLM version
 
-Every deployment runs in an official [`vllm/vllm-openai`](https://hub.docker.com/r/vllm/vllm-openai/tags) Docker container. The version you choose maps directly to an image tag — the image already bundles a matching CUDA runtime and PyTorch, so the node needs no local CUDA/PyTorch setup.
+Every deployment runs in an official [`vllm/vllm-openai`](https://hub.docker.com/r/vllm/vllm-openai/tags) container, via **Docker or Podman** — whichever the node offers (see [Operations → Container runtimes](operations.md#container-runtimes-docker--podman) for how the runtime is chosen and the deployment's Settings dialog for which one a running model uses). The version you choose maps directly to an image tag — the image already bundles a matching CUDA runtime and PyTorch, so the node needs no local CUDA/PyTorch setup.
 
 | Input | Image tag |
 | --- | --- |
