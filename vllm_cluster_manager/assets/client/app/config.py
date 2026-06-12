@@ -18,5 +18,20 @@ class Settings(BaseSettings):
     # model weights are downloaded once and shared across deployments.
     hf_cache_dir: str = "~/.cache/huggingface"
 
+    # Default crash-loop breaker threshold: stop a deployment that restarts
+    # this many times without ever becoming ready. Overridable per deployment.
+    max_failed_restarts: int = 3
+
+    # Comma-separated host directories that may be served as local models /
+    # LoRA adapters. Each is mounted read-only into vLLM containers at the
+    # same path. Empty = local paths rejected.
+    model_dirs: str = ""
+
+    # Persistent deployment logs (~/.vllm-client/.logs): rotate a deployment's
+    # log file once it exceeds this size, and delete files untouched for this
+    # many days.
+    log_max_mb: int = 50
+    log_retention_days: int = 14
+
 
 settings = Settings()

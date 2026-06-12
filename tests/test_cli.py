@@ -253,3 +253,125 @@ def test_write_client_env_file(tmp_path):
     assert env["NODE_NAME"] == "gpu-1"
     assert env["PORT"] == "9000"
     assert "47528" in env["CONSUL_HTTP_ADDR"]
+
+
+# ---------------------------------------------------------------------------
+# run_clean
+# ---------------------------------------------------------------------------
+
+
+def test_run_clean_removes_working_dirs(tmp_path, monkeypatch):
+    from vllm_cluster_manager.cli import run_clean
+
+    data_root = tmp_path / "share" / "vllm_cluster_manager"
+    # Only the client subtree (no host dir) so clean doesn't shell out to docker.
+    (data_root / "client" / ".venv").mkdir(parents=True)
+    client_root = tmp_path / ".vllm-client"
+    (client_root / ".packages").mkdir(parents=True)
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
+    monkeypatch.setenv("VLLM_CLIENT_ROOT", str(client_root))
+
+    run_clean(remove_docker=False, assume_yes=True)
+
+    assert not data_root.exists()
+    assert not client_root.exists()
+
+
+def test_run_clean_nothing_to_do(tmp_path, monkeypatch, capsys):
+    from vllm_cluster_manager.cli import run_clean
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "empty-share"))
+    monkeypatch.setenv("VLLM_CLIENT_ROOT", str(tmp_path / "empty-client"))
+
+    run_clean(remove_docker=False, assume_yes=True)
+
+    assert "Nothing to clean." in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Postgres volume persistence (stop_infra / host down --purge)
+# ---------------------------------------------------------------------------
+
+
+class TestInfraPersistence:
+    def test_stop_infra_keeps_volumes_by_default(self, tmp_path):
+        from vllm_cluster_manager import cli as cli_mod
+
+        with mock.patch.object(
+            cli_mod, "detect_compose_cmd", return_value="docker compose"
+        ), mock.patch.object(cli_mod, "run") as run_cmd:
+            cli_mod.stop_infra(tmp_path)
+        cmd = run_cmd.call_args.args[0]
+        assert cmd[-1] == "down"
+        assert "-v" not in cmd
+
+    def test_stop_infra_purge_removes_volumes(self, tmp_path):
+        from vllm_cluster_manager import cli as cli_mod
+
+        with mock.patch.object(
+            cli_mod, "detect_compose_cmd", return_value="docker compose"
+        ), mock.patch.object(cli_mod, "run") as run_cmd:
+            cli_mod.stop_infra(tmp_path, purge=True)
+        cmd = run_cmd.call_args.args[0]
+        assert cmd[-2:] == ["down", "-v"]
+
+    @pytest.mark.parametrize("purge", [False, True])
+    def test_run_host_down_threads_purge(self, tmp_path, purge):
+        from vllm_cluster_manager import cli as cli_mod
+
+        with mock.patch.object(
+            cli_mod, "runtime_dir_path", return_value=tmp_path
+        ), mock.patch.object(cli_mod, "stop_infra") as stop_infra, mock.patch.object(
+            cli_mod, "stop_pid"
+        ), mock.patch.object(cli_mod, "remove_host_service"), mock.patch.object(
+            cli_mod, "remove_runtime_dir"
+        ):
+            cli_mod.run_host_down(purge=purge)
+        stop_infra.assert_called_once_with(tmp_path, purge=purge)
+
+    def test_infra_service_execstop_keeps_volumes(self, tmp_path):
+        from vllm_cluster_manager import cli as cli_mod
+
+        units: dict[str, str] = {}
+
+        with mock.patch.object(
+            cli_mod, "ensure_runtime_dir", return_value=tmp_path
+        ), mock.patch.object(
+            cli_mod.shutil, "which", return_value="/usr/bin/tool"
+        ), mock.patch.object(
+            cli_mod,
+            "write_systemd_service",
+            side_effect=lambda path, content: units.__setitem__(path, content),
+        ), mock.patch.object(cli_mod, "systemctl"):
+            cli_mod.install_host_service(
+                HostConfig(
+                    host_ip="127.0.0.1",
+                    frontend_port=5173,
+                    admin_api_port=8000,
+                    consul_port=47528,
+                    postgres_host="127.0.0.1",
+                    postgres_port=5757,
+                    postgres_db="db",
+                    postgres_user="u",
+                    postgres_password="p",
+                    base_path="/",
+                )
+            )
+        infra_unit = next(text for path, text in units.items() if "infra" in path)
+        assert "down -v" not in infra_unit
+        assert "docker compose down" in infra_unit
+
+    def test_run_clean_purges_volumes(self, tmp_path, monkeypatch):
+        from vllm_cluster_manager import cli as cli_mod
+
+        data_root = tmp_path / "share" / "vllm_cluster_manager"
+        (data_root / "host").mkdir(parents=True)
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
+        monkeypatch.setenv("VLLM_CLIENT_ROOT", str(tmp_path / "no-client"))
+
+        with mock.patch.object(cli_mod, "stop_infra") as stop_infra, mock.patch.object(
+            cli_mod, "stop_pid"
+        ):
+            cli_mod.run_clean(remove_docker=False, assume_yes=True)
+        stop_infra.assert_called_once_with(data_root / "host", purge=True)

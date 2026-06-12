@@ -1,8 +1,15 @@
+export type NodeDiskUsage = {
+  total_gb?: number;
+  free_gb?: number;
+  hf_cache_gb?: number;
+};
+
 export type Node = {
   id: number;
   hostname: string;
   ip_address: string;
   status: string;
+  maintenance?: boolean;
   port?: number | null;
   gpu_usage?: {
     index: number;
@@ -12,8 +19,10 @@ export type Node = {
     memory_used_mb?: number;
     memory_total_mb?: number;
   }[];
+  disk_usage?: NodeDiskUsage | null;
   default_pip_packages?: string[];
   installed_packages?: string[];
+  rogue_container_count?: number | null;
   last_heartbeat_at?: string | null;
 };
 
@@ -30,11 +39,36 @@ export type Deployment = {
   pip_packages?: string[];
   vllm_version?: string | null;
   extra_packages?: string[];
+  engine_args?: Record<string, unknown> | null;
+  lora_modules?: { name: string; path: string }[] | null;
+  max_failed_restarts?: number | null;
+  owner?: string | null;
+  duration_seconds?: number | null;
+  expires_at?: string | null;
   status: string;
+  // Cumulative usage from the vLLM instance's Prometheus counters.
+  total_prompt_tokens?: number;
+  total_completion_tokens?: number;
+  total_requests?: number;
+  // Live metrics from the latest scrape (running deployments only).
+  tokens_per_second?: number | null;
+  requests_running?: number | null;
+  requests_waiting?: number | null;
+  // Failure reason (client error or watchdog timeout) for error states.
+  last_error?: string | null;
+  // Load phase while status is "loading" (downloading/loading_weights/compiling).
+  detail?: string | null;
+  status_changed_at?: string | null;
   created_at?: string | null;
 };
 
 const baseUrl = withBase("api");
+
+// Absolute OpenAI-compatible gateway base URL, honoring the UI base path
+// (the dev/preview server and reverse-proxy configs forward /v1 to the backend).
+export function gatewayBaseUrl(): string {
+  return `${window.location.origin}${withBase("v1")}`;
+}
 
 function withBase(path: string): string {
   const base = import.meta.env.BASE_URL || "/";
@@ -84,6 +118,12 @@ export type DeploymentStart = {
   env_vars?: { key: string; value: string }[];
   vllm_version?: string;
   extra_packages?: string[];
+  engine_args?: Record<string, unknown>;
+  lora_modules?: { name: string; path: string }[];
+  max_failed_restarts?: number | null;
+  skip_resource_check?: boolean;
+  owner: string;
+  duration_seconds?: number | null;
 };
 
 export async function startDeployment(payload: DeploymentStart): Promise<Deployment> {
@@ -115,6 +155,53 @@ export async function stopDeployment(deploymentId: number): Promise<Deployment> 
   return (await response.json()) as Deployment;
 }
 
+export async function restartDeployment(
+  deploymentId: number,
+  owner: string,
+  durationSeconds: number | null
+): Promise<Deployment> {
+  const response = await fetch(`${baseUrl}/deployments/${deploymentId}/restart`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ owner, duration_seconds: durationSeconds })
+  });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const body = (await response.json()) as { detail?: string };
+      detail = body.detail ?? "";
+    } catch {
+      detail = "";
+    }
+    throw new Error(detail || `Request failed: ${response.status}`);
+  }
+  return (await response.json()) as Deployment;
+}
+
+export type DeploymentExtension = { hours: number } | { infinite: true };
+
+export async function extendDeployment(
+  deploymentId: number,
+  extension: DeploymentExtension
+): Promise<Deployment> {
+  const response = await fetch(`${baseUrl}/deployments/${deploymentId}/extend`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(extension)
+  });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const body = (await response.json()) as { detail?: string };
+      detail = body.detail ?? "";
+    } catch {
+      detail = "";
+    }
+    throw new Error(detail || `Request failed: ${response.status}`);
+  }
+  return (await response.json()) as Deployment;
+}
+
 export async function deleteDeployment(deploymentId: number): Promise<void> {
   const response = await fetch(`${baseUrl}/deployments/${deploymentId}`, {
     method: "DELETE"
@@ -138,6 +225,11 @@ export async function fetchDeploymentLogs(
     throw new Error(`Request failed: ${response.status}`);
   }
   return (await response.json()) as DeploymentLogs;
+}
+
+// Full persisted log of the deployment's current run (streamed attachment).
+export function deploymentLogsDownloadUrl(deploymentId: number): string {
+  return `${baseUrl}/deployments/${deploymentId}/logs/download`;
 }
 
 export type DeploymentConfig = {
@@ -212,4 +304,334 @@ export type NodePackage = {
 
 export async function fetchNodePackages(nodeId: number): Promise<NodePackage[]> {
   return request<NodePackage[]>(`/nodes/${nodeId}/packages`);
+}
+
+// ---------------------------------------------------------------------------
+// Per-node Docker management (containers + image cache)
+// ---------------------------------------------------------------------------
+
+export type NodeContainer = {
+  id: string;
+  name: string;
+  image: string;
+  status: string;
+  managed: boolean;
+  tracked: boolean;
+  key?: string | null;
+};
+
+export type NodeImage = {
+  id: string;
+  tags: string[];
+  size_mb: number;
+};
+
+export type ImagePruneResult = {
+  removed: string[];
+  freed_mb: number;
+  skipped: string[];
+};
+
+async function requestWithDetail<T>(
+  path: string,
+  method: "GET" | "POST" | "DELETE" = "GET",
+  jsonBody?: unknown
+): Promise<T> {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method,
+    ...(jsonBody !== undefined
+      ? {
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(jsonBody)
+        }
+      : {})
+  });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const body = (await response.json()) as { detail?: string };
+      detail = body.detail ?? "";
+    } catch {
+      detail = "";
+    }
+    throw new Error(detail || `Request failed: ${response.status}`);
+  }
+  return (await response.json()) as T;
+}
+
+export function fetchNodeContainers(nodeId: number): Promise<NodeContainer[]> {
+  return requestWithDetail<NodeContainer[]>(`/nodes/${nodeId}/containers`);
+}
+
+export function stopNodeContainer(
+  nodeId: number,
+  containerId: string
+): Promise<{ status: string; id: string }> {
+  return requestWithDetail(
+    `/nodes/${nodeId}/containers/${encodeURIComponent(containerId)}/stop`,
+    "POST"
+  );
+}
+
+export function fetchNodeImages(nodeId: number): Promise<NodeImage[]> {
+  return requestWithDetail<NodeImage[]>(`/nodes/${nodeId}/images`);
+}
+
+export function deleteNodeImage(
+  nodeId: number,
+  imageId: string
+): Promise<{ status: string; id: string }> {
+  return requestWithDetail(
+    `/nodes/${nodeId}/images/${encodeURIComponent(imageId)}`,
+    "DELETE"
+  );
+}
+
+export function pruneNodeImages(nodeId: number): Promise<ImagePruneResult> {
+  return requestWithDetail(`/nodes/${nodeId}/images/prune`, "POST");
+}
+
+// ---------------------------------------------------------------------------
+// Node maintenance, metrics history, HF model cache
+// ---------------------------------------------------------------------------
+
+export async function setNodeMaintenance(
+  nodeId: number,
+  enabled: boolean,
+  drain: boolean
+): Promise<Node> {
+  const response = await fetch(`${baseUrl}/nodes/${nodeId}/maintenance`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled, drain })
+  });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const body = (await response.json()) as { detail?: string };
+      detail = body.detail ?? "";
+    } catch {
+      detail = "";
+    }
+    throw new Error(detail || `Request failed: ${response.status}`);
+  }
+  return (await response.json()) as Node;
+}
+
+export type NodeMetricPoint = {
+  recorded_at: string | null;
+  gpus: {
+    index: number;
+    utilization?: number;
+    memory_used_mb?: number;
+    memory_total_mb?: number;
+  }[];
+  cpu_percent?: number | null;
+  memory_percent?: number | null;
+};
+
+export type NodeMetricsHistory = {
+  node_id: number;
+  points: NodeMetricPoint[];
+};
+
+export function fetchNodeMetricsHistory(
+  nodeId: number,
+  minutes: number,
+  step: number
+): Promise<NodeMetricsHistory> {
+  return request<NodeMetricsHistory>(
+    `/nodes/${nodeId}/metrics/history?minutes=${minutes}&step=${step}`
+  );
+}
+
+export type CachedModel = {
+  name: string;
+  size_mb: number;
+  last_used_at: number;
+  in_use: boolean;
+};
+
+export function fetchNodeModelCache(nodeId: number): Promise<CachedModel[]> {
+  return requestWithDetail<CachedModel[]>(`/nodes/${nodeId}/models/cache`);
+}
+
+export type DeploymentManifest = Record<string, unknown>;
+
+export function fetchManifest(deploymentId: number): Promise<DeploymentManifest> {
+  return request<DeploymentManifest>(`/deployments/${deploymentId}/manifest`);
+}
+
+export function deleteNodeModelCache(
+  nodeId: number,
+  name: string
+): Promise<{ status: string; name: string }> {
+  return requestWithDetail(`/nodes/${nodeId}/models/cache/${name}`, "DELETE");
+}
+
+// Factory reset: wipes deployments, nodes, metric history, and saved configs.
+// Running containers are untouched and re-register/re-adopt automatically.
+export function purgeDatabase(): Promise<{ purged: Record<string, number> }> {
+  return requestWithDetail(`/admin/purge`, "POST");
+}
+
+// ---------------------------------------------------------------------------
+// Managed local models (streamed uploads / URL pulls)
+// ---------------------------------------------------------------------------
+
+export type LocalModel = {
+  name: string;
+  path: string;
+  source: string;
+  size_mb: number;
+  in_use: boolean;
+  deletable: boolean;
+  last_modified_at: number;
+};
+
+export type LocalModelTransfer = {
+  id: string;
+  kind: string;
+  name: string;
+  status: "downloading" | "extracting" | "done" | "error";
+  total_bytes: number | null;
+  received_bytes: number;
+  error: string | null;
+  path: string | null;
+};
+
+export type LocalModelUploadResult = {
+  name: string;
+  path: string;
+  size_mb: number;
+  warnings: string[];
+};
+
+export function fetchLocalModels(nodeId: number): Promise<LocalModel[]> {
+  return requestWithDetail<LocalModel[]>(`/nodes/${nodeId}/local-models`);
+}
+
+export function fetchLocalModelTransfers(nodeId: number): Promise<LocalModelTransfer[]> {
+  return requestWithDetail<LocalModelTransfer[]>(`/nodes/${nodeId}/local-models/transfers`);
+}
+
+export function deleteLocalModel(
+  nodeId: number,
+  name: string
+): Promise<{ status: string; name: string }> {
+  return requestWithDetail(
+    `/nodes/${nodeId}/local-models/${encodeURIComponent(name)}`,
+    "DELETE"
+  );
+}
+
+export function pullLocalModel(
+  nodeId: number,
+  payload: { url: string; name?: string }
+): Promise<{ transfer_id: string; name: string }> {
+  return requestWithDetail(`/nodes/${nodeId}/local-models/pull`, "POST", payload);
+}
+
+// Raw-body XHR upload: xhr.send(file) streams the File from disk (no JS-side
+// buffering) and, unlike fetch, exposes upload progress events.
+function uploadLocalModelStream(
+  path: string,
+  method: "PUT" | "POST",
+  file: File,
+  onProgress: (loadedBytes: number) => void
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, `${baseUrl}${path}`);
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress(event.loaded);
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText));
+        } catch {
+          resolve(null);
+        }
+      } else {
+        let detail = "";
+        try {
+          detail = (JSON.parse(xhr.responseText) as { detail?: string }).detail ?? "";
+        } catch {
+          detail = "";
+        }
+        reject(new Error(detail || `Upload failed: ${xhr.status}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Upload failed: network error."));
+    xhr.onabort = () => reject(new Error("Upload cancelled."));
+    xhr.send(file);
+  });
+}
+
+// Strip the picked folder's own name from webkitRelativePath so the model
+// root holds config.json directly.
+function relativePathInsideFolder(file: File): string {
+  const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+  const parts = rel.split("/");
+  return parts.length > 1 ? parts.slice(1).join("/") : rel;
+}
+
+export async function uploadLocalModelFolder(
+  nodeId: number,
+  name: string,
+  files: File[],
+  onProgress: (fraction: number) => void
+): Promise<LocalModelUploadResult> {
+  const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+  const { session_id } = await requestWithDetail<{ session_id: string }>(
+    `/nodes/${nodeId}/local-models/upload/begin`,
+    "POST",
+    { name, total_bytes: totalBytes, file_count: files.length }
+  );
+  let doneBytes = 0;
+  try {
+    // Sequential: keeps disk writes contiguous and the progress math exact;
+    // multi-GB transfers are bandwidth-bound anyway.
+    for (const file of files) {
+      const rel = relativePathInsideFolder(file);
+      await uploadLocalModelStream(
+        `/nodes/${nodeId}/local-models/upload/${session_id}/file?path=${encodeURIComponent(rel)}`,
+        "PUT",
+        file,
+        (loaded) => onProgress(totalBytes ? (doneBytes + loaded) / totalBytes : 0)
+      );
+      doneBytes += file.size;
+      onProgress(totalBytes ? doneBytes / totalBytes : 1);
+    }
+    return await requestWithDetail<LocalModelUploadResult>(
+      `/nodes/${nodeId}/local-models/upload/${session_id}/finish`,
+      "POST",
+      { flatten: false }
+    );
+  } catch (error) {
+    await requestWithDetail(
+      `/nodes/${nodeId}/local-models/upload/${session_id}/abort`,
+      "POST"
+    ).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function uploadLocalModelArchive(
+  nodeId: number,
+  name: string,
+  file: File,
+  onProgress: (fraction: number) => void
+): Promise<LocalModelUploadResult> {
+  const result = await uploadLocalModelStream(
+    `/nodes/${nodeId}/local-models/archive?name=${encodeURIComponent(name)}&filename=${encodeURIComponent(file.name)}`,
+    "POST",
+    file,
+    (loaded) => onProgress(file.size ? loaded / file.size : 0)
+  );
+  return result as LocalModelUploadResult;
 }

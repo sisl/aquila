@@ -8,6 +8,8 @@ edit_uri: edit/main/docs/
 theme:
   name: material
   language: en
+  font:
+    text: Source Sans 3
   logo: null
   icon:
     logo: null
@@ -43,6 +45,7 @@ nav:
   - Overview: index.md
   - Getting Started: getting-started.md
   - Deployments: deployments.md
+  - Gateway & Usage: gateway.md
   - CLI Reference: cli.md
   - Architecture: architecture.md
   - Operations: operations.md

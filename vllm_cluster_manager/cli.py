@@ -75,6 +75,11 @@ def main() -> None:
     host_up.add_argument("--postgres-password", default=DEFAULT_POSTGRES_PASSWORD, help="Postgres password.")
 
     host_down = host_subparsers.add_parser("down", help="Stop host services")
+    host_down.add_argument(
+        "--purge",
+        action="store_true",
+        help="Also delete the Postgres data volume (wipes all deployments, nodes, and history).",
+    )
 
     client_parser = subparsers.add_parser("client", help="Manage a client node")
     client_subparsers = client_parser.add_subparsers(dest="action", required=True)
@@ -89,6 +94,19 @@ def main() -> None:
 
     client_down = client_subparsers.add_parser("down", help="Stop the client")
 
+    clean_parser = subparsers.add_parser(
+        "clean",
+        help="Remove the tool's runtime directories, venvs, and caches.",
+    )
+    clean_parser.add_argument(
+        "--docker",
+        action="store_true",
+        help="Also remove managed vLLM containers and cached vLLM images.",
+    )
+    clean_parser.add_argument(
+        "-y", "--yes", action="store_true", help="Do not prompt for confirmation.",
+    )
+
     args = parser.parse_args()
 
     if args.command == "host":
@@ -97,7 +115,7 @@ def main() -> None:
             run_host_up(host_config, use_service=args.service)
             return
         if args.action == "down":
-            run_host_down()
+            run_host_down(purge=args.purge)
             return
 
     if args.command == "client":
@@ -108,6 +126,10 @@ def main() -> None:
         if args.action == "down":
             run_client_down()
             return
+
+    if args.command == "clean":
+        run_clean(remove_docker=args.docker, assume_yes=args.yes)
+        return
 
     parser.error("Unknown command")
 
@@ -216,12 +238,17 @@ def run_host_up(config: HostConfig, use_service: bool) -> None:
         remove_runtime_dir("host")
 
 
-def run_host_down() -> None:
+def run_host_down(purge: bool = False) -> None:
     runtime_dir = runtime_dir_path("host")
     if runtime_dir:
-        stop_infra(runtime_dir)
+        stop_infra(runtime_dir, purge=purge)
         stop_pid(runtime_dir / ".backend.pid")
         stop_pid(runtime_dir / ".frontend.pid")
+    elif purge:
+        print(
+            "No host runtime directory found; if a Postgres volume remains, "
+            "remove it with `docker volume rm host_pgdata`."
+        )
     remove_host_service()
     remove_runtime_dir("host")
 
@@ -262,6 +289,120 @@ def run_client_down() -> None:
         stop_pid(runtime_dir / ".client.pid")
     remove_client_service()
     remove_runtime_dir("client")
+
+
+def run_clean(remove_docker: bool = False, assume_yes: bool = False) -> None:
+    """Remove the tool's runtime directories, venvs, and caches.
+
+    Targets the host/client runtime dirs under XDG data home and the client
+    working root (uploaded packages). The HuggingFace model cache is left
+    intact. systemd units are not removed here — use `host down`/`client down`.
+    """
+    base_dir = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    data_root = base_dir / "vllm_cluster_manager"
+    client_root = Path(os.environ.get("VLLM_CLIENT_ROOT", Path.home() / ".vllm-client"))
+
+    targets = [p for p in (data_root, client_root) if p.exists()]
+
+    candidate_units = (
+        f"{HOST_SERVICE_NAME}-infra.service",
+        f"{HOST_SERVICE_NAME}-backend.service",
+        f"{HOST_SERVICE_NAME}-frontend.service",
+        f"{CLIENT_SERVICE_NAME}.service",
+    )
+    installed_units = [u for u in candidate_units if Path(f"/etc/systemd/system/{u}").exists()]
+
+    if not targets and not remove_docker:
+        print("Nothing to clean.")
+        if installed_units:
+            print("Installed systemd services remain; remove with `host down` / `client down`.")
+        return
+
+    print("vllm-cluster-manager clean will remove:")
+    for p in targets:
+        print(f"  - {p}")
+    if (data_root / "host").exists():
+        print("  - Docker: Postgres data volume (all deployments, nodes, history)")
+    if remove_docker:
+        print("  - Docker: managed vLLM containers and cached vLLM images")
+    print("  (the HuggingFace model cache is left intact)")
+    if installed_units:
+        print("\nNote: systemd services are installed and will NOT be removed:")
+        for u in installed_units:
+            print(f"    {u}")
+        print("  Remove them with `vllm-cluster-manager host down` / `client down`.")
+
+    if not assume_yes:
+        if not sys.stdin.isatty():
+            print("\nRefusing to proceed without confirmation; re-run with --yes.")
+            return
+        try:
+            answer = input("\nProceed? [y/N]: ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer not in ("y", "yes"):
+            print("Aborted.")
+            return
+
+    # Stop foreground processes and infra containers first so they aren't
+    # orphaned when their working directories disappear.
+    host_dir = data_root / "host"
+    if host_dir.exists():
+        try:
+            stop_infra(host_dir, purge=True)
+        except Exception as exc:
+            print(f"  (could not stop host infra: {exc})")
+        stop_pid(host_dir / ".backend.pid")
+        stop_pid(host_dir / ".frontend.pid")
+    client_dir = data_root / "client"
+    if client_dir.exists():
+        stop_pid(client_dir / ".client.pid")
+
+    if remove_docker:
+        _clean_docker()
+
+    failures: list[Path] = []
+    for p in targets:
+        shutil.rmtree(p, ignore_errors=True)
+        if p.exists():
+            failures.append(p)
+
+    if failures:
+        print("\nSome paths could not be fully removed (likely root-owned from an")
+        print("earlier sudo/root run). Re-run as root to finish:")
+        print(f"  sudo rm -rf {' '.join(str(p) for p in failures)}")
+    else:
+        print("Clean complete.")
+
+
+def _clean_docker() -> None:
+    docker = shutil.which("docker")
+    if not docker:
+        print("  (docker not found; skipping container/image cleanup)")
+        return
+    try:
+        out = run(
+            [docker, "ps", "-aq", "--filter", "label=vllm-cluster-manager.managed=true"],
+            capture=True,
+        )
+        ids = out.split()
+        if ids:
+            run([docker, "rm", "-f", *ids], capture=True)
+            print(f"  Removed {len(ids)} managed vLLM container(s).")
+    except RuntimeError as exc:
+        print(f"  (container cleanup failed: {exc})")
+    try:
+        out = run([docker, "images", "--format", "{{.Repository}}:{{.Tag}}"], capture=True)
+        images = [
+            line for line in out.split()
+            if line.startswith("vllm/vllm-openai:")
+            or line.startswith("vllm-cluster-manager/local:")
+        ]
+        if images:
+            run([docker, "rmi", "-f", *images], capture=True)
+            print(f"  Removed {len(images)} cached vLLM image(s).")
+    except RuntimeError as exc:
+        print(f"  (image cleanup failed: {exc})")
 
 
 def ensure_runtime_dir(kind: str) -> Path:
@@ -444,9 +585,12 @@ def start_infra(runtime_dir: Path) -> None:
     run(cmd, cwd=runtime_dir)
 
 
-def stop_infra(runtime_dir: Path) -> None:
+def stop_infra(runtime_dir: Path, purge: bool = False) -> None:
+    """Stop Postgres/Consul. Data volumes are kept unless purge is requested."""
     compose_cmd = detect_compose_cmd()
-    cmd = compose_cmd.split() + ["down", "-v"]
+    cmd = compose_cmd.split() + ["down"]
+    if purge:
+        cmd.append("-v")
     run(cmd, cwd=runtime_dir)
 
 
@@ -463,7 +607,7 @@ def compose_service_cmd(args: str) -> str:
 def install_host_service(config: HostConfig) -> None:
     runtime_dir = ensure_runtime_dir("host")
     compose_start = compose_service_cmd("up -d")
-    compose_stop = compose_service_cmd("down -v")
+    compose_stop = compose_service_cmd("down")
     npm_path = shutil.which("npm")
     node_path = shutil.which("node")
     if not npm_path:

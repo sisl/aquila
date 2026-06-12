@@ -62,6 +62,30 @@ Checks:
 - Common causes: a large image still pulling, insufficient GPU memory, model not found on Hugging Face, or missing `HF_TOKEN` for gated models.
 - The readiness check polls `/health` and `/v1/models` on the deployment port. With host networking the container binds the node port directly; ensure no firewall blocks localhost access on the client node.
 
+## Gateway returns 404 / 503 / 502
+**Symptoms**: Requests to `http://<host>/v1/...` fail even though deployments exist.
+
+Explanation:
+- **404** — no *running* deployment serves the requested `model`; the error message lists the available names. Check the `model` field against the served model name (or LoRA adapter name) shown in `GET /v1/models`.
+- **503** — a matching deployment exists but is still `starting`/`loading`; retry once it is `running`.
+- **502** — the deployment's node did not respond; check that the host can reach the client node and that the vLLM container is healthy.
+- If `/v1` itself is not found behind a reverse proxy, make sure the proxy forwards `/v1` (or `<base-path>/v1`) to the backend, like `/api` and `/ws`.
+
+## Local model path rejected
+**Symptoms**: Starting a deployment with an absolute model path fails with an "allowed model directories" error.
+
+Checks:
+- Set `MODEL_DIRS` in the client agent's `.env` to a comma-separated list of directories that may be served, then restart the agent.
+- The path must exist on the **client node** and resolve to a location inside one of those directories (symlinks escaping them are rejected).
+
+## Webhook notifications not arriving
+**Symptoms**: Deployments change state but no Slack/webhook messages appear.
+
+Checks:
+- `WEBHOOK_URL` must be set in the **backend** `.env` (`host/backend/.env`); restart the backend after editing.
+- Verify the URL with a manual `curl -X POST -d '{"text":"test"}'`.
+- Delivery is fire-and-forget: failures are logged by the backend but never retried or surfaced in the UI.
+
 ## Deployments missing after backend restart
 **Symptoms**: Running models disappear from the dashboard after restarting the host backend.
 

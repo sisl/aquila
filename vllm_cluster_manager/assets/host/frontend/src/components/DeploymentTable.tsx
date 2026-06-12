@@ -1,34 +1,178 @@
+import { MouseEvent, useEffect, useState } from "react";
+import AddIcon from "@mui/icons-material/Add";
+import ClearIcon from "@mui/icons-material/Clear";
+import RocketLaunchOutlined from "@mui/icons-material/RocketLaunchOutlined";
+import SearchIcon from "@mui/icons-material/Search";
 import {
+  Button,
   Chip,
+  IconButton,
+  InputAdornment,
+  Menu,
+  MenuItem,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
-  Box
+  TableSortLabel,
+  TextField,
+  Tooltip,
+  Box,
+  Skeleton,
+  Typography,
+  useMediaQuery,
+  useTheme
 } from "@mui/material";
 
-import type { Deployment } from "../services/api";
+import type { Deployment, DeploymentExtension } from "../services/api";
 import { AppButton } from "./AppButton";
+import { AppDialog } from "./AppDialog";
+import { EmptyState } from "./EmptyState";
+import { Mono } from "./Mono";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 type DeploymentTableProps = {
   deployments: Deployment[];
+  loading?: boolean;
   onStop: (deploymentId: number) => void;
   onDelete: (deploymentId: number) => void;
   onLogs: (deploymentId: number) => void;
   onSettings: (deployment: Deployment) => void;
+  onRestart: (deployment: Deployment) => void;
+  onExtend?: (deployment: Deployment, extension: DeploymentExtension) => void;
+  onEndpoint?: (deployment: Deployment) => void;
   nodeNameById: Record<number, string>;
 };
 
+const EXTEND_CHOICES: { hours: number; label: string }[] = [
+  { hours: 1, label: "+1 hour" },
+  { hours: 4, label: "+4 hours" },
+  { hours: 12, label: "+12 hours" },
+  { hours: 24, label: "+24 hours" }
+];
+
+type SortKey =
+  | "model"
+  | "owner"
+  | "node"
+  | "port"
+  | "vllm"
+  | "fraction"
+  | "usage"
+  | "remaining"
+  | "status";
+
+type Remaining = { text: string; urgent: boolean };
+
+const HOUR_MS = 60 * 60 * 1000;
+
+function formatRemaining(deployment: Deployment, now: number): Remaining {
+  const status = deployment.status;
+  if (status !== "running" && status !== "loading") {
+    return { text: "—", urgent: false };
+  }
+  if (deployment.duration_seconds == null) {
+    return { text: "∞", urgent: false };
+  }
+  if (!deployment.expires_at) {
+    return { text: "starting…", urgent: false };
+  }
+  const remainingMs = new Date(deployment.expires_at).getTime() - now;
+  if (remainingMs <= 0) {
+    return { text: "expiring…", urgent: true };
+  }
+  const totalMinutes = Math.floor(remainingMs / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const text = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+  return { text, urgent: remainingMs < HOUR_MS };
+}
+
+function statusColor(
+  status: string
+): "success" | "warning" | "error" | "default" {
+  if (status === "running") return "success";
+  if (status === "expired") return "warning";
+  if (status === "error" || status === "unreachable") return "error";
+  return "default";
+}
+
+// Compact token formatting: 1234567 -> "1.2M".
+export function formatTokens(value?: number): string {
+  if (!value) return "0";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return String(value);
+}
+
+// Sub-1000 rates keep one decimal; beyond that the decimal is noise.
+function formatRate(value: number): string {
+  return value >= 1000 ? formatTokens(Math.round(value)) : value.toFixed(1);
+}
+
+function usageTooltip(deployment: Deployment): string {
+  const parts = [
+    `${deployment.total_requests} requests — prompt / completion tokens`
+  ];
+  if (typeof deployment.requests_running === "number") {
+    parts.push(`${deployment.requests_running} running`);
+  }
+  if (typeof deployment.requests_waiting === "number") {
+    parts.push(`${deployment.requests_waiting} queued`);
+  }
+  return parts.join(" · ");
+}
+
+// Show the client-reported load phase while a deployment is loading, so a
+// multi-minute start reads as progress rather than a stall.
+function statusLabel(deployment: Deployment): string {
+  if (deployment.status === "loading" && deployment.detail) {
+    return `loading (${deployment.detail.replace(/_/g, " ")})`;
+  }
+  return deployment.status;
+}
+
 export function DeploymentTable({
   deployments,
+  loading = false,
   onStop,
   onDelete,
   onLogs,
   onSettings,
+  onRestart,
+  onExtend,
+  onEndpoint,
   nodeNameById
 }: DeploymentTableProps) {
+  const [extendMenu, setExtendMenu] = useState<{
+    anchor: HTMLElement;
+    deployment: Deployment;
+  } | null>(null);
+
+  const openExtendMenu = (event: MouseEvent<HTMLElement>, deployment: Deployment) => {
+    setExtendMenu({ anchor: event.currentTarget, deployment });
+  };
+  const [customExtend, setCustomExtend] = useState<Deployment | null>(null);
+  const [customExtendHours, setCustomExtendHours] = useState("6");
+  const [confirmStop, setConfirmStop] = useState<Deployment | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Deployment | null>(null);
+
+  // Below "xl" the low-priority columns collapse so the table stays readable
+  // without horizontal scrolling (the side rail eats ~400px of the viewport).
+  const muiTheme = useTheme();
+  const compact = useMediaQuery(muiTheme.breakpoints.down("xl"));
+  const columnCount = compact ? 8 : 12;
+
+  // Tick once a second so the remaining-time countdown and the <1h highlight
+  // stay live regardless of how often the deployments query refetches.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
   const formatArgs = (args?: string[]) => {
     if (!args || args.length === 0) {
       return [];
@@ -51,73 +195,302 @@ export function DeploymentTable({
     return rows;
   };
 
+  const canRestart = (status: string) =>
+    status === "stopped" || status === "expired" || status === "error";
+
+  // Search + sort are purely presentational, so they live here rather than
+  // in the query layer.
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const handleSort = (key: SortKey) => {
+    if (sortBy === key) {
+      setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(key);
+      setSortDir("asc");
+    }
+  };
+
+  const sortValue = (deployment: Deployment): string | number => {
+    switch (sortBy) {
+      case "model":
+        return deployment.model_name.toLowerCase();
+      case "owner":
+        return (deployment.owner ?? "").toLowerCase();
+      case "node":
+        return (
+          nodeNameById[deployment.node_id] ?? String(deployment.node_id)
+        ).toLowerCase();
+      case "port":
+        return deployment.port;
+      case "vllm":
+        return deployment.vllm_version ?? "";
+      case "fraction":
+        return deployment.gpu_memory_fraction;
+      case "usage":
+        return (
+          (deployment.total_prompt_tokens ?? 0) +
+          (deployment.total_completion_tokens ?? 0)
+        );
+      case "remaining":
+        // No expiry (infinite/inactive) sorts after every real deadline.
+        return deployment.expires_at
+          ? new Date(deployment.expires_at).getTime()
+          : Number.MAX_SAFE_INTEGER;
+      case "status":
+        return deployment.status;
+      default:
+        return 0;
+    }
+  };
+
+  const query = search.trim().toLowerCase();
+  const visibleRows = deployments.filter((deployment) => {
+    if (!query) return true;
+    const haystack = [
+      deployment.model_name,
+      deployment.owner ?? "",
+      nodeNameById[deployment.node_id] ?? String(deployment.node_id),
+      deployment.status,
+      String(deployment.port),
+      deployment.vllm_version ?? ""
+    ]
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(query);
+  });
+  if (sortBy !== null) {
+    visibleRows.sort((a, b) => {
+      const va = sortValue(a);
+      const vb = sortValue(b);
+      const cmp =
+        typeof va === "number" && typeof vb === "number"
+          ? va - vb
+          : String(va).localeCompare(String(vb));
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }
+
+  const sortableHeader = (key: SortKey, label: string) => (
+    <TableCell sortDirection={sortBy === key ? sortDir : false}>
+      <TableSortLabel
+        active={sortBy === key}
+        direction={sortBy === key ? sortDir : "asc"}
+        onClick={() => handleSort(key)}
+      >
+        {label}
+      </TableSortLabel>
+    </TableCell>
+  );
+
   return (
-    <TableContainer component={Box} sx={{ minHeight: 200 }}>
-      <Table size="small">
+    <>
+    <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1.5 }}>
+      <TextField
+        size="small"
+        placeholder="Search model, owner, node, status…"
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        sx={{ width: { xs: "100%", sm: 280 } }}
+        InputProps={{
+          startAdornment: (
+            <InputAdornment position="start">
+              <SearchIcon sx={{ fontSize: 16, color: "text.secondary" }} />
+            </InputAdornment>
+          ),
+          endAdornment: search ? (
+            <InputAdornment position="end">
+              <IconButton
+                size="small"
+                aria-label="Clear search"
+                onClick={() => setSearch("")}
+              >
+                <ClearIcon sx={{ fontSize: 14 }} />
+              </IconButton>
+            </InputAdornment>
+          ) : undefined
+        }}
+      />
+    </Box>
+    <TableContainer
+      component={Box}
+      className="scroll-thin"
+      sx={{ minHeight: 200, maxHeight: "70vh", overflowX: "auto" }}
+    >
+      <Table size="small" stickyHeader sx={{ minWidth: compact ? 720 : 1040 }}>
         <TableHead>
           <TableRow>
-            <TableCell>Model</TableCell>
-            <TableCell>Node</TableCell>
-            <TableCell>Port</TableCell>
-            <TableCell>vLLM</TableCell>
-            <TableCell>GPU Fraction</TableCell>
+            {sortableHeader("model", "Model")}
+            {sortableHeader("owner", "Owner")}
+            {sortableHeader("node", "Node")}
+            {sortableHeader("port", "Port")}
+            {!compact && sortableHeader("vllm", "vLLM")}
+            {!compact && sortableHeader("fraction", "GPU Fraction")}
             <TableCell>GPUs</TableCell>
-            <TableCell>Args</TableCell>
-            <TableCell>Status</TableCell>
+            {!compact && <TableCell>Args</TableCell>}
+            {!compact && sortableHeader("usage", "Usage")}
+            {sortableHeader("remaining", "Remaining")}
+            {sortableHeader("status", "Status")}
             <TableCell align="right">Actions</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
-          {deployments.map((deployment) => {
+          {visibleRows.map((deployment) => {
             const argRows = formatArgs(deployment.extra_args);
+            const remaining = formatRemaining(deployment, now);
             return (
               <TableRow key={deployment.id} hover>
-                <TableCell>{deployment.model_name}</TableCell>
+                <TableCell>
+                  <Tooltip title={deployment.model_name} enterDelay={500}>
+                    <Box
+                      sx={{
+                        maxWidth: 240,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap"
+                      }}
+                    >
+                      {deployment.model_name}
+                    </Box>
+                  </Tooltip>
+                </TableCell>
+                <TableCell>{deployment.owner || "-"}</TableCell>
                 <TableCell>{nodeNameById[deployment.node_id] ?? deployment.node_id}</TableCell>
                 <TableCell>{deployment.port}</TableCell>
-                <TableCell>
-                  {deployment.vllm_version || "-"}
-                  {deployment.extra_packages && deployment.extra_packages.length > 0 && (
-                    <Chip label={`+${deployment.extra_packages.length} pkg`} size="small" sx={{ ml: 0.5 }} />
-                  )}
-                </TableCell>
-                <TableCell>{deployment.gpu_memory_fraction}</TableCell>
+                {!compact && (
+                  <TableCell>
+                    <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.75 }}>
+                      {deployment.vllm_version || "-"}
+                      {deployment.extra_packages && deployment.extra_packages.length > 0 && (
+                        <Chip label={`+${deployment.extra_packages.length} pkg`} size="small" />
+                      )}
+                    </Box>
+                  </TableCell>
+                )}
+                {!compact && <TableCell>{deployment.gpu_memory_fraction}</TableCell>}
                 <TableCell>
                   {deployment.gpu_ids && deployment.gpu_ids.length > 0
                     ? deployment.gpu_ids.join(", ")
                     : "-"}
                 </TableCell>
+                {!compact && (
+                  <TableCell>
+                    {argRows.length > 0 ? (
+                      <Mono block sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
+                        {argRows.map((row, index) => (
+                          <Box key={`${deployment.id}-arg-${index}`}>{row}</Box>
+                        ))}
+                      </Mono>
+                    ) : (
+                      "-"
+                    )}
+                  </TableCell>
+                )}
+                {!compact && (
+                  <TableCell>
+                    {deployment.total_requests ? (
+                      <Tooltip title={usageTooltip(deployment)} enterDelay={500}>
+                        <Box>
+                          <Typography variant="body2" sx={{ whiteSpace: "nowrap" }}>
+                            {formatTokens(deployment.total_prompt_tokens)} /{" "}
+                            {formatTokens(deployment.total_completion_tokens)}
+                          </Typography>
+                          <Typography
+                            variant="caption"
+                            className="muted"
+                            sx={{ whiteSpace: "nowrap" }}
+                          >
+                            {formatTokens(deployment.total_requests)} req
+                            {typeof deployment.tokens_per_second === "number" &&
+                              ` · ${formatRate(deployment.tokens_per_second)} tok/s`}
+                          </Typography>
+                        </Box>
+                      </Tooltip>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
+                )}
                 <TableCell>
-                  {argRows.length > 0 ? (
-                    <Box
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+                    {/* Fixed-width tabular text keeps the extend control at a
+                        consistent x-position across rows. */}
+                    <Typography
+                      variant="body2"
                       sx={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 0.25,
-                        fontFamily: "SFMono-Regular, ui-monospace, monospace",
-                        fontSize: "0.75rem"
+                        color: remaining.urgent ? "error.main" : "inherit",
+                        fontWeight: remaining.urgent ? 600 : 400,
+                        whiteSpace: "nowrap",
+                        fontVariantNumeric: "tabular-nums",
+                        minWidth: 64
                       }}
                     >
-                      {argRows.map((row, index) => (
-                        <Box key={`${deployment.id}-arg-${index}`}>{row}</Box>
-                      ))}
-                    </Box>
-                  ) : (
-                    "-"
-                  )}
+                      {remaining.text}
+                    </Typography>
+                    {onExtend &&
+                      deployment.duration_seconds != null &&
+                      (deployment.status === "running" ||
+                        deployment.status === "loading") && (
+                        <Tooltip title="Extend serve time" enterDelay={500}>
+                          <IconButton
+                            size="small"
+                            aria-label="Extend serve time"
+                            onClick={(event) => openExtendMenu(event, deployment)}
+                            sx={{ p: 0.25, color: "text.secondary" }}
+                          >
+                            <AddIcon sx={{ fontSize: 15 }} />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                  </Box>
                 </TableCell>
                 <TableCell>
-                  <Chip
-                    label={deployment.status}
-                    size="small"
-                    color={deployment.status === "running" ? "success" : "default"}
-                  />
+                  <Tooltip
+                    title={deployment.last_error ?? ""}
+                    arrow
+                    disableHoverListener={!deployment.last_error}
+                  >
+                    <Box
+                      sx={{
+                        display: "inline-flex",
+                        flexDirection: "column",
+                        alignItems: "flex-start",
+                        gap: 0.25
+                      }}
+                    >
+                      <Chip
+                        label={statusLabel(deployment)}
+                        size="small"
+                        color={statusColor(deployment.status)}
+                      />
+                      {deployment.status === "error" && deployment.last_error && (
+                        <Typography
+                          variant="caption"
+                          onClick={() => onLogs(deployment.id)}
+                          sx={{
+                            color: "error.main",
+                            maxWidth: 180,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            cursor: "pointer",
+                            "&:hover": { textDecoration: "underline" }
+                          }}
+                        >
+                          {deployment.last_error}
+                        </Typography>
+                      )}
+                    </Box>
+                  </Tooltip>
                 </TableCell>
                 <TableCell align="right">
                   <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
                     <AppButton
                       type="button"
                       className="app-button--small"
+                      ghost
                       onClick={() => onSettings(deployment)}
                     >
                       Settings
@@ -125,25 +498,48 @@ export function DeploymentTable({
                     <AppButton
                       type="button"
                       className="app-button--small"
+                      ghost
                       onClick={() => onLogs(deployment.id)}
                     >
                       Logs
                     </AppButton>
+                    {onEndpoint && deployment.status === "running" && (
+                      <AppButton
+                        type="button"
+                        className="app-button--small"
+                        ghost
+                        onClick={() => onEndpoint(deployment)}
+                      >
+                        Endpoint
+                      </AppButton>
+                    )}
                     {(deployment.status === "running" || deployment.status === "loading") && (
                       <AppButton
                         type="button"
                         variant="stop"
                         className="app-button--small"
-                        onClick={() => onStop(deployment.id)}
+                        ghost
+                        onClick={() => setConfirmStop(deployment)}
                       >
                         Stop
                       </AppButton>
                     )}
-                    {(deployment.status === "stopped" || deployment.status === "error") && (
+                    {canRestart(deployment.status) && (
                       <AppButton
                         type="button"
                         className="app-button--small"
-                        onClick={() => onDelete(deployment.id)}
+                        ghost
+                        onClick={() => onRestart(deployment)}
+                      >
+                        Start
+                      </AppButton>
+                    )}
+                    {canRestart(deployment.status) && (
+                      <AppButton
+                        type="button"
+                        className="app-button--small"
+                        ghost
+                        onClick={() => setConfirmDelete(deployment)}
                       >
                         Delete
                       </AppButton>
@@ -153,13 +549,151 @@ export function DeploymentTable({
               </TableRow>
             );
           })}
-          {deployments.length === 0 && (
+          {loading &&
+            deployments.length === 0 &&
+            [0, 1, 2].map((row) => (
+              <TableRow key={`skeleton-${row}`}>
+                {Array.from({ length: columnCount }, (_, column) => (
+                  <TableCell key={column}>
+                    <Skeleton variant="text" />
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))}
+          {!loading && deployments.length === 0 && (
             <TableRow>
-              <TableCell colSpan={9}>No deployments yet.</TableCell>
+              <TableCell colSpan={columnCount} sx={{ borderBottom: "none" }}>
+                <EmptyState
+                  icon={RocketLaunchOutlined}
+                  primary="No deployments yet."
+                  hint="Launch one from the Deploy Model panel."
+                />
+              </TableCell>
+            </TableRow>
+          )}
+          {!loading && deployments.length > 0 && visibleRows.length === 0 && (
+            <TableRow>
+              <TableCell colSpan={columnCount} sx={{ borderBottom: "none" }}>
+                <EmptyState
+                  icon={SearchIcon}
+                  primary={`No deployments match "${search.trim()}".`}
+                  hint="Clear the search to see all deployments."
+                />
+              </TableCell>
             </TableRow>
           )}
         </TableBody>
       </Table>
+      <Menu
+        anchorEl={extendMenu?.anchor ?? null}
+        open={extendMenu !== null}
+        onClose={() => setExtendMenu(null)}
+      >
+        {EXTEND_CHOICES.map((choice) => (
+          <MenuItem
+            key={choice.hours}
+            onClick={() => {
+              if (extendMenu && onExtend) {
+                onExtend(extendMenu.deployment, { hours: choice.hours });
+              }
+              setExtendMenu(null);
+            }}
+          >
+            {choice.label}
+          </MenuItem>
+        ))}
+        <MenuItem
+          onClick={() => {
+            if (extendMenu) {
+              setCustomExtend(extendMenu.deployment);
+              setCustomExtendHours("6");
+            }
+            setExtendMenu(null);
+          }}
+        >
+          Custom…
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            if (extendMenu && onExtend) {
+              onExtend(extendMenu.deployment, { infinite: true });
+            }
+            setExtendMenu(null);
+          }}
+        >
+          Infinite
+        </MenuItem>
+      </Menu>
+      <AppDialog
+        open={customExtend !== null}
+        onClose={() => setCustomExtend(null)}
+        title={`Extend ${customExtend?.model_name ?? ""}`}
+        maxWidth="xs"
+        actions={
+          <>
+            <AppButton type="button" onClick={() => setCustomExtend(null)}>
+              Cancel
+            </AppButton>
+            <Button
+              variant="contained"
+              disabled={!(Number(customExtendHours) > 0)}
+              onClick={() => {
+                if (customExtend && onExtend) {
+                  onExtend(customExtend, { hours: Number(customExtendHours) });
+                }
+                setCustomExtend(null);
+              }}
+            >
+              Extend
+            </Button>
+          </>
+        }
+      >
+        <TextField
+          fullWidth
+          autoFocus
+          label="Additional hours"
+          type="number"
+          inputProps={{ step: 0.5, min: 0.1 }}
+          value={customExtendHours}
+          onChange={(event) => setCustomExtendHours(event.target.value)}
+          sx={{ mt: 0.5 }}
+        />
+      </AppDialog>
+      <ConfirmDialog
+        open={confirmStop !== null}
+        title={`Stop ${confirmStop?.model_name ?? ""}?`}
+        body={
+          confirmStop
+            ? `The container on port ${confirmStop.port} will be stopped and removed. ` +
+              "The model weights and image stay cached for a fast restart."
+            : undefined
+        }
+        confirmLabel="Stop"
+        danger
+        onConfirm={() => {
+          if (confirmStop) {
+            onStop(confirmStop.id);
+          }
+          setConfirmStop(null);
+        }}
+        onCancel={() => setConfirmStop(null)}
+      />
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        title={`Delete deployment ${confirmDelete?.model_name ?? ""}?`}
+        body="This removes the deployment record (and its saved arguments) permanently."
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => {
+          if (confirmDelete) {
+            onDelete(confirmDelete.id);
+          }
+          setConfirmDelete(null);
+        }}
+        onCancel={() => setConfirmDelete(null)}
+      />
     </TableContainer>
+    </>
   );
 }

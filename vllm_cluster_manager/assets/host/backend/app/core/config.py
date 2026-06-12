@@ -17,6 +17,23 @@ class Settings(BaseSettings):
 
     satellite_port: int = 9000
 
+    # Seconds a deployment may sit in starting/loading without the client
+    # reporting it before the watchdog marks it as errored.
+    start_timeout_seconds: int = 1800
+
+    # How long node metric samples are kept for the history charts.
+    node_metrics_retention_hours: int = 48
+
+    # Read timeout for non-streaming gateway requests (streams have none).
+    gateway_timeout_seconds: int = 600
+
+    # Optional webhook for deployment lifecycle notifications. Slack incoming
+    # webhooks get Slack formatting; anything else receives generic JSON.
+    webhook_url: str | None = None
+
+    # Warn this many minutes before a deployment auto-expires.
+    expiry_warning_minutes: int = 30
+
     @property
     def database_url(self) -> str:
         return (

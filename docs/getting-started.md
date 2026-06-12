@@ -69,6 +69,8 @@ vllm-cluster-manager host down
 vllm-cluster-manager client down
 ```
 
+Host data (deployments, nodes, history) survives `host down` and comes back on the next `host up`. Pass `--purge` to `host down` to also delete the Postgres volume — see [Operations → Data persistence](operations.md#data-persistence).
+
 ## Verify the UI
 Open the UI at `http://<host-ip>:<host-frontend-port>`.
 
@@ -78,4 +80,4 @@ Common first-run checks:
 - The client appears under Nodes within ~30 seconds.
 
 ## Next steps
-Once a client node appears in the dashboard, you are ready to deploy models. See the [Deployments](deployments.md) page for details on vLLM version selection, GPU assignment, extra packages, and plugins.
+Once a client node appears in the dashboard, you are ready to deploy models. See the [Deployments](deployments.md) page for details on vLLM version selection, engine options, GPU assignment, local checkpoints, and LoRA adapters. When a model is running, the **Endpoint** button gives you copy-paste connection snippets — see [Gateway & Usage](gateway.md) for the cluster-wide OpenAI-compatible API and token accounting.

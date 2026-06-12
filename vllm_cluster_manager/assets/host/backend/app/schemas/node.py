@@ -7,7 +7,10 @@ class NodeBase(BaseModel):
     ip_address: str
     port: int | None = None
     status: str = "unknown"
+    maintenance: bool = False
     gpu_usage: list[dict[str, object]] | None = None
+    # {total_gb, free_gb, hf_cache_gb} as reported by the client agent.
+    disk_usage: dict[str, object] | None = None
     default_pip_packages: list[str] | None = None
     installed_packages: list[str] | None = None
 
@@ -18,10 +21,18 @@ class NodeCreate(NodeBase):
 
 class NodeRead(NodeBase):
     id: int
+    # Derived (not persisted): rogue/untracked vLLM containers seen on the node.
+    rogue_container_count: int | None = None
     last_heartbeat_at: datetime | None = None
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class NodeMaintenanceRequest(BaseModel):
+    enabled: bool
+    # Also stop all active deployments on the node when cordoning.
+    drain: bool = False
 
 
 class DiscoveredNode(BaseModel):

@@ -1,6 +1,9 @@
+import logging
 from typing import Any
 
 from fastapi import WebSocket
+
+logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
@@ -15,8 +18,13 @@ class ConnectionManager:
         self.active.discard(websocket)
 
     async def broadcast(self, message: dict[str, Any]) -> None:
+        # A single dead socket must not break the callers (sync loops).
         for websocket in list(self.active):
-            await websocket.send_json(message)
+            try:
+                await websocket.send_json(message)
+            except Exception as exc:
+                logger.debug("Dropping dead websocket: %s", exc)
+                self.disconnect(websocket)
 
 
 manager = ConnectionManager()

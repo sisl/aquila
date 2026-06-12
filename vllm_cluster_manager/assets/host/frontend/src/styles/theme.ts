@@ -1,21 +1,66 @@
-import { createTheme } from "@mui/material/styles";
+import { alpha, createTheme } from "@mui/material/styles";
+
+// Single source of truth for design tokens. global.css derives its CSS
+// variables from these values; components must not hard-code hex colors —
+// every derived shade below goes through alpha() on a token.
+export const tokens = {
+  ink: "#101214",
+  // Secondary ink for outlined/ghost button labels.
+  inkSoft: "#3f4753",
+  muted: "#5d6570",
+  accent: "#111827",
+  accentHover: "#1f2937",
+  // Two line weights are the whole border system: faint inside (rows,
+  // dialog dividers), strong outside (panel borders, input outlines).
+  line: "rgba(148, 163, 184, 0.45)",
+  lineStrong: "rgba(148, 163, 184, 0.55)",
+  background: "#f2f3f5",
+  panel: "#ffffff",
+  success: "#1f9d55",
+  warning: "#d97706",
+  error: "#dc2626",
+  // Darker shades for text on the soft tinted chip backgrounds.
+  successText: "#15803d",
+  warningText: "#b45309",
+  fontMono: "'SFMono-Regular', ui-monospace, 'SF Mono', Menlo, Consolas, monospace",
+  radius: 12,
+  radiusLg: 16
+};
+
+const focusRing = {
+  outline: `2px solid ${tokens.accent}`,
+  outlineOffset: 2
+};
+
+const hoverTransition =
+  "background-color 120ms ease, border-color 120ms ease, color 120ms ease";
 
 export const theme = createTheme({
   palette: {
     mode: "light",
     primary: {
-      main: "#111827"
+      main: tokens.accent
     },
     secondary: {
-      main: "#6b7280"
+      main: tokens.muted
     },
+    success: {
+      main: tokens.success
+    },
+    warning: {
+      main: tokens.warning
+    },
+    error: {
+      main: tokens.error
+    },
+    divider: tokens.line,
     background: {
-      default: "#f5f6f7",
-      paper: "#ffffff"
+      default: tokens.background,
+      paper: tokens.panel
     },
     text: {
-      primary: "#101214",
-      secondary: "#6b7280"
+      primary: tokens.ink,
+      secondary: tokens.muted
     }
   },
   typography: {
@@ -26,17 +71,32 @@ export const theme = createTheme({
       textTransform: "uppercase"
     },
     h6: {
-      fontWeight: 500
+      fontSize: "1rem",
+      fontWeight: 600,
+      letterSpacing: "-0.01em"
+    },
+    button: {
+      fontWeight: 400,
+      textTransform: "none"
+    },
+    // Shared uppercase section-label style (see components/SectionLabel.tsx).
+    overline: {
+      fontSize: "0.7rem",
+      fontWeight: 500,
+      letterSpacing: "0.16em",
+      textTransform: "uppercase",
+      color: tokens.muted,
+      lineHeight: 1.6
     }
   },
   shape: {
-    borderRadius: 16
+    borderRadius: tokens.radius
   },
   components: {
     MuiPaper: {
       styleOverrides: {
         root: {
-          border: "1px solid rgba(72, 91, 110, 0.18)",
+          border: `1px solid ${tokens.lineStrong}`,
           boxShadow: "none"
         }
       }
@@ -44,65 +104,206 @@ export const theme = createTheme({
     MuiCard: {
       styleOverrides: {
         root: {
-          border: "1px solid rgba(72, 91, 110, 0.18)",
+          border: `1px solid ${tokens.lineStrong}`,
           boxShadow: "none"
+        }
+      }
+    },
+    MuiDialog: {
+      styleOverrides: {
+        paper: {
+          borderRadius: tokens.radiusLg
         }
       }
     },
     MuiTableCell: {
       styleOverrides: {
+        root: {
+          borderBottom: `1px solid ${tokens.line}`,
+          padding: "10px 12px",
+          fontSize: "0.8125rem"
+        },
         head: {
           fontSize: "0.7rem",
+          fontWeight: 500,
           letterSpacing: "0.16em",
           textTransform: "uppercase",
-          color: "#5f6c7a"
+          color: tokens.muted,
+          backgroundColor: tokens.panel,
+          // Painted on the cell itself so the rule stays crisp while the
+          // sticky header floats over scrolling rows (a plain border rides
+          // along with the row below and visually detaches).
+          borderBottom: "none",
+          boxShadow: `inset 0 -1px 0 ${tokens.lineStrong}`,
+          paddingTop: 6,
+          paddingBottom: 8
+        }
+      }
+    },
+    MuiTableRow: {
+      styleOverrides: {
+        root: {
+          transition: "background-color 120ms ease",
+          "&.MuiTableRow-hover:hover": {
+            backgroundColor: alpha(tokens.ink, 0.025)
+          }
+        }
+      }
+    },
+    MuiChip: {
+      defaultProps: {
+        size: "small"
+      },
+      styleOverrides: {
+        root: {
+          fontWeight: 500,
+          fontSize: "0.7rem",
+          height: 20,
+          borderRadius: 6,
+          letterSpacing: "0.02em",
+          transition: hoverTransition,
+          "&.Mui-focusVisible": focusRing,
+          // colorDefault is not a typed override slot in MUI 5.
+          "&.MuiChip-colorDefault": {
+            backgroundColor: alpha(tokens.ink, 0.06),
+            color: tokens.inkSoft
+          },
+          "& .MuiChip-icon": {
+            color: "inherit",
+            marginLeft: 6
+          }
+        },
+        // Soft tinted fills: status reads at a glance without competing
+        // with buttons the way solid chips would.
+        colorSuccess: {
+          backgroundColor: alpha(tokens.success, 0.12),
+          color: tokens.successText
+        },
+        colorWarning: {
+          backgroundColor: alpha(tokens.warning, 0.14),
+          color: tokens.warningText
+        },
+        colorError: {
+          backgroundColor: alpha(tokens.error, 0.12),
+          color: tokens.error
         }
       }
     },
     MuiButton: {
+      defaultProps: {
+        disableElevation: true
+      },
       styleOverrides: {
         root: {
-          textTransform: "none",
-          borderRadius: 12,
-          boxShadow: "none",
-          fontWeight: 200,
+          borderRadius: tokens.radius,
+          transition: hoverTransition,
+          "&.Mui-focusVisible": focusRing
+        },
+        // Ghost buttons (row-level actions): quiet muted text that
+        // sharpens on hover; the data stays in the foreground.
+        text: {
+          color: tokens.muted,
           "&:hover": {
-            backgroundColor: "transparent"
-          },
-          "&.MuiButton-outlinedInherit": {
-            color: "#475569"
-          },
-          "&.MuiButton-outlinedInherit:hover": {
-            color: "#334155 !important",
-            borderColor: "#334155 !important",
-            backgroundColor: "transparent !important"
+            color: tokens.ink,
+            backgroundColor: alpha(tokens.ink, 0.04)
+          }
+        },
+        textError: {
+          color: tokens.error,
+          "&:hover": {
+            color: tokens.error,
+            backgroundColor: alpha(tokens.error, 0.06)
           }
         },
         outlined: {
-          borderColor: "rgba(148, 163, 184, 0.6)",
-          color: "#475569",
+          borderColor: tokens.lineStrong,
+          color: tokens.inkSoft,
           "&:hover": {
-            backgroundColor: "transparent",
-            borderColor: "#334155",
-            color: "#334155 !important"
+            borderColor: tokens.inkSoft,
+            color: tokens.ink,
+            backgroundColor: alpha(tokens.ink, 0.04)
           }
         },
-        outlinedInherit: {
-          borderColor: "rgba(148, 163, 184, 0.6)",
-          color: "#475569",
+        outlinedError: {
+          borderColor: alpha(tokens.error, 0.45),
+          color: tokens.error,
           "&:hover": {
-            backgroundColor: "transparent",
-            borderColor: "#334155",
-            color: "#334155 !important"
+            borderColor: tokens.error,
+            color: tokens.error,
+            backgroundColor: alpha(tokens.error, 0.06)
           }
         },
         contained: {
-          boxShadow: "none",
           "&:hover": {
-            boxShadow: "none",
-            backgroundColor: "transparent",
-            color: "#334155"
+            backgroundColor: tokens.accentHover
           }
+        },
+        sizeSmall: {
+          fontSize: "0.75rem",
+          padding: "4px 10px"
+        }
+      }
+    },
+    MuiIconButton: {
+      styleOverrides: {
+        root: {
+          transition: hoverTransition,
+          "&.Mui-focusVisible": focusRing
+        }
+      }
+    },
+    MuiToggleButton: {
+      styleOverrides: {
+        root: {
+          transition: hoverTransition,
+          "&.Mui-focusVisible": focusRing
+        }
+      }
+    },
+    MuiSkeleton: {
+      defaultProps: {
+        animation: "wave"
+      },
+      styleOverrides: {
+        root: {
+          backgroundColor: alpha(tokens.ink, 0.05)
+        }
+      }
+    },
+    // Slim form accordions (launch form optional sections).
+    MuiAccordion: {
+      defaultProps: {
+        disableGutters: true,
+        elevation: 0
+      },
+      styleOverrides: {
+        root: {
+          border: "none",
+          backgroundColor: "transparent",
+          "&:before": {
+            display: "none"
+          }
+        }
+      }
+    },
+    MuiAccordionSummary: {
+      styleOverrides: {
+        root: {
+          padding: 0,
+          minHeight: 40,
+          "&.Mui-focusVisible": { backgroundColor: alpha(tokens.ink, 0.04) }
+        },
+        content: {
+          margin: "8px 0",
+          alignItems: "baseline",
+          gap: 8
+        }
+      }
+    },
+    MuiAccordionDetails: {
+      styleOverrides: {
+        root: {
+          padding: "0 0 16px"
         }
       }
     },
@@ -125,9 +326,30 @@ export const theme = createTheme({
     },
     MuiOutlinedInput: {
       styleOverrides: {
+        root: {
+          "& .MuiOutlinedInput-notchedOutline": {
+            borderColor: tokens.lineStrong
+          },
+          "&:hover .MuiOutlinedInput-notchedOutline": {
+            borderColor: tokens.inkSoft
+          },
+          "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
+            borderColor: tokens.accent,
+            borderWidth: 1.5
+          }
+        },
         inputSizeSmall: {
           paddingTop: 8,
           paddingBottom: 8
+        }
+      }
+    },
+    MuiFormHelperText: {
+      styleOverrides: {
+        root: {
+          fontSize: "0.7rem",
+          marginTop: 3,
+          marginLeft: 2
         }
       }
     },

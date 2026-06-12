@@ -10,6 +10,8 @@ export default defineConfig(({ mode }) => {
   const baseNoTrail = base === "/" ? "" : base.slice(0, -1);
   const apiPath = `${baseNoTrail}/api`;
   const wsPath = `${baseNoTrail}/ws`;
+  // OpenAI-compatible gateway lives at /v1 on the backend (not under /api).
+  const gatewayPath = `${baseNoTrail}/v1`;
   const backendHttp = `http://${backendHost}:${backendPort}`;
   const backendWs = `ws://${backendHost}:${backendPort}`;
 
@@ -29,6 +31,11 @@ export default defineConfig(({ mode }) => {
         [wsPath]: {
           target: backendWs,
           ws: true,
+          changeOrigin: true,
+          rewrite: (path) => (baseNoTrail ? path.replace(new RegExp(`^${baseNoTrail}`), "") : path)
+        },
+        [gatewayPath]: {
+          target: backendHttp,
           changeOrigin: true,
           rewrite: (path) => (baseNoTrail ? path.replace(new RegExp(`^${baseNoTrail}`), "") : path)
         }

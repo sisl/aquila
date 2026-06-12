@@ -1,0 +1,225 @@
+import { useState } from "react";
+
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import {
+  Box,
+  Chip,
+  IconButton,
+  Stack,
+  Tooltip,
+  Typography
+} from "@mui/material";
+
+import { gatewayBaseUrl } from "../services/api";
+import type { Deployment, Node } from "../services/api";
+import { AppButton } from "./AppButton";
+import { AppDialog } from "./AppDialog";
+import { SectionLabel } from "./SectionLabel";
+import { useToast } from "./ToastProvider";
+
+type EndpointDialogProps = {
+  deployment: Deployment | null;
+  node: Node | null;
+  open: boolean;
+  onClose: () => void;
+};
+
+type UrlKind = "gateway" | "direct";
+
+function servedName(deployment: Deployment): string {
+  const served = deployment.engine_args?.served_model_name;
+  return typeof served === "string" && served ? served : deployment.model_name;
+}
+
+function pythonSnippet(baseUrl: string, model: string): string {
+  return [
+    "from openai import OpenAI",
+    "",
+    `client = OpenAI(base_url="${baseUrl}", api_key="not-needed")`,
+    "resp = client.chat.completions.create(",
+    `    model="${model}",`,
+    '    messages=[{"role": "user", "content": "Hello"}],',
+    ")",
+    "print(resp.choices[0].message.content)"
+  ].join("\n");
+}
+
+function curlSnippet(baseUrl: string, model: string): string {
+  return [
+    `curl ${baseUrl}/chat/completions \\`,
+    '  -H "Content-Type: application/json" \\',
+    `  -d '{"model": "${model}", "messages": [{"role": "user", "content": "Hello"}]}'`
+  ].join("\n");
+}
+
+type EndpointBlockProps = {
+  label: string;
+  content: (baseUrl: string) => string;
+  gatewayUrl: string;
+  directUrl: string | null;
+  onCopy: (label: string, text: string) => void;
+};
+
+// Tiny text switch: the active kind reads in ink, the other stays muted.
+function UrlKindOption({
+  label,
+  active,
+  onClick
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Typography
+      component="button"
+      variant="caption"
+      onClick={onClick}
+      sx={{
+        all: "unset",
+        cursor: "pointer",
+        fontSize: "0.7rem",
+        letterSpacing: "0.04em",
+        px: 0.5,
+        fontWeight: active ? 600 : 400,
+        color: active ? "text.primary" : "text.secondary",
+        transition: "color 120ms ease",
+        "&:hover": { color: "text.primary" },
+        "&:focus-visible": { outline: "2px solid var(--accent)", outlineOffset: 2 }
+      }}
+    >
+      {label}
+    </Typography>
+  );
+}
+
+function EndpointBlock({ label, content, gatewayUrl, directUrl, onCopy }: EndpointBlockProps) {
+  const [kind, setKind] = useState<UrlKind>("gateway");
+  const baseUrl = kind === "direct" && directUrl ? directUrl : gatewayUrl;
+  const text = content(baseUrl);
+
+  return (
+    <Box>
+      <SectionLabel sx={{ mb: 0.5 }}>{label}</SectionLabel>
+      <Box
+        sx={{
+          border: "1px solid var(--line)",
+          borderRadius: "var(--radius)"
+        }}
+      >
+        {/* Controls live inside the field, top right: kind switch + copy. */}
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: 0.25,
+            pt: 0.5,
+            pr: 0.75,
+            mb: -1.25
+          }}
+        >
+          {directUrl && (
+            <>
+              <UrlKindOption
+                label="gateway"
+                active={kind === "gateway"}
+                onClick={() => setKind("gateway")}
+              />
+              <Typography variant="caption" className="muted" sx={{ opacity: 0.5 }}>
+                /
+              </Typography>
+              <UrlKindOption
+                label="direct"
+                active={kind === "direct"}
+                onClick={() => setKind("direct")}
+              />
+            </>
+          )}
+          <Tooltip title="Copy" enterDelay={500}>
+            <IconButton
+              size="small"
+              aria-label={`Copy ${label.toLowerCase()}`}
+              onClick={() => onCopy(label, text)}
+              sx={{ ml: 0.25 }}
+            >
+              <ContentCopyIcon sx={{ fontSize: 14 }} />
+            </IconButton>
+          </Tooltip>
+        </Box>
+        <Box className="code-area" sx={{ overflowX: "auto", px: 1.5, pb: 1.5 }}>
+          {text}
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+export function EndpointDialog({ deployment, node, open, onClose }: EndpointDialogProps) {
+  const toast = useToast();
+
+  if (!deployment) {
+    return null;
+  }
+
+  const model = servedName(deployment);
+  const gatewayUrl = gatewayBaseUrl();
+  const directUrl = node ? `http://${node.ip_address}:${deployment.port}/v1` : null;
+  const loraNames = (deployment.lora_modules ?? [])
+    .map((module) => module.name)
+    .filter(Boolean);
+
+  const copy = async (label: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} copied.`);
+    } catch {
+      toast.error("Clipboard unavailable.");
+    }
+  };
+
+  return (
+    <AppDialog
+      open={open}
+      onClose={onClose}
+      title={
+        <Box sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 1 }}>
+          Endpoint — {model}
+          {loraNames.length > 0 && (
+            <Chip label={`also serves: ${loraNames.join(", ")}`} size="small" />
+          )}
+        </Box>
+      }
+      meta="The gateway URL is stable across node moves; the direct URL skips one hop."
+      actions={
+        <AppButton type="button" onClick={onClose}>
+          Close
+        </AppButton>
+      }
+    >
+      <Stack spacing={2}>
+        <EndpointBlock
+          label="Base URL"
+          content={(baseUrl) => baseUrl}
+          gatewayUrl={gatewayUrl}
+          directUrl={directUrl}
+          onCopy={copy}
+        />
+        <EndpointBlock
+          label="Python (openai client)"
+          content={(baseUrl) => pythonSnippet(baseUrl, model)}
+          gatewayUrl={gatewayUrl}
+          directUrl={directUrl}
+          onCopy={copy}
+        />
+        <EndpointBlock
+          label="curl"
+          content={(baseUrl) => curlSnippet(baseUrl, model)}
+          gatewayUrl={gatewayUrl}
+          directUrl={directUrl}
+          onCopy={copy}
+        />
+      </Stack>
+    </AppDialog>
+  );
+}

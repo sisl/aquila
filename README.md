@@ -1,9 +1,9 @@
 # VLLM Cluster Manager
 
-[![Docs](https://img.shields.io/badge/docs-online-30a2ff)](https://sisl.github.io/VLLMClusterManager/)
-[![PyPI](https://img.shields.io/pypi/v/vllm-cluster-manager?color=30a2ff)](https://pypi.org/project/vllm-cluster-manager/)
+[![Docs](https://img.shields.io/badge/docs-online-111827)](https://sisl.github.io/VLLMClusterManager/)
+[![PyPI](https://img.shields.io/pypi/v/vllm-cluster-manager?color=111827)](https://pypi.org/project/vllm-cluster-manager/)
 [![Tests](https://github.com/sisl/VLLMClusterManager/actions/workflows/tests.yml/badge.svg)](https://github.com/sisl/VLLMClusterManager/actions/workflows/tests.yml)
-[![Python](https://img.shields.io/badge/python-3.10--3.14-30a2ff)](https://pypi.org/project/vllm-cluster-manager/)
+[![Python](https://img.shields.io/badge/python-3.10--3.14-111827)](https://pypi.org/project/vllm-cluster-manager/)
 
 ![VLLM Cluster Manager overview UI](img/vllm-cluster-manager-screenshot.png "VLLM Cluster Manager User Interface")
 
@@ -19,9 +19,15 @@ Deployment is as simple as running the CLI on the host and on each client, with 
 
 ## What it can do
 - Register and manage GPU nodes that run vLLM workloads.
-- Create model configurations and launch models on selected nodes.
-- Monitor node health and model status.
-- Stream logs from running processes for quick troubleshooting.
+- Create model configurations and launch models on selected nodes — HF hub models, local fine-tuned checkpoints, and LoRA adapters.
+- Reach every model through one OpenAI-compatible gateway URL (`/v1`) that stays stable across node moves, or talk to nodes directly.
+- Track per-deployment usage from vLLM's own metrics: lifetime tokens, request counts, and live tokens/s.
+- Export a reproducibility manifest per deployment (model, HF revision, seed, vLLM version, image digest, full config) and redeploy from it.
+- Get Slack/webhook notifications when deployments become ready, fail, or are about to expire — and extend running deployments without a restart.
+- Monitor node health, GPU/disk metrics with history charts, and model status; put nodes into maintenance mode for servicing.
+- Stream timestamped logs from running processes for quick troubleshooting, with classified failure causes and crash-loop protection; the full per-run log is persisted on the node (monitoring noise filtered out) and downloadable from the dashboard.
+
+See the [documentation](https://sisl.github.io/VLLMClusterManager/) for full guides.
 
 ## Real-time logs
 Stream logs from running nodes and model processes directly in the dashboard.
@@ -29,9 +35,30 @@ Stream logs from running nodes and model processes directly in the dashboard.
 ![Real-time logs window](img/vllm-cluster-manager-terminal.png "Real-time logs")
 
 ## Model configuration
-Define and manage model settings (weights, runtime settings, resource usage) from the UI.
+Define and manage model settings (weights, runtime settings, resource usage) from the UI. Structured engine options cover the common vLLM flags (served model name, max model length, dtype, quantization, HF revision, seed, ...), with free-text extra args as an escape hatch.
 
 ![Model configuration panel](img/vllm-cluster-manager-model-config.png "Model configuration")
+
+## OpenAI-compatible gateway
+Every deployment is reachable through a single gateway URL on the host, so client code never needs to know which node a model landed on:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://my-host:5173/v1", api_key="not-needed")
+resp = client.chat.completions.create(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Hello"}],
+)
+```
+
+The gateway routes by served model name (including LoRA adapter names), supports streaming, and lists everything under `GET /v1/models`. Direct `http://<node>:<port>/v1` access still works; an **Endpoint** button on each running deployment provides copy-paste URLs and code snippets with a gateway/direct toggle.
+
+## Built for research workflows
+- **Reproducibility**: pin HF revision + seed, capture the exact vLLM image digest, and export a one-click JSON manifest per deployment that can be cited and redeployed (`POST /api/deployments/from-manifest`). Secrets never leave the cluster — manifests contain env var keys only.
+- **Usage accounting**: each deployment's row shows lifetime prompt/completion tokens, total requests, and live tokens/s, fed by vLLM's own Prometheus counters — gateway and direct traffic are both counted.
+- **Notifications**: set `WEBHOOK_URL` in the backend env to get Slack/webhook messages when a model becomes ready, errors out (with classified cause), or is about to expire. Running deployments can be extended without a restart.
+- **Local models & LoRA**: upload checkpoint folders/archives from the browser (streamed, with progress) or pull them from a URL directly onto a node — or allowlist pre-existing directories via `MODEL_DIRS`. Local checkpoints and LoRA adapters are mounted read-only and path-validated.
 
 ## Architecture
 - **Host**: Admin services for infrastructure, API, and UI.
@@ -41,8 +68,10 @@ Define and manage model settings (weights, runtime settings, resource usage) fro
 - **Client**: Python agent running on GPU nodes; registers with the host and runs vLLM workloads.
 
 ## Repo layout
-- `host/` Admin services (infra, backend, frontend)
-- `client/` Satellite node agent
+- `vllm_cluster_manager/cli.py` CLI entry point (`vllm-cluster-manager`)
+- `vllm_cluster_manager/assets/host/` Admin services (infra, backend, frontend)
+- `vllm_cluster_manager/assets/client/` Satellite node agent
+- `docs/` Documentation site (MkDocs)
 - `img/` Screenshots used in documentation
 
 ## Prerequisites
@@ -155,6 +184,8 @@ The CLI writes service-specific env files under `~/.local/share/vllm_cluster_man
 
 If you edit any env file, restart the affected service.
 
+Notable settings: `WEBHOOK_URL` (backend — enables Slack/webhook notifications), `MODEL_DIRS` (client — allowlists directories for local checkpoints/LoRA adapters), `MAX_FAILED_RESTARTS` (client — crash-loop breaker, default 3). See the [Operations docs](https://sisl.github.io/VLLMClusterManager/operations/) for the full reference.
+
 ## Gated models (Hugging Face)
 Some models (for example Llama variants) require a Hugging Face access token. Provide the token via an env var when creating the deployment:
 - `HF_TOKEN`
@@ -173,15 +204,17 @@ Allow these network paths (adjust ports to your flags):
 - UI/Browser → Host API: TCP `host-backend-port` (default 8000).
 - Clients → Host discovery port: TCP `host-discover-port` (default 47528).
 - Host → Client agents: TCP `client-port` (default 9000).
+- Gateway API consumers → Host: TCP `host-frontend-port` or `host-backend-port` (the OpenAI gateway at `/v1`).
+- Direct API consumers → Client nodes: TCP on each deployment's port (only if bypassing the gateway).
 
 ## Data persistence
-By default, shutting down the host (`host down` or stopping the systemd infra unit) runs `docker compose down -v`, which wipes the Postgres volume. Remove `-v` in code if you want to keep data.
+Host data (deployments, nodes, metric history, saved configurations) lives in a named Postgres Docker volume and persists across `host down`, systemd restarts, and reboots — deployments come back with their owner, remaining time, and launch configuration intact. To wipe intentionally: `host down --purge`, `clean`, or the dashboard's Settings → Purge database (running models are re-adopted automatically from a launch manifest stored on each container).
 
 ## Quick start (dev)
 1) Start infrastructure:
 
 ```bash
-cd host
+cd vllm_cluster_manager/assets/host
 cp .env.example .env
 # edit .env for passwords
 
@@ -191,7 +224,7 @@ docker compose up -d
 2) Backend (venv recommended):
 
 ```bash
-cd host/backend
+cd vllm_cluster_manager/assets/host/backend
 python -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
@@ -201,12 +234,12 @@ uvicorn app.main:app --reload
 3) Frontend:
 
 ```bash
-cd host/frontend
+cd vllm_cluster_manager/assets/host/frontend
 npm install
 npm run dev
 ```
 
-Open the UI at `http://localhost:5173` by default (see `host/frontend/.env`).
+Open the UI at `http://localhost:5173` by default (see `vllm_cluster_manager/assets/host/frontend/.env`).
 
 ## Notes
 - The service registry is Consul (used for client discovery).

@@ -25,6 +25,12 @@ vllm-cluster-manager client up --help
 | `--postgres-password` | `change-me` | Postgres password. |
 | `--base-path` | `/` | Base path for the UI (reverse proxy subpath). |
 
+## Host (`host down`)
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--purge` | `false` | Also delete the Postgres data volume (wipes all deployments, nodes, and history). Without it, data persists and is restored on the next `host up`. |
+
 ## Client (`client up`)
 
 | Flag | Default | Description |

@@ -1,14 +1,23 @@
 import asyncio
-from datetime import datetime, timezone
+import logging
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.db.session import SessionLocal
 from app.models.node import Node
-from app.models.deployment import Deployment
+from app.models.node_metric import NodeMetric
+from app.models.deployment import ACTIVE_STATUSES, Deployment
 from app.core.config import settings
 from app.services.consul import consul_service
-from app.services.client_api import get_metrics, get_statuses
+from app.services.client_api import get_metrics, get_statuses, list_containers
+from app.services.deployment_state import set_status
+from app.services.deployment_stop import stop_deployment_internal
+from app.services.node_state import rogue_container_counts
+from app.services.notify import _warned_expiring, notify
+from app.ws.manager import manager
+
+logger = logging.getLogger(__name__)
 
 # Consecutive failure counts before degrading status.
 _NODE_FAILURE_THRESHOLD = 3
@@ -18,12 +27,39 @@ _DEPLOYMENT_FAILURE_THRESHOLD = 3
 _node_fail_counts: dict[str, int] = {}
 _deployment_fail_counts: dict[int, int] = {}
 
+# Consecutive whole-loop failures, so a permanently broken loop logs about
+# once a minute instead of every tick.
+_loop_fail_counts: dict[str, int] = {}
+
+
+def _log_loop_error(loop_name: str, exc: Exception, every: int = 12) -> None:
+    count = _loop_fail_counts.get(loop_name, 0)
+    if count % every == 0:
+        logger.error(
+            "%s failed (%d consecutive): %s", loop_name, count + 1, exc, exc_info=True
+        )
+    _loop_fail_counts[loop_name] = count + 1
+
+
+def _clear_loop_error(loop_name: str) -> None:
+    if _loop_fail_counts.pop(loop_name, None):
+        logger.info("%s recovered", loop_name)
+
+
+async def _broadcast(message: dict) -> None:
+    # Push notifications must never take down a sync tick.
+    try:
+        await manager.broadcast(message)
+    except Exception as exc:
+        logger.debug("WebSocket broadcast failed: %s", exc)
+
 
 async def sync_nodes_from_consul(interval_seconds: int = 10) -> None:
     while True:
         try:
             services = consul_service.list_service("vllm-satellite")
             health = consul_service.service_health("vllm-satellite")
+            nodes_changed = False
             async with SessionLocal() as session:
                 for service in services:
                     service_id = service.get("ServiceID") or service.get("Node")
@@ -54,16 +90,27 @@ async def sync_nodes_from_consul(interval_seconds: int = 10) -> None:
                         select(Node).where(Node.hostname == service_id)
                     )
                     node = result.scalar_one_or_none()
-                    gpu_usage: list[dict[str, object]] | None = None
-                    default_pip_packages: list[str] | None = None
-                    installed_packages: list[str] | None = None
+
+                    # A cordoned node reports "maintenance" regardless of
+                    # Consul health so expected downtime doesn't read as an
+                    # outage.
+                    if node is not None and node.maintenance:
+                        consul_status = "maintenance"
+                        _node_fail_counts.pop(service_id, None)
+
+                    metrics: dict[str, object] | None = None
                     try:
                         metrics = await get_metrics(address, service_port)
-                        gpu_usage = metrics.get("gpus")
-                        default_pip_packages = metrics.get("default_pip_packages")
-                        installed_packages = metrics.get("installed_packages")
-                    except Exception:
-                        gpu_usage = None
+                    except Exception as exc:
+                        logger.debug("Metrics fetch from %s failed: %s", service_id, exc)
+                    gpu_usage = metrics.get("gpus") if metrics else None
+                    default_pip_packages = (
+                        metrics.get("default_pip_packages") if metrics else None
+                    )
+                    installed_packages = (
+                        metrics.get("installed_packages") if metrics else None
+                    )
+                    disk_usage = metrics.get("disk") if metrics else None
 
                     if node is None:
                         node = Node(
@@ -73,52 +120,226 @@ async def sync_nodes_from_consul(interval_seconds: int = 10) -> None:
                             status=consul_status,
                             last_heartbeat_at=datetime.now(timezone.utc),
                             gpu_usage=gpu_usage or [],
+                            disk_usage=disk_usage,
                             default_pip_packages=default_pip_packages or [],
                             installed_packages=installed_packages or [],
                         )
                         session.add(node)
+                        nodes_changed = True
                     else:
+                        if node.status != consul_status:
+                            nodes_changed = True
                         node.ip_address = address
                         node.port = service_port
                         node.status = consul_status
                         node.last_heartbeat_at = datetime.now(timezone.utc)
                         if gpu_usage is not None:
                             node.gpu_usage = gpu_usage
+                        if disk_usage is not None:
+                            node.disk_usage = disk_usage
                         if default_pip_packages is not None:
                             node.default_pip_packages = default_pip_packages
                         if installed_packages is not None:
                             node.installed_packages = installed_packages
+
+                    # Keep a history sample for the metrics charts.
+                    if metrics is not None:
+                        await session.flush()  # ensure node.id for new nodes
+                        session.add(
+                            NodeMetric(
+                                node_id=node.id,
+                                recorded_at=datetime.now(timezone.utc),
+                                gpus=gpu_usage or [],
+                                cpu_percent=metrics.get("cpu_percent"),
+                                memory_percent=metrics.get("memory_percent"),
+                            )
+                        )
                 await session.commit()
-        except Exception:
-            # Avoid crashing the API if Consul is temporarily unavailable.
-            pass
+            if nodes_changed:
+                await _broadcast({"type": "nodes_changed"})
+            _clear_loop_error("sync_nodes_from_consul")
+        except Exception as exc:
+            # Avoid crashing the API if Consul/DB is temporarily unavailable.
+            _log_loop_error("sync_nodes_from_consul", exc)
 
         await asyncio.sleep(interval_seconds)
+
+
+# Last cumulative counters seen per deployment, to compute deltas. vLLM's
+# counters reset when its container restarts; a value below the last seen one
+# means "reset", in which case the whole new value is the delta.
+_usage_last_seen: dict[int, dict[str, int]] = {}
+
+# Live (non-persisted) per-deployment metrics from the latest vLLM scrape:
+# tokens_per_second, requests_running, requests_waiting. Read by the
+# deployments API and attached to running deployments only.
+live_usage: dict[int, dict[str, float | int]] = {}
+
+_LIVE_USAGE_KEYS = ("tokens_per_second", "requests_running", "requests_waiting")
+
+
+def _update_live_usage(deployment_id: int, usage: dict[str, object]) -> None:
+    values = {
+        key: usage[key]
+        for key in _LIVE_USAGE_KEYS
+        if isinstance(usage.get(key), (int, float))
+    }
+    if values:
+        live_usage[deployment_id] = values
+    else:
+        live_usage.pop(deployment_id, None)
+
+_USAGE_FIELDS = (
+    ("prompt_tokens", "total_prompt_tokens"),
+    ("generation_tokens", "total_completion_tokens"),
+    ("requests", "total_requests"),
+)
+
+
+def _accumulate_usage(deployment, counters: dict[str, object]) -> None:
+    """Fold a cumulative counter snapshot into the deployment's totals."""
+    last = _usage_last_seen.get(deployment.id, {})
+    seen: dict[str, int] = {}
+    for metric, attr in _USAGE_FIELDS:
+        value = counters.get(metric)
+        if not isinstance(value, (int, float)):
+            continue
+        current = int(value)
+        seen[metric] = current
+        previous = last.get(metric)
+        if previous is not None and current >= previous:
+            delta = current - previous
+        else:
+            delta = current  # first sample or counter reset after restart
+        if delta > 0:
+            setattr(deployment, attr, int(getattr(deployment, attr) or 0) + delta)
+    if seen:
+        _usage_last_seen[deployment.id] = seen
+
+
+def _transition_event(deployment, before_status: str, node) -> tuple | None:
+    """Map a status transition to a notification event, or None."""
+    status = deployment.status
+    if status == before_status:
+        return None
+    if status == "running":
+        return (
+            "deployment_running",
+            f"{deployment.model_name} is ready on {node.hostname}:{deployment.port}",
+            {"deployment_id": deployment.id, "model": deployment.model_name},
+        )
+    if status in ("error", "unreachable") and before_status not in ("error", "unreachable"):
+        return (
+            "deployment_error",
+            f"{deployment.model_name} on {node.hostname}:{deployment.port} is {status}",
+            {
+                "deployment_id": deployment.id,
+                "model": deployment.model_name,
+                "error": deployment.last_error,
+            },
+        )
+    return None
+
+
+def _start_timed_out(deployment, now: datetime) -> bool:
+    changed_at = deployment.status_changed_at or deployment.created_at
+    if changed_at is None:
+        return False
+    return now - _as_aware(changed_at) > timedelta(
+        seconds=settings.start_timeout_seconds
+    )
+
+
+def _adopted_deployment(node_id: int, client_dep: dict, now: datetime) -> Deployment:
+    """Build a Deployment row for a container the client runs but the DB lacks.
+
+    The client's launch-manifest (stored as a container label at start) lets us
+    restore owner, lease, and launch config after the host database is lost.
+    Older containers without the manifest fall back to the bare client report.
+    """
+    deployment = Deployment(
+        node_id=node_id,
+        model_name=str(client_dep.get("model_name", "")),
+        port=int(client_dep.get("port", 0)),
+        gpu_memory_fraction=float(client_dep.get("gpu_memory_fraction") or 0.0),
+        gpu_ids=client_dep.get("gpu_ids") or [],
+        tensor_parallel_size=client_dep.get("tensor_parallel_size"),
+        vllm_version=client_dep.get("vllm_version") or None,
+        status=str(client_dep.get("status")),
+        status_changed_at=now,
+    )
+    manifest = client_dep.get("launch_manifest")
+    if not isinstance(manifest, dict):
+        return deployment
+    deployment.owner = manifest.get("owner")
+    deployment.duration_seconds = manifest.get("duration_seconds")
+    deployment.extra_args = manifest.get("extra_args") or []
+    deployment.env_vars = manifest.get("env_vars") or []
+    deployment.engine_args = manifest.get("engine_args") or {}
+    deployment.lora_modules = manifest.get("lora_modules") or None
+    deployment.extra_packages = manifest.get("extra_packages") or []
+    deployment.max_failed_restarts = manifest.get("max_failed_restarts")
+    # Restore the launch-anchored lease verbatim; an already-elapsed lease is
+    # then enforced by the expiry loop (the deployment outlived its grant).
+    # Without it (but with a duration), the running-transition block grants a
+    # fresh lease on the next tick.
+    expires_at = manifest.get("expires_at")
+    if isinstance(expires_at, str):
+        try:
+            deployment.expires_at = datetime.fromisoformat(expires_at)
+        except ValueError:
+            pass
+    return deployment
 
 
 async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
     while True:
         try:
+            changed_ids: list[int] = []
+            # Collected as primitives and fired only after a successful
+            # commit, so a failed commit can't produce phantom notifications.
+            events: list[tuple] = []
             async with SessionLocal() as session:
                 result = await session.execute(select(Deployment))
                 deployments = list(result.scalars().all())
                 node_result = await session.execute(select(Node))
                 nodes = {node.id: node for node in node_result.scalars().all()}
+                now = datetime.now(timezone.utc)
 
                 for node_id, node in nodes.items():
                     try:
                         statuses = await get_statuses(node.ip_address, node.port)
                         reachable = True
                         _deployment_fail_counts.pop(node_id, None)
-                    except Exception:
+                    except Exception as exc:
                         _deployment_fail_counts[node_id] = (
                             _deployment_fail_counts.get(node_id, 0) + 1
                         )
                         if _deployment_fail_counts[node_id] < _DEPLOYMENT_FAILURE_THRESHOLD:
                             # Keep previous deployment statuses on transient failure.
                             continue
+                        if _deployment_fail_counts[node_id] == _DEPLOYMENT_FAILURE_THRESHOLD:
+                            logger.warning(
+                                "Client %s unreachable for %d checks: %s",
+                                node.hostname,
+                                _DEPLOYMENT_FAILURE_THRESHOLD,
+                                exc,
+                            )
                         reachable = False
                         statuses = []
+
+                    # Surface rogue (untracked) vLLM containers in the node list.
+                    if reachable:
+                        try:
+                            containers = await list_containers(node.ip_address, node.port)
+                            rogue_container_counts[node_id] = sum(
+                                1 for c in containers if not c.get("tracked")
+                            )
+                        except Exception as exc:
+                            # Docker unreachable / transient error: keep last known.
+                            logger.debug(
+                                "Container list from %s failed: %s", node.hostname, exc
+                            )
 
                     client_dep_map: dict[str, dict] = {
                         s.get("key"): s for s in statuses if s.get("key")
@@ -131,20 +352,97 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
                     known_keys = {
                         f"{d.model_name}:{d.port}" for d in node_deployments
                     }
+                    active_ports = {
+                        d.port for d in node_deployments if d.status in ACTIVE_STATUSES
+                    }
 
                     for deployment in node_deployments:
+                        # 'expired' is a terminal state owned by the expiry task;
+                        # never let the sync loop revert it to stopped/running.
+                        if deployment.status == "expired":
+                            continue
+                        before = (deployment.status, deployment.detail)
                         key = f"{deployment.model_name}:{deployment.port}"
                         if not reachable:
-                            deployment.status = "unreachable"
+                            # Expected downtime on a cordoned node: keep the
+                            # last known status instead of flapping.
+                            if not node.maintenance:
+                                set_status(deployment, "unreachable")
+                            if (deployment.status, deployment.detail) != before:
+                                changed_ids.append(deployment.id)
+                                event = _transition_event(deployment, before[0], node)
+                                if event:
+                                    events.append(event)
                             continue
                         client_dep = client_dep_map.get(key)
                         if client_dep:
-                            deployment.status = str(client_dep.get("status", "unknown"))
+                            client_status = str(client_dep.get("status", "unknown"))
+                            client_error = client_dep.get("error")
+                            set_status(
+                                deployment,
+                                client_status,
+                                error=str(client_error) if client_error else None,
+                            )
+                            phase = client_dep.get("phase")
+                            deployment.detail = (
+                                str(phase)
+                                if phase and client_status == "loading"
+                                else None
+                            )
                             # Backfill vllm_version if missing
                             if not deployment.vllm_version and client_dep.get("vllm_version"):
                                 deployment.vllm_version = str(client_dep["vllm_version"])
+                            # Keep the exact image identity for provenance.
+                            client_digest = client_dep.get("image_digest")
+                            if client_digest and deployment.image_digest != str(client_digest):
+                                deployment.image_digest = str(client_digest)
+                            # Token accounting from the vLLM Prometheus scrape.
+                            # Deliberately not added to changed_ids: totals
+                            # tick every cycle and would spam the websocket.
+                            usage = client_dep.get("usage")
+                            if isinstance(usage, dict):
+                                _accumulate_usage(deployment, usage)
+                                _update_live_usage(deployment.id, usage)
+                            # Start the serve countdown the first time the model is
+                            # actually serving (status -> running).
+                            if (
+                                deployment.status == "running"
+                                and deployment.expires_at is None
+                                and deployment.duration_seconds is not None
+                            ):
+                                deployment.expires_at = now + timedelta(
+                                    seconds=deployment.duration_seconds
+                                )
+                        elif deployment.status in ("starting", "loading"):
+                            # The start request may still be in flight on the
+                            # client (image pull etc.); only give up after the
+                            # configured timeout.
+                            if _start_timed_out(deployment, now):
+                                set_status(
+                                    deployment,
+                                    "error",
+                                    error=(
+                                        f"Start timed out: {node.hostname} never "
+                                        f"reported deployment {key} within "
+                                        f"{settings.start_timeout_seconds}s."
+                                    ),
+                                )
+                        elif deployment.status == "running":
+                            set_status(
+                                deployment,
+                                "error",
+                                error=(
+                                    f"Container for {key} disappeared from "
+                                    f"{node.hostname} without a stop request."
+                                ),
+                            )
                         else:
-                            deployment.status = "stopped"
+                            set_status(deployment, "stopped")
+                        if (deployment.status, deployment.detail) != before:
+                            changed_ids.append(deployment.id)
+                            event = _transition_event(deployment, before[0], node)
+                            if event:
+                                events.append(event)
 
                     # Create DB rows for deployments the client knows about
                     # but the backend doesn't (e.g. after a backend restart).
@@ -156,24 +454,133 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
                             client_status = client_dep.get("status")
                             if client_status in ("stopped", "error"):
                                 continue
-                            new_dep = Deployment(
-                                node_id=node_id,
-                                model_name=str(client_dep.get("model_name", "")),
-                                port=int(client_dep.get("port", 0)),
-                                gpu_memory_fraction=float(
-                                    client_dep.get("gpu_memory_fraction", 0.0)
-                                ),
-                                gpu_ids=client_dep.get("gpu_ids") or [],
-                                tensor_parallel_size=client_dep.get(
-                                    "tensor_parallel_size"
-                                ),
-                                vllm_version=client_dep.get("vllm_version") or None,
-                                status=str(client_status),
+                            port = int(client_dep.get("port", 0))
+                            # An active row already holds this port (e.g. a
+                            # start in flight) — adopting would violate the
+                            # unique port reservation.
+                            if port in active_ports:
+                                continue
+                            session.add(
+                                _adopted_deployment(node_id, client_dep, now)
                             )
-                            session.add(new_dep)
+                            logger.info(
+                                "Adopted untracked deployment %s on %s",
+                                dep_key,
+                                node.hostname,
+                            )
 
                 await session.commit()
-        except Exception:
-            pass
+            if changed_ids:
+                await _broadcast({"type": "deployments_changed", "ids": changed_ids})
+            for event, message, fields in events:
+                notify(event, message, fields)
+            _clear_loop_error("sync_deployments_from_clients")
+        except Exception as exc:
+            _log_loop_error("sync_deployments_from_clients", exc)
 
+        await asyncio.sleep(interval_seconds)
+
+
+# Statuses considered "live" — eligible for expiry once past expires_at.
+_LIVE_STATUSES = ("running", "loading")
+
+
+def _as_aware(dt: datetime) -> datetime:
+    """Treat naive timestamps (some DB backends drop tzinfo) as UTC."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+async def expire_due_deployments(session, now: datetime | None = None) -> list[int]:
+    """Stop and mark 'expired' any live deployment past its expires_at.
+
+    Stops the container exactly like a manual stop (stop_model -> client
+    container.stop + remove). Returns the ids that were expired.
+    """
+    now = now or datetime.now(timezone.utc)
+    result = await session.execute(
+        select(Deployment).where(Deployment.status.in_(_LIVE_STATUSES))
+    )
+    due = [
+        d
+        for d in result.scalars().all()
+        if d.expires_at is not None and _as_aware(d.expires_at) <= now
+    ]
+    for dep in due:
+        node = await session.get(Node, dep.node_id)
+        # Best effort: still mark expired so it isn't retried forever.
+        await stop_deployment_internal(
+            dep, node, final_status="expired", best_effort=True
+        )
+    await session.commit()
+    if due:
+        logger.info("Expired deployments: %s", [d.id for d in due])
+        await _broadcast(
+            {"type": "deployments_changed", "ids": [d.id for d in due]}
+        )
+        for dep in due:
+            notify(
+                "deployment_expired",
+                f"{dep.model_name} (deployment {dep.id}) reached its serve "
+                "duration and was stopped",
+                {"deployment_id": dep.id, "model": dep.model_name},
+            )
+    return [d.id for d in due]
+
+
+async def warn_expiring_deployments(session, now: datetime | None = None) -> list[int]:
+    """Notify once per (deployment, expiry time) shortly before auto-expiry.
+
+    Keying the de-dup on the expiry timestamp means an extension re-arms the
+    warning automatically. Returns the ids warned about (for tests).
+    """
+    now = now or datetime.now(timezone.utc)
+    window = timedelta(minutes=settings.expiry_warning_minutes)
+    result = await session.execute(
+        select(Deployment).where(Deployment.status.in_(_LIVE_STATUSES))
+    )
+    live = list(result.scalars().all())
+    warned: list[int] = []
+    live_keys: set[tuple[int, str]] = set()
+    for dep in live:
+        if dep.expires_at is None:
+            continue
+        expires_at = _as_aware(dep.expires_at)
+        key = (dep.id, expires_at.isoformat())
+        live_keys.add(key)
+        remaining = expires_at - now
+        if timedelta(0) < remaining <= window and key not in _warned_expiring:
+            _warned_expiring.add(key)
+            warned.append(dep.id)
+            minutes = max(1, int(remaining.total_seconds() // 60))
+            notify(
+                "deployment_expiring",
+                f"{dep.model_name} (deployment {dep.id}) expires in ~{minutes}m — "
+                "extend it from the dashboard to keep it serving",
+                {"deployment_id": dep.id, "model": dep.model_name},
+            )
+    # Bound the set: drop keys whose deployment/expiry is no longer live.
+    _warned_expiring.intersection_update(live_keys)
+    return warned
+
+
+async def prune_node_metrics(session, now: datetime | None = None) -> None:
+    """Drop metric samples older than the retention window."""
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=settings.node_metrics_retention_hours)
+    await session.execute(delete(NodeMetric).where(NodeMetric.recorded_at < cutoff))
+    await session.commit()
+
+
+async def enforce_deployment_expiry(interval_seconds: int = 30) -> None:
+    while True:
+        try:
+            async with SessionLocal() as session:
+                await expire_due_deployments(session)
+                await warn_expiring_deployments(session)
+                await prune_node_metrics(session)
+            _clear_loop_error("enforce_deployment_expiry")
+        except Exception as exc:
+            _log_loop_error("enforce_deployment_expiry", exc)
         await asyncio.sleep(interval_seconds)

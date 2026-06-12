@@ -1,5 +1,8 @@
 """Tests for the client (satellite) application."""
 
+import asyncio
+import os
+import shutil
 import sys
 from pathlib import Path
 from unittest import mock
@@ -58,6 +61,42 @@ class TestResolveImageTag:
             image, _ = _resolve_image_tag(None)
         assert image == "vllm/vllm-openai:v1.2.3"
 
+    def test_blank_falls_back_to_latest_tag_when_unresolved(self):
+        # GitHub unreachable -> _get_latest_vllm_version returns "" -> fall back
+        # to the moving :latest tag instead of raising.
+        with mock.patch.object(client_main, "_get_latest_vllm_version", return_value=""):
+            image, resolved = _resolve_image_tag("")
+        assert image == "vllm/vllm-openai:latest"
+        assert resolved == "latest"
+
+
+class TestEnsureImageMovingTags:
+    def test_nightly_always_pulls_even_when_cached(self):
+        fake = mock.MagicMock()  # images.get would succeed (image is cached)
+        with mock.patch.object(client_main, "_docker", return_value=fake), mock.patch.object(
+            client_main, "_pull_image"
+        ) as pull:
+            result = client_main._ensure_image("vllm/vllm-openai:nightly", None, lambda _m: None)
+        assert result == "vllm/vllm-openai:nightly"
+        pull.assert_called_once()
+
+    def test_latest_always_pulls_even_when_cached(self):
+        fake = mock.MagicMock()
+        with mock.patch.object(client_main, "_docker", return_value=fake), mock.patch.object(
+            client_main, "_pull_image"
+        ) as pull:
+            client_main._ensure_image("vllm/vllm-openai:latest", None, lambda _m: None)
+        pull.assert_called_once()
+
+    def test_immutable_release_uses_cache(self):
+        fake = mock.MagicMock()  # images.get succeeds -> cached, no pull
+        with mock.patch.object(client_main, "_docker", return_value=fake), mock.patch.object(
+            client_main, "_pull_image"
+        ) as pull:
+            result = client_main._ensure_image("vllm/vllm-openai:v0.8.5", None, lambda _m: None)
+        assert result == "vllm/vllm-openai:v0.8.5"
+        pull.assert_not_called()
+
 
 class TestDerivedImageTag:
     def test_order_independent(self):
@@ -107,6 +146,655 @@ class TestStopRequest:
     def test_basic(self):
         r = StopRequest(key="llama:8000")
         assert r.key == "llama:8000"
+
+
+# ---------------------------------------------------------------------------
+# Launch manifest (container label for host re-adoption)
+# ---------------------------------------------------------------------------
+
+
+class TestLaunchManifest:
+    def test_contents(self):
+        payload = StartRequest(
+            model_name="org/model",
+            port=8001,
+            gpu_memory_fraction=0.5,
+            gpu_ids=[0, 1],
+            tensor_parallel_size=2,
+            extra_args=["--seed", "7"],
+            env_vars=[{"key": "HF_TOKEN", "value": "tok"}],
+            engine_args={"max_model_len": 4096},
+            lora_modules=[{"name": "ad", "path": "org/adapter"}],
+            extra_packages=["transformers"],
+            max_failed_restarts=5,
+            owner="alice",
+            duration_seconds=3600,
+            expires_at="2026-06-11T12:00:00+00:00",
+        )
+        manifest = client_main._launch_manifest(payload)
+        assert manifest["version"] == 1
+        assert manifest["owner"] == "alice"
+        assert manifest["duration_seconds"] == 3600
+        assert manifest["expires_at"] == "2026-06-11T12:00:00+00:00"
+        assert manifest["extra_args"] == ["--seed", "7"]
+        # env vars travel verbatim — they are already on the container's Env.
+        assert manifest["env_vars"] == [{"key": "HF_TOKEN", "value": "tok"}]
+        assert manifest["engine_args"] == {"max_model_len": 4096}
+        assert manifest["lora_modules"] == [{"name": "ad", "path": "org/adapter"}]
+        assert manifest["extra_packages"] == ["transformers"]
+        assert manifest["gpu_memory_fraction"] == 0.5
+        assert manifest["gpu_ids"] == [0, 1]
+        assert manifest["tensor_parallel_size"] == 2
+        assert manifest["max_failed_restarts"] == 5
+
+    def test_old_host_payload_still_validates(self):
+        # An old host that doesn't send the metadata fields must keep working.
+        r = StartRequest(model_name="llama", port=8000, gpu_memory_fraction=0.9)
+        manifest = client_main._launch_manifest(r)
+        assert manifest["owner"] is None
+        assert manifest["duration_seconds"] is None
+        assert manifest["extra_args"] == []
+
+
+def _fake_managed_container(labels: dict, status: str = "running"):
+    c = mock.MagicMock()
+    c.labels = labels
+    c.status = status
+    c.id = "cid123"
+    c.image.tags = ["vllm/vllm-openai:v0.9.1"]
+    return c
+
+
+class TestReconcileContainers:
+    def _reconcile(self, container):
+        fake = mock.MagicMock()
+        fake.containers.list.return_value = [container]
+        with mock.patch.object(client_main, "_docker", return_value=fake), mock.patch.object(
+            client_main, "_image_digest", return_value="sha256:dgst"
+        ), mock.patch.object(
+            client_main, "_stream_container_logs", mock.MagicMock()
+        ), mock.patch.object(
+            client_main, "_monitor_container", mock.MagicMock()
+        ), mock.patch(
+            "asyncio.create_task"
+        ), mock.patch.dict(
+            client_main._statuses, {}, clear=True
+        ), mock.patch.dict(
+            client_main._containers, {}, clear=True
+        ), mock.patch.dict(
+            client_main._logs, {}, clear=True
+        ):
+            client_main._reconcile_containers()
+            return dict(client_main._statuses)
+
+    def test_restores_manifest(self):
+        import json as json_mod
+
+        manifest = {
+            "version": 1,
+            "owner": "alice",
+            "duration_seconds": 3600,
+            "expires_at": "2026-06-11T12:00:00+00:00",
+            "extra_args": ["--seed", "7"],
+            "env_vars": [],
+            "engine_args": {"max_model_len": 4096},
+            "lora_modules": [{"name": "ad", "path": "p"}],
+            "extra_packages": [],
+            "gpu_memory_fraction": 0.5,
+            "gpu_ids": [0],
+            "tensor_parallel_size": 2,
+            "max_failed_restarts": 5,
+        }
+        container = _fake_managed_container(
+            {
+                client_main._LABEL_KEY: "org/model:8001",
+                client_main._LABEL_PORT: "8001",
+                client_main._LABEL_VERSION: "0.9.1",
+                client_main._LABEL_LAUNCH: json_mod.dumps(manifest),
+            }
+        )
+        statuses = self._reconcile(container)
+        status = statuses["org/model:8001"]
+        assert status["launch_manifest"] == manifest
+        assert status["gpu_memory_fraction"] == 0.5
+        assert status["gpu_ids"] == [0]
+        assert status["tensor_parallel_size"] == 2
+        assert status["engine_args"] == {"max_model_len": 4096}
+        assert status["lora_modules"] == [{"name": "ad", "path": "p"}]
+        assert status["max_failed_restarts"] == 5
+
+    def test_tolerates_corrupt_manifest(self):
+        container = _fake_managed_container(
+            {
+                client_main._LABEL_KEY: "org/model:8001",
+                client_main._LABEL_PORT: "8001",
+                client_main._LABEL_LAUNCH: "{not json",
+            }
+        )
+        statuses = self._reconcile(container)
+        status = statuses["org/model:8001"]
+        assert "launch_manifest" not in status
+        assert status["port"] == 8001
+
+    def test_no_manifest_label_keeps_minimal_status(self):
+        container = _fake_managed_container(
+            {
+                client_main._LABEL_KEY: "org/model:8001",
+                client_main._LABEL_PORT: "8001",
+            }
+        )
+        statuses = self._reconcile(container)
+        assert "launch_manifest" not in statuses["org/model:8001"]
+
+
+# ---------------------------------------------------------------------------
+# Managed local models (/local-models endpoints)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def managed_models(tmp_path):
+    models = tmp_path / ".models"
+    with mock.patch.object(client_main, "_MODELS_DIR", models), mock.patch.object(
+        client_main, "_MODELS_TMP", models / ".tmp"
+    ), mock.patch.dict(client_main._upload_sessions, {}, clear=True), mock.patch.dict(
+        client_main._transfers, {}, clear=True
+    ):
+        yield models
+
+
+class TestLocalModelUpload:
+    @pytest.mark.anyio
+    async def test_full_lifecycle(self, managed_models):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/local-models/upload/begin",
+                json={"name": "my-ft", "total_bytes": 8, "file_count": 2},
+            )
+            assert resp.status_code == 200
+            sid = resp.json()["session_id"]
+
+            resp = await client.put(
+                f"/local-models/upload/{sid}/file",
+                params={"path": "config.json"},
+                content=b"{}",
+            )
+            assert resp.status_code == 200
+            resp = await client.put(
+                f"/local-models/upload/{sid}/file",
+                params={"path": "sub/weights.safetensors"},
+                content=b"weight",
+            )
+            assert resp.status_code == 200
+            assert resp.json()["received_bytes"] == 8
+
+            resp = await client.post(f"/local-models/upload/{sid}/finish", json={})
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["name"] == "my-ft"
+            assert body["warnings"] == []
+
+        target = managed_models / "my-ft"
+        assert (target / "config.json").read_bytes() == b"{}"
+        assert (target / "sub" / "weights.safetensors").read_bytes() == b"weight"
+        assert sid not in client_main._upload_sessions
+
+    @pytest.mark.anyio
+    async def test_begin_conflict_and_bad_name(self, managed_models):
+        (managed_models / "taken").mkdir(parents=True)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/local-models/upload/begin", json={"name": "taken"}
+            )
+            assert resp.status_code == 409
+            resp = await client.post(
+                "/local-models/upload/begin", json={"name": "../escape"}
+            )
+            assert resp.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_begin_insufficient_disk(self, managed_models):
+        usage = mock.MagicMock(free=10)
+        with mock.patch.object(client_main.shutil, "disk_usage", return_value=usage):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/local-models/upload/begin",
+                    json={"name": "big", "total_bytes": 10**12},
+                )
+        assert resp.status_code == 507
+
+    @pytest.mark.anyio
+    async def test_file_put_unknown_session_and_traversal(self, managed_models):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.put(
+                "/local-models/upload/nope/file", params={"path": "a"}, content=b"x"
+            )
+            assert resp.status_code == 404
+
+            begin = await client.post(
+                "/local-models/upload/begin", json={"name": "m"}
+            )
+            sid = begin.json()["session_id"]
+            resp = await client.put(
+                f"/local-models/upload/{sid}/file",
+                params={"path": "../escape"},
+                content=b"x",
+            )
+            assert resp.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_abort_removes_staging(self, managed_models):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            begin = await client.post("/local-models/upload/begin", json={"name": "m"})
+            sid = begin.json()["session_id"]
+            staging = Path(str(client_main._upload_sessions[sid]["staging"]))
+            assert staging.exists()
+            resp = await client.post(f"/local-models/upload/{sid}/abort")
+            assert resp.status_code == 200
+        assert not staging.exists()
+        assert sid not in client_main._upload_sessions
+
+
+def _targz_bytes(entries: dict[str, bytes], root: str = "ckpt") -> bytes:
+    import io
+    import tarfile as tarfile_mod
+
+    buf = io.BytesIO()
+    with tarfile_mod.open(fileobj=buf, mode="w:gz") as tar:
+        for rel, data in entries.items():
+            info = tarfile_mod.TarInfo(f"{root}/{rel}" if root else rel)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+class TestLocalModelArchive:
+    @pytest.mark.anyio
+    async def test_archive_extracts_and_flattens(self, managed_models):
+        body = _targz_bytes({"config.json": b"{}", "w.safetensors": b"w"})
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/local-models/archive",
+                params={"name": "arch", "filename": "ckpt.tar.gz"},
+                content=body,
+            )
+        assert resp.status_code == 200
+        target = managed_models / "arch"
+        # Single-root archive is flattened: config.json at the model root.
+        assert (target / "config.json").exists()
+        assert resp.json()["warnings"] == []
+
+    @pytest.mark.anyio
+    async def test_archive_bad_extension(self, managed_models):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/local-models/archive",
+                params={"name": "x", "filename": "model.rar"},
+                content=b"x",
+            )
+        assert resp.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_archive_traversal_member_cleaned_up(self, managed_models):
+        body = _targz_bytes({"evil": b"x"}, root="..")
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/local-models/archive",
+                params={"name": "evil", "filename": "e.tar.gz"},
+                content=body,
+            )
+        assert resp.status_code == 400
+        assert not (managed_models / "evil").exists()
+        # Staging and the temp archive are cleaned up.
+        tmp = managed_models / ".tmp"
+        assert not tmp.exists() or list(tmp.iterdir()) == []
+
+
+class TestLocalModelListAndDelete:
+    @pytest.mark.anyio
+    async def test_list_includes_managed_and_external(self, managed_models, tmp_path):
+        (managed_models / "mine").mkdir(parents=True)
+        (managed_models / "mine" / "config.json").write_text("{}")
+        external = tmp_path / "shared"
+        (external / "other-ckpt").mkdir(parents=True)
+        with mock.patch.object(client_main.settings, "model_dirs", str(external)):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/local-models")
+        assert resp.status_code == 200
+        models = {m["name"]: m for m in resp.json()["models"]}
+        assert models["mine"]["source"] == "managed"
+        assert models["mine"]["deletable"] is True
+        assert models["other-ckpt"]["deletable"] is False
+
+    @pytest.mark.anyio
+    async def test_single_gguf_path_points_at_file(self, managed_models):
+        model = managed_models / "tiny"
+        model.mkdir(parents=True)
+        (model / "tiny.gguf").write_bytes(b"g")
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/local-models")
+        (entry,) = resp.json()["models"]
+        assert entry["path"].endswith("tiny/tiny.gguf")
+
+    @pytest.mark.anyio
+    async def test_delete_ok_404_and_in_use(self, managed_models):
+        model = managed_models / "served"
+        model.mkdir(parents=True)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            with mock.patch.dict(
+                client_main._statuses,
+                {"k:8000": {"model_name": str(model)}},
+                clear=True,
+            ), mock.patch.dict(client_main._containers, {"k:8000": object()}, clear=True):
+                resp = await client.delete("/local-models/served")
+                assert resp.status_code == 409
+
+            resp = await client.delete("/local-models/served")
+            assert resp.status_code == 200
+            assert not model.exists()
+
+            resp = await client.delete("/local-models/served")
+            assert resp.status_code == 404
+
+
+class TestLocalModelPull:
+    @pytest.mark.anyio
+    async def test_pull_single_file_and_status(self, managed_models):
+        chunks = [b"abc", b"def"]
+
+        class _FakeStreamResponse:
+            status_code = 200
+            headers = {"content-length": "6"}
+
+            async def aiter_bytes(self):
+                for chunk in chunks:
+                    yield chunk
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+        class _FakeAsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            def stream(self, method, url):
+                return _FakeStreamResponse()
+
+        with mock.patch.object(client_main.httpx, "AsyncClient", _FakeAsyncClient):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/local-models/pull",
+                    json={"url": "http://example.com/w.safetensors", "name": "pulled"},
+                )
+                assert resp.status_code == 200
+                # The pull task runs on the same loop; poll until terminal.
+                for _ in range(50):
+                    status_resp = await client.get("/local-models/transfers")
+                    (transfer,) = status_resp.json()["transfers"]
+                    if transfer["status"] in ("done", "error"):
+                        break
+                    await asyncio.sleep(0.01)
+        assert transfer["status"] == "done"
+        assert (managed_models / "pulled" / "w.safetensors").read_bytes() == b"abcdef"
+
+    @pytest.mark.anyio
+    async def test_pull_http_error_reports_and_cleans(self, managed_models):
+        class _FakeStreamResponse:
+            status_code = 404
+            headers = {}
+
+            async def aiter_bytes(self):
+                if False:  # pragma: no cover
+                    yield b""
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+        class _FakeAsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            def stream(self, method, url):
+                return _FakeStreamResponse()
+
+        with mock.patch.object(client_main.httpx, "AsyncClient", _FakeAsyncClient):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/local-models/pull",
+                    json={"url": "http://example.com/gone.tar.gz"},
+                )
+                assert resp.status_code == 200
+                assert resp.json()["name"] == "gone"
+                for _ in range(50):
+                    status_resp = await client.get("/local-models/transfers")
+                    (transfer,) = status_resp.json()["transfers"]
+                    if transfer["status"] in ("done", "error"):
+                        break
+                    await asyncio.sleep(0.01)
+        assert transfer["status"] == "error"
+        assert "404" in transfer["error"]
+        assert not (managed_models / "gone").exists()
+
+    @pytest.mark.anyio
+    async def test_pull_rejects_non_http(self, managed_models):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/local-models/pull", json={"url": "ftp://example.com/x"}
+            )
+        assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Persistent deployment logs
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def logs_dir(tmp_path):
+    d = tmp_path / ".logs"
+    with mock.patch.object(client_main, "_LOGS_DIR", d), mock.patch.dict(
+        client_main._log_state, {}, clear=True
+    ), mock.patch.dict(client_main._logs, {}, clear=True):
+        yield d
+        for key in list(client_main._log_state):
+            client_main._close_log_file(key)
+
+
+class TestLogLineHelpers:
+    def test_split_docker_ts(self):
+        ts, rest = client_main._split_docker_ts(
+            "2026-06-11T08:00:32.123456789Z INFO hello"
+        )
+        assert ts == "2026-06-11T08:00:32.123456789Z"
+        assert rest == "INFO hello"
+
+    def test_split_docker_ts_absent(self):
+        ts, rest = client_main._split_docker_ts("no timestamp here")
+        assert ts is None
+        assert rest == "no timestamp here"
+
+    def test_format_log_line(self):
+        line = client_main._format_log_line(
+            "2026-06-11T08:00:32.123456789Z", "INFO hello"
+        )
+        assert line == "[2026-06-11 08:00:32] INFO hello"
+
+    def test_format_log_line_without_ts(self):
+        assert client_main._format_log_line(None, "raw") == "raw"
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            '(APIServer pid=1) INFO:     127.0.0.1:53710 - "GET /metrics HTTP/1.1" 200 OK',
+            'INFO:     10.0.0.5:1234 - "GET /health HTTP/1.1" 200 OK',
+            'INFO:     10.0.0.5:1234 - "HEAD /health HTTP/1.1" 200 OK',
+        ],
+    )
+    def test_noise_lines_dropped(self, line):
+        assert client_main._is_noise_line(line) is True
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            'INFO:     10.0.0.21:51424 - "POST /v1/chat/completions HTTP/1.1" 200 OK',
+            "INFO 06-11 [metrics.py:417] Avg prompt throughput: 1843.2 tokens/s",
+            "torch.OutOfMemoryError: CUDA out of memory.",
+            "[docker] Started container vllm-cluster-x",
+            "INFO: Application startup complete.",
+        ],
+    )
+    def test_relevant_lines_kept(self, line):
+        assert client_main._is_noise_line(line) is False
+
+
+class TestAppendLogLine:
+    def test_writes_deque_and_file_and_sidecar(self, logs_dir):
+        key = "org/model:8001"
+        client_main._append_log_line(
+            key, "[2026-06-11 08:00:32] hello", "2026-06-11T08:00:32.000000001Z"
+        )
+        client_main._append_log_line(key, "[2026-06-11 08:00:33] world")
+        path = client_main._log_file_for(key)
+        client_main._close_log_file(key)
+        assert list(client_main._logs[key]) == [
+            "[2026-06-11 08:00:32] hello",
+            "[2026-06-11 08:00:33] world",
+        ]
+        assert path.read_text().splitlines() == [
+            "[2026-06-11 08:00:32] hello",
+            "[2026-06-11 08:00:33] world",
+        ]
+        sidecar = client_main._log_sidecar_for(path)
+        assert sidecar.read_text() == "2026-06-11T08:00:32.000000001Z"
+
+    def test_rotation_at_size_cap(self, logs_dir):
+        key = "m:1"
+        big_line = "first " + "x" * (1024 * 1024 + 100)  # exceeds the 1 MB cap
+        with mock.patch.object(client_main.settings, "log_max_mb", 1):
+            client_main._append_log_line(key, big_line)
+            client_main._append_log_line(key, "second line")
+        path = client_main._log_file_for(key)
+        client_main._close_log_file(key)
+        rotated = Path(str(path) + ".1")
+        assert rotated.read_text().startswith("first ")
+        assert path.read_text().splitlines() == ["second line"]
+
+    def test_rotate_on_fresh_run(self, logs_dir):
+        key = "m:1"
+        client_main._append_log_line(key, "old run")
+        client_main._open_log_file(key, rotate=True)
+        client_main._append_log_line(key, "new run")
+        path = client_main._log_file_for(key)
+        client_main._close_log_file(key)
+        assert path.read_text().splitlines() == ["new run"]
+        assert "old run" in Path(str(path) + ".1").read_text()
+
+
+class TestGcOldLogs:
+    def test_removes_only_old_files(self, logs_dir):
+        logs_dir.mkdir(parents=True)
+        old = logs_dir / "ancient-8000.log"
+        old.write_text("x")
+        os.utime(old, (0, 0))
+        fresh = logs_dir / "fresh-8001.log"
+        fresh.write_text("y")
+        client_main._gc_old_logs()
+        assert not old.exists()
+        assert fresh.exists()
+
+
+@pytest.mark.anyio
+async def test_stream_resume_skips_persisted_lines(logs_dir):
+    key = "org/model:8001"
+    path = client_main._log_file_for(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[2026-06-11 08:00:30] already persisted\n")
+    client_main._log_sidecar_for(path).write_text("2026-06-11T08:00:30.000000005Z")
+
+    container = mock.MagicMock()
+    container.logs.return_value = [
+        b"2026-06-11T08:00:30.000000005Z duplicate line\n",
+        b"2026-06-11T08:00:31.000000001Z fresh engine line\n",
+        b'2026-06-11T08:00:32.000000001Z INFO:     127.0.0.1:1 - "GET /metrics HTTP/1.1" 200 OK\n',
+    ]
+    with mock.patch.dict(client_main._statuses, {key: {}}, clear=True):
+        await client_main._stream_container_logs(key, container, resume=True)
+    client_main._close_log_file(key)
+
+    content = path.read_text().splitlines()
+    assert content == [
+        "[2026-06-11 08:00:30] already persisted",
+        "[2026-06-11 08:00:31] fresh engine line",
+    ]
+    # Resume used since= derived from the sidecar.
+    assert container.logs.call_args.kwargs.get("since") is not None
+    assert container.logs.call_args.kwargs.get("timestamps") is True
+
+
+class TestLogDownloadEndpoint:
+    @pytest.mark.anyio
+    async def test_download_and_404(self, logs_dir):
+        key = "org/model:8001"
+        path = client_main._log_file_for(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("[2026-06-11 08:00:32] hello\n")
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/deployments/logs/download", params={"key": key})
+            assert resp.status_code == 200
+            assert resp.text == "[2026-06-11 08:00:32] hello\n"
+            resp = await client.get(
+                "/deployments/logs/download", params={"key": "missing:1"}
+            )
+            assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_status_endpoint_reports_launch_manifest():
+    manifest = {"version": 1, "owner": "alice"}
+    with mock.patch.dict(
+        client_main._statuses,
+        {"org/model:8001": {"model_name": "org/model", "port": 8001, "launch_manifest": manifest}},
+        clear=True,
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/deployments/status")
+    assert resp.status_code == 200
+    (dep,) = resp.json()["deployments"]
+    assert dep["launch_manifest"] == manifest
 
 
 # ---------------------------------------------------------------------------
@@ -200,3 +888,329 @@ async def test_delete_package_not_found():
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.delete("/packages/nonexistent")
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Container management endpoints (/containers, /containers/{id}/stop)
+# ---------------------------------------------------------------------------
+
+
+def _fake_container(
+    *, name, short_id, status, labels, image_tags=None, image_id="sha256:img"
+):
+    c = mock.MagicMock()
+    c.name = name
+    c.short_id = short_id
+    c.status = status
+    c.labels = labels
+    c.image.tags = image_tags or []
+    c.image.short_id = image_id
+    c.image.id = image_id
+    return c
+
+
+@pytest.mark.anyio
+async def test_list_containers_filters_and_tracks():
+    tracked = _fake_container(
+        name="vllm-tracked",
+        short_id="aaa111",
+        status="running",
+        labels={"vllm-cluster-manager.managed": "true", "vllm-cluster-manager.key": "trk:8000"},
+        image_tags=["vllm/vllm-openai:v0.8.5"],
+    )
+    rogue = _fake_container(
+        name="vllm-rogue",
+        short_id="bbb222",
+        status="exited",
+        labels={"vllm-cluster-manager.managed": "true", "vllm-cluster-manager.key": "rog:8001"},
+        image_tags=["vllm/vllm-openai:v0.8.5"],
+    )
+    unrelated = _fake_container(
+        name="postgres",
+        short_id="ccc333",
+        status="running",
+        labels={},
+        image_tags=["postgres:16"],
+    )
+    fake = mock.MagicMock()
+    fake.containers.list.return_value = [tracked, rogue, unrelated]
+
+    with mock.patch.object(client_main, "_docker", return_value=fake), mock.patch.dict(
+        client_main._containers, {"trk:8000": object()}, clear=True
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/containers")
+
+    assert resp.status_code == 200
+    containers = resp.json()["containers"]
+    by_id = {c["id"]: c for c in containers}
+    # The unrelated postgres container is filtered out (not vLLM-related).
+    assert set(by_id) == {"aaa111", "bbb222"}
+    assert by_id["aaa111"]["tracked"] is True
+    assert by_id["bbb222"]["tracked"] is False
+    assert by_id["bbb222"]["image"] == "vllm/vllm-openai:v0.8.5"
+
+
+@pytest.mark.anyio
+async def test_stop_container_guards_tracked():
+    tracked = _fake_container(
+        name="vllm-tracked",
+        short_id="aaa111",
+        status="running",
+        labels={"vllm-cluster-manager.managed": "true", "vllm-cluster-manager.key": "trk:8000"},
+        image_tags=["vllm/vllm-openai:v0.8.5"],
+    )
+    fake = mock.MagicMock()
+    fake.containers.get.return_value = tracked
+
+    with mock.patch.object(client_main, "_docker", return_value=fake), mock.patch.dict(
+        client_main._containers, {"trk:8000": object()}, clear=True
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/containers/aaa111/stop")
+
+    assert resp.status_code == 409
+    tracked.stop.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_stop_container_removes_rogue():
+    rogue = _fake_container(
+        name="vllm-rogue",
+        short_id="bbb222",
+        status="exited",
+        labels={"vllm-cluster-manager.managed": "true", "vllm-cluster-manager.key": "rog:8001"},
+        image_tags=["vllm/vllm-openai:v0.8.5"],
+    )
+    fake = mock.MagicMock()
+    fake.containers.get.return_value = rogue
+
+    with mock.patch.object(client_main, "_docker", return_value=fake), mock.patch.dict(
+        client_main._containers, {}, clear=True
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/containers/bbb222/stop")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "removed", "id": "bbb222"}
+    rogue.stop.assert_called_once()
+    rogue.remove.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_stop_container_not_found():
+    fake = mock.MagicMock()
+    fake.containers.get.side_effect = client_main.NotFound("nope")
+    with mock.patch.object(client_main, "_docker", return_value=fake):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/containers/missing/stop")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Image prune endpoint (/images/prune)
+# ---------------------------------------------------------------------------
+
+
+def _fake_image(*, image_id, tags, size_mb):
+    img = mock.MagicMock()
+    img.id = image_id
+    img.short_id = image_id
+    img.tags = tags
+    img.attrs = {"Size": size_mb * 1024 * 1024}
+    return img
+
+
+@pytest.mark.anyio
+async def test_prune_images_skips_in_use():
+    in_use = _fake_image(image_id="sha256:aaa", tags=["vllm/vllm-openai:v0.8.5"], size_mb=2048)
+    free = _fake_image(image_id="sha256:bbb", tags=["vllm-cluster-manager/local:x"], size_mb=1024)
+    unrelated = _fake_image(image_id="sha256:ccc", tags=["postgres:16"], size_mb=500)
+
+    using_container = mock.MagicMock()
+    using_container.image.id = "sha256:aaa"
+
+    def _list(*args, **kwargs):
+        # The dangling-derived sweep passes filters={"dangling": True, ...}.
+        if kwargs.get("filters", {}).get("dangling"):
+            return []
+        return [in_use, free, unrelated]
+
+    fake = mock.MagicMock()
+    fake.containers.list.return_value = [using_container]
+    fake.images.list.side_effect = _list
+
+    with mock.patch.object(client_main, "_docker", return_value=fake):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/images/prune")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["removed"] == ["sha256:bbb"]
+    assert body["skipped"] == ["sha256:aaa"]
+    assert body["freed_mb"] == 1024
+    fake.images.remove.assert_called_once_with("sha256:bbb")
+
+
+@pytest.mark.anyio
+async def test_prune_images_sweeps_dangling_derived():
+    free = _fake_image(image_id="sha256:bbb", tags=["vllm-cluster-manager/local:x"], size_mb=1024)
+    dangling = _fake_image(image_id="sha256:ddd", tags=[], size_mb=2048)
+
+    def _list(*args, **kwargs):
+        if kwargs.get("filters", {}).get("dangling"):
+            return [dangling]  # labeled <none> leftover from a moving-tag rebuild
+        return [free]
+
+    fake = mock.MagicMock()
+    fake.containers.list.return_value = []
+    fake.images.list.side_effect = _list
+
+    with mock.patch.object(client_main, "_docker", return_value=fake):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/images/prune")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body["removed"]) == {"sha256:bbb", "sha256:ddd"}
+    assert body["freed_mb"] == 1024 + 2048
+
+
+# ---------------------------------------------------------------------------
+# Model cache deletion (DELETE /models/cache/{name})
+# ---------------------------------------------------------------------------
+
+
+def _make_cached_model(cache_dir: Path, name: str = "org/model"):
+    """Create a fake hub cache entry plus its .locks twin; return (hub, target, locks)."""
+    dir_name = f"models--{name.replace('/', '--')}"
+    hub = cache_dir / "hub"
+    target = hub / dir_name
+    target.mkdir(parents=True)
+    (target / "weights.bin").write_bytes(b"x")
+    locks = hub / ".locks" / dir_name
+    locks.mkdir(parents=True)
+    return hub, target, locks
+
+
+class TestDeleteCachedModel:
+    @pytest.mark.anyio
+    async def test_deletes_model_and_locks(self, tmp_path):
+        _, target, locks = _make_cached_model(tmp_path)
+        with mock.patch.object(client_main.settings, "hf_cache_dir", str(tmp_path)):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.delete("/models/cache/org/model")
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "deleted", "name": "org/model"}
+        assert not target.exists()
+        assert not locks.exists()
+
+    @pytest.mark.anyio
+    async def test_not_found(self, tmp_path):
+        with mock.patch.object(client_main.settings, "hf_cache_dir", str(tmp_path)):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.delete("/models/cache/org/missing")
+        assert resp.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_refuses_model_in_use(self, tmp_path):
+        _, target, _ = _make_cached_model(tmp_path)
+        with mock.patch.object(
+            client_main.settings, "hf_cache_dir", str(tmp_path)
+        ), mock.patch.dict(
+            client_main._statuses, {"org-model:8000": {"model_name": "org/model"}}, clear=True
+        ), mock.patch.dict(
+            client_main._containers, {"org-model:8000": object()}, clear=True
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.delete("/models/cache/org/model")
+        assert resp.status_code == 409
+        assert target.exists()
+
+    @pytest.mark.anyio
+    async def test_permission_error_falls_back_to_docker(self, tmp_path):
+        # Containers download models as root, so the agent's native rmtree can
+        # hit PermissionError; the endpoint must retry via a root container.
+        hub, target, locks = _make_cached_model(tmp_path)
+
+        fake_shutil = mock.MagicMock()
+        fake_shutil.rmtree.side_effect = PermissionError("denied")
+
+        fake_docker = mock.MagicMock()
+
+        def _root_delete(image, command, volumes, remove):
+            shutil.rmtree(target)
+            shutil.rmtree(locks)
+
+        fake_docker.containers.run.side_effect = _root_delete
+
+        with mock.patch.object(
+            client_main.settings, "hf_cache_dir", str(tmp_path)
+        ), mock.patch.object(client_main, "shutil", fake_shutil), mock.patch.object(
+            client_main, "_docker", return_value=fake_docker
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.delete("/models/cache/org/model")
+
+        assert resp.status_code == 200
+        assert not target.exists()
+        assert not locks.exists()
+        fake_docker.containers.run.assert_called_once()
+        kwargs = fake_docker.containers.run.call_args.kwargs
+        args = fake_docker.containers.run.call_args.args
+        assert args[0] == client_main._CLEANUP_IMAGE
+        assert args[1] == ["rm", "-rf", "/hub/models--org--model", "/hub/.locks/models--org--model"]
+        assert kwargs["volumes"] == {str(hub): {"bind": "/hub", "mode": "rw"}}
+        assert kwargs["remove"] is True
+
+    @pytest.mark.anyio
+    async def test_reports_failure_when_fallback_also_fails(self, tmp_path):
+        _, target, _ = _make_cached_model(tmp_path)
+
+        fake_shutil = mock.MagicMock()
+        fake_shutil.rmtree.side_effect = PermissionError("denied")
+        fake_docker = mock.MagicMock()
+        fake_docker.containers.run.side_effect = RuntimeError("docker down")
+
+        with mock.patch.object(
+            client_main.settings, "hf_cache_dir", str(tmp_path)
+        ), mock.patch.object(client_main, "shutil", fake_shutil), mock.patch.object(
+            client_main, "_docker", return_value=fake_docker
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.delete("/models/cache/org/model")
+
+        assert resp.status_code == 500
+        detail = resp.json()["detail"]
+        assert "denied" in detail
+        assert "docker down" in detail
+        assert target.exists()
+
+    @pytest.mark.anyio
+    async def test_silent_no_op_is_reported(self, tmp_path):
+        # If rmtree neither raises nor removes the dir, the endpoint must not
+        # claim success (regression guard for the old ignore_errors=True).
+        _, target, _ = _make_cached_model(tmp_path)
+
+        fake_shutil = mock.MagicMock()  # rmtree does nothing, raises nothing
+
+        with mock.patch.object(
+            client_main.settings, "hf_cache_dir", str(tmp_path)
+        ), mock.patch.object(client_main, "shutil", fake_shutil):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.delete("/models/cache/org/model")
+
+        assert resp.status_code == 500
+        assert target.exists()
