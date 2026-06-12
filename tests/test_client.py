@@ -225,6 +225,38 @@ class TestAvailableRuntimes:
         assert candidates[0] == "/custom/podman.sock"
         assert "/run/podman/podman.sock" in candidates
 
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores dir permissions")
+    def test_socket_exists_tolerates_unreadable_dir(self, tmp_path):
+        # On machines without Podman, /run/podman can be a root-only dir;
+        # Path.exists() raises PermissionError there instead of returning
+        # False, which used to crash every endpoint that probes runtimes.
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        sock = locked / "podman.sock"
+        locked.chmod(0)
+        try:
+            assert client_main._socket_exists(str(sock)) is False
+        finally:
+            locked.chmod(0o755)
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores dir permissions")
+    def test_probe_survives_unreadable_socket_dir(self, _reset_runtime_probe, tmp_path):
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        sock = str(locked / "podman.sock")
+        locked.chmod(0)
+        try:
+            with mock.patch.object(
+                client_main, "_docker", side_effect=RuntimeError("not installed")
+            ), mock.patch.object(
+                client_main, "_podman", side_effect=RuntimeError("not installed")
+            ), mock.patch.object(
+                client_main, "_podman_socket_candidates", return_value=[sock]
+            ):
+                assert client_main._available_runtimes() == []
+        finally:
+            locked.chmod(0o755)
+
 
 class TestStartRuntimeSelection:
     @pytest.mark.anyio

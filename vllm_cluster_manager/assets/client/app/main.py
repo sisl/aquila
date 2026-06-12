@@ -308,13 +308,23 @@ def _podman_socket_candidates() -> list[str]:
     return candidates
 
 
+def _socket_exists(sock: str) -> bool:
+    # Path.exists() raises PermissionError (rather than returning False) when
+    # a parent dir is unreadable — e.g. a root-only /run/podman on machines
+    # without Podman. An unstattable socket is unusable for us either way.
+    try:
+        return Path(sock).exists()
+    except OSError:
+        return False
+
+
 def _podman() -> "docker.DockerClient":
     """Return a cached client for Podman's Docker-compatible API socket."""
     global _podman_client
     if _podman_client is None:
         last_exc: Exception | None = None
         for sock in _podman_socket_candidates():
-            if not Path(sock).exists():
+            if not _socket_exists(sock):
                 continue
             try:
                 client = docker.DockerClient(base_url=f"unix://{sock}")
@@ -363,7 +373,7 @@ def _available_runtimes() -> list[str]:
             # refuses the connection (service down mid-handshake, root-owned
             # rootful socket) is invisible otherwise.
             if runtime == "podman" and any(
-                Path(sock).exists() for sock in _podman_socket_candidates()
+                _socket_exists(sock) for sock in _podman_socket_candidates()
             ):
                 logger.warning(
                     "A Podman socket exists but is not usable (%s). If it is "
