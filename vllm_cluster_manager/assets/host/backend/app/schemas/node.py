@@ -13,6 +13,10 @@ class NodeBase(BaseModel):
     disk_usage: dict[str, object] | None = None
     default_pip_packages: list[str] | None = None
     installed_packages: list[str] | None = None
+    # Detected container runtimes ("docker"/"podman"), synced from metrics.
+    available_runtimes: list[str] | None = None
+    # Per-node runtime override; null = auto.
+    container_runtime: str | None = None
 
 
 class NodeCreate(NodeBase):
@@ -33,6 +37,11 @@ class NodeMaintenanceRequest(BaseModel):
     enabled: bool
     # Also stop all active deployments on the node when cordoning.
     drain: bool = False
+
+
+class NodeSetRuntimeRequest(BaseModel):
+    # "docker" / "podman", or null to return to auto (preferred runtime).
+    runtime: str | None = None
 
 
 class DiscoveredNode(BaseModel):

@@ -13,6 +13,9 @@ class DeploymentBase(BaseModel):
     env_vars: list[dict[str, str]] | None = None
     pip_packages: list[str] | None = None
     vllm_version: str | None = None
+    # Which container runtime (docker/podman) runs this deployment; resolved
+    # by the host at launch (per-node override > preferred > available).
+    container_runtime: str | None = None
     extra_packages: list[str] | None = None
     # Structured vLLM engine flags (max_model_len, dtype, quantization, ...).
     engine_args: dict[str, object] | None = None

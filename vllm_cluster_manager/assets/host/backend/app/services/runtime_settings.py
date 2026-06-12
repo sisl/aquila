@@ -37,6 +37,8 @@ _REGISTRY: dict[str, Callable[[], object]] = {
     "gateway_timeout_seconds": lambda: settings.gateway_timeout_seconds,
     # Deployments
     "start_timeout_seconds": lambda: settings.start_timeout_seconds,
+    # Used when a node offers both runtimes and has no per-node override.
+    "preferred_container_runtime": lambda: "docker",
     "default_port": lambda: 8001,
     "default_gpu_fraction": lambda: 0.5,
     "default_duration_choice": lambda: "43200",

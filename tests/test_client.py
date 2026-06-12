@@ -149,6 +149,201 @@ class TestStopRequest:
 
 
 # ---------------------------------------------------------------------------
+# Container runtimes (docker / podman)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _reset_runtime_probe():
+    client_main._runtime_probe = (0.0, [])
+    yield
+    client_main._runtime_probe = (0.0, [])
+
+
+class TestAvailableRuntimes:
+    def test_docker_only(self, _reset_runtime_probe):
+        fake = mock.MagicMock()
+        with mock.patch.object(client_main, "_docker", return_value=fake), mock.patch.object(
+            client_main, "_podman", side_effect=RuntimeError("no socket")
+        ):
+            assert client_main._available_runtimes() == ["docker"]
+
+    def test_both_runtimes(self, _reset_runtime_probe):
+        fake = mock.MagicMock()
+        with mock.patch.object(client_main, "_docker", return_value=fake), mock.patch.object(
+            client_main, "_podman", return_value=fake
+        ):
+            assert client_main._available_runtimes() == ["docker", "podman"]
+
+    def test_none_available(self, _reset_runtime_probe):
+        with mock.patch.object(
+            client_main, "_docker", side_effect=RuntimeError("down")
+        ), mock.patch.object(client_main, "_podman", side_effect=RuntimeError("down")):
+            assert client_main._available_runtimes() == []
+
+    def test_probe_is_cached(self, _reset_runtime_probe):
+        fake = mock.MagicMock()
+        with mock.patch.object(
+            client_main, "_docker", return_value=fake
+        ) as docker_factory, mock.patch.object(
+            client_main, "_podman", side_effect=RuntimeError("no socket")
+        ):
+            client_main._available_runtimes()
+            client_main._available_runtimes()
+        assert docker_factory.call_count == 1  # second call served from cache
+
+    def test_runtime_client_dispatch(self):
+        with mock.patch.object(client_main, "_docker", return_value="D"), mock.patch.object(
+            client_main, "_podman", return_value="P"
+        ):
+            assert client_main._runtime_client("docker") == "D"
+            assert client_main._runtime_client("podman") == "P"
+        with pytest.raises(ValueError):
+            client_main._runtime_client("lxc")
+
+    def test_podman_socket_candidates_prefer_env(self):
+        with mock.patch.dict(
+            os.environ, {"PODMAN_SOCK": "/custom/podman.sock"}, clear=False
+        ):
+            candidates = client_main._podman_socket_candidates()
+        assert candidates[0] == "/custom/podman.sock"
+        assert "/run/podman/podman.sock" in candidates
+
+
+class TestStartRuntimeSelection:
+    @pytest.mark.anyio
+    async def test_unavailable_runtime_rejected(self):
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker"]
+        ), mock.patch.dict(client_main._statuses, {}, clear=True), mock.patch.dict(
+            client_main._containers, {}, clear=True
+        ), mock.patch.dict(client_main._logs, {}, clear=True):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/deployments/start",
+                    json={
+                        "model_name": "org/model",
+                        "port": 38475,
+                        "gpu_memory_fraction": 0.5,
+                        "vllm_version": "0.9.1",
+                        "skip_resource_check": True,
+                        "container_runtime": "podman",
+                    },
+                )
+        assert resp.status_code == 409
+        assert "podman" in resp.json()["detail"]
+        assert "docker" in resp.json()["detail"]
+
+    @pytest.mark.anyio
+    async def test_no_runtime_at_all_rejected(self):
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=[]
+        ), mock.patch.dict(client_main._statuses, {}, clear=True), mock.patch.dict(
+            client_main._containers, {}, clear=True
+        ), mock.patch.dict(client_main._logs, {}, clear=True):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/deployments/start",
+                    json={
+                        "model_name": "org/model",
+                        "port": 38476,
+                        "gpu_memory_fraction": 0.5,
+                        "vllm_version": "0.9.1",
+                        "skip_resource_check": True,
+                    },
+                )
+        assert resp.status_code == 409
+        assert "none" in resp.json()["detail"]
+
+
+class TestCrossRuntimeEnumeration:
+    def test_reconcile_unions_runtimes(self, logs_dir):
+        docker_container = mock.MagicMock()
+        docker_container.labels = {
+            client_main._LABEL_KEY: "m1:8001",
+            client_main._LABEL_PORT: "8001",
+            client_main._LABEL_RUNTIME: "docker",
+        }
+        docker_container.status = "running"
+        docker_container.id = "c1"
+        docker_container.image.tags = []
+        podman_container = mock.MagicMock()
+        podman_container.labels = {
+            client_main._LABEL_KEY: "m2:8002",
+            client_main._LABEL_PORT: "8002",
+            client_main._LABEL_RUNTIME: "podman",
+        }
+        podman_container.status = "running"
+        podman_container.id = "c2"
+        podman_container.image.tags = []
+
+        docker_client = mock.MagicMock()
+        docker_client.containers.list.return_value = [docker_container]
+        podman_client = mock.MagicMock()
+        podman_client.containers.list.return_value = [podman_container]
+
+        def fake_runtime_client(runtime):
+            return docker_client if runtime == "docker" else podman_client
+
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker", "podman"]
+        ), mock.patch.object(
+            client_main, "_runtime_client", side_effect=fake_runtime_client
+        ), mock.patch.object(
+            client_main, "_image_digest", return_value="sha256:x"
+        ), mock.patch.object(
+            client_main, "_stream_container_logs", mock.MagicMock()
+        ), mock.patch.object(
+            client_main, "_monitor_container", mock.MagicMock()
+        ), mock.patch("asyncio.create_task"), mock.patch.dict(
+            client_main._statuses, {}, clear=True
+        ), mock.patch.dict(client_main._containers, {}, clear=True), mock.patch.dict(
+            client_main._logs, {}, clear=True
+        ):
+            client_main._reconcile_containers()
+            statuses = dict(client_main._statuses)
+
+        assert statuses["m1:8001"]["container_runtime"] == "docker"
+        assert statuses["m2:8002"]["container_runtime"] == "podman"
+
+    @pytest.mark.anyio
+    async def test_images_tagged_with_runtime(self):
+        image = mock.MagicMock()
+        image.tags = ["vllm/vllm-openai:v0.9.1"]
+        image.short_id = "sha256:abc"
+        image.attrs = {"Size": 1024**3}
+        docker_client = mock.MagicMock()
+        docker_client.images.list.return_value = [image]
+
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker"]
+        ), mock.patch.object(client_main, "_runtime_client", return_value=docker_client):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/images")
+        (entry,) = resp.json()["images"]
+        assert entry["runtime"] == "docker"
+
+    @pytest.mark.anyio
+    async def test_metrics_reports_available_runtimes(self):
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker", "podman"]
+        ), mock.patch.object(client_main, "_gpu_metrics", return_value=[]), mock.patch.object(
+            client_main, "_disk_metrics", return_value=None
+        ), mock.patch.object(
+            client_main.psutil, "cpu_percent", return_value=1.0
+        ), mock.patch.object(
+            client_main.psutil, "virtual_memory", return_value=_fake_vmem()
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/metrics")
+        assert resp.json()["available_runtimes"] == ["docker", "podman"]
+
+
+# ---------------------------------------------------------------------------
 # Launch manifest (container label for host re-adoption)
 # ---------------------------------------------------------------------------
 
@@ -769,15 +964,18 @@ class TestStartProvisionalStatus:
         key = "org/model:38473"
         seen_during_pull: dict[str, object] = {}
 
-        def fake_ensure(image_ref, extra_packages, log, progress_cb=None):
+        def fake_ensure(image_ref, extra_packages, log, progress_cb=None, runtime="docker"):
             assert client_main._statuses[key]["status"] == "starting"
+            assert runtime == "docker"
             progress_cb(50 * 1024 * 1024, 100 * 1024 * 1024)
             seen_during_pull.update(client_main._statuses[key])
             return image_ref
 
         container = mock.MagicMock()
         container.id = "cid"
-        with mock.patch.object(client_main, "_ensure_image", fake_ensure), mock.patch.object(
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker"]
+        ), mock.patch.object(client_main, "_ensure_image", fake_ensure), mock.patch.object(
             client_main, "_run_container", return_value=container
         ), mock.patch.object(client_main, "_image_digest", return_value="sha256:d"), mock.patch.object(
             client_main, "_stream_container_logs", mock.MagicMock()
@@ -816,10 +1014,12 @@ class TestStartProvisionalStatus:
 
     @pytest.mark.anyio
     async def test_failed_pull_leaves_no_ghost_status(self, logs_dir):
-        def fake_ensure(image_ref, extra_packages, log, progress_cb=None):
+        def fake_ensure(image_ref, extra_packages, log, progress_cb=None, runtime="docker"):
             raise RuntimeError("registry unreachable")
 
-        with mock.patch.object(client_main, "_ensure_image", fake_ensure), mock.patch.dict(
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker"]
+        ), mock.patch.object(client_main, "_ensure_image", fake_ensure), mock.patch.dict(
             client_main._statuses, {}, clear=True
         ), mock.patch.dict(client_main._containers, {}, clear=True), mock.patch.dict(
             client_main._logs, {}, clear=True

@@ -114,6 +114,18 @@ async def sync_nodes_from_consul(interval_seconds: int = 10) -> None:
                         metrics.get("installed_packages") if metrics else None
                     )
                     disk_usage = metrics.get("disk") if metrics else None
+                    available_runtimes = (
+                        metrics.get("available_runtimes") if metrics else None
+                    )
+                    # A reachable agent with no container runtime cannot run
+                    # anything — surface that as the node status (hard fact,
+                    # so the flap threshold doesn't apply).
+                    if (
+                        isinstance(available_runtimes, list)
+                        and not available_runtimes
+                        and consul_status != "maintenance"
+                    ):
+                        consul_status = "no-runtime"
 
                     if node is None:
                         node = Node(
@@ -126,6 +138,9 @@ async def sync_nodes_from_consul(interval_seconds: int = 10) -> None:
                             disk_usage=disk_usage,
                             default_pip_packages=default_pip_packages or [],
                             installed_packages=installed_packages or [],
+                            available_runtimes=available_runtimes
+                            if isinstance(available_runtimes, list)
+                            else [],
                         )
                         session.add(node)
                         nodes_changed = True
@@ -144,6 +159,8 @@ async def sync_nodes_from_consul(interval_seconds: int = 10) -> None:
                             node.default_pip_packages = default_pip_packages
                         if installed_packages is not None:
                             node.installed_packages = installed_packages
+                        if isinstance(available_runtimes, list):
+                            node.available_runtimes = available_runtimes
 
                     # Keep a history sample for the metrics charts.
                     if metrics is not None:
@@ -294,6 +311,9 @@ def _adopted_deployment(node_id: int, client_dep: dict, now: datetime) -> Deploy
     deployment.lora_modules = manifest.get("lora_modules") or None
     deployment.extra_packages = manifest.get("extra_packages") or []
     deployment.max_failed_restarts = manifest.get("max_failed_restarts")
+    runtime = manifest.get("container_runtime")
+    if isinstance(runtime, str):
+        deployment.container_runtime = runtime
     # Restore the launch-anchored lease verbatim; an already-elapsed lease is
     # then enforced by the expiry loop (the deployment outlived its grant).
     # Without it (but with a duration), the running-transition block grants a

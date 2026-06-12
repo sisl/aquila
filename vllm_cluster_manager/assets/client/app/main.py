@@ -117,6 +117,9 @@ _LABEL_VERSION = "vllm-cluster-manager.version"
 # Full launch manifest (JSON) so the host can restore owner/lease/args when it
 # re-adopts a running container after losing its database.
 _LABEL_LAUNCH = "vllm-cluster-manager.launch"
+# Which runtime (docker/podman) runs this container, so cross-runtime
+# enumeration can tag entries after an agent restart.
+_LABEL_RUNTIME = "vllm-cluster-manager.runtime"
 # Stamped on locally-built derived images so prune can reclaim the dangling
 # (<none>) leftovers a moving-tag rebuild creates, without touching unrelated
 # dangling images on the host.
@@ -285,6 +288,82 @@ def _docker() -> "docker.DockerClient":
     return _docker_client
 
 
+# Podman speaks the Docker REST API on its own socket, so the same docker-py
+# client (pulls, builds, labels, log streams) works against it unchanged.
+_podman_client: "docker.DockerClient | None" = None
+
+RUNTIMES = ("docker", "podman")
+
+
+def _podman_socket_candidates() -> list[str]:
+    candidates = []
+    env_sock = os.environ.get("PODMAN_SOCK")
+    if env_sock:
+        candidates.append(env_sock)
+    xdg = os.environ.get("XDG_RUNTIME_DIR")
+    if xdg:
+        candidates.append(f"{xdg}/podman/podman.sock")
+    candidates.append(f"/run/user/{os.getuid()}/podman/podman.sock")
+    candidates.append("/run/podman/podman.sock")
+    return candidates
+
+
+def _podman() -> "docker.DockerClient":
+    """Return a cached client for Podman's Docker-compatible API socket."""
+    global _podman_client
+    if _podman_client is None:
+        last_exc: Exception | None = None
+        for sock in _podman_socket_candidates():
+            if not Path(sock).exists():
+                continue
+            try:
+                client = docker.DockerClient(base_url=f"unix://{sock}")
+                client.ping()
+                _podman_client = client
+                break
+            except Exception as exc:  # pragma: no cover - environment dependent
+                last_exc = exc
+        if _podman_client is None:
+            raise RuntimeError(
+                "Podman API socket not reachable. Enable it with "
+                "`systemctl --user enable --now podman.socket` (rootless) or "
+                "`systemctl enable --now podman.socket` (rootful)."
+                + (f" Underlying error: {last_exc}" if last_exc else "")
+            )
+    return _podman_client
+
+
+def _runtime_client(runtime: str) -> "docker.DockerClient":
+    if runtime == "docker":
+        return _docker()
+    if runtime == "podman":
+        return _podman()
+    raise ValueError(f"Unknown container runtime: {runtime}")
+
+
+# (monotonic ts, runtimes) — probing involves socket pings, so cache briefly.
+_runtime_probe: tuple[float, list[str]] = (0.0, [])
+
+
+def _available_runtimes() -> list[str]:
+    global _runtime_probe
+    ts, cached = _runtime_probe
+    now = time.monotonic()
+    if cached and now - ts < 60.0:
+        return list(cached)
+    if not cached and now - ts < 60.0 and ts > 0:
+        return []
+    available: list[str] = []
+    for runtime in RUNTIMES:
+        try:
+            _runtime_client(runtime).ping()
+            available.append(runtime)
+        except Exception:
+            continue
+    _runtime_probe = (now, available)
+    return list(available)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Pre-fetch latest vLLM version at startup
@@ -344,6 +423,9 @@ class StartRequest(BaseModel):
     owner: str | None = None
     duration_seconds: int | None = None
     expires_at: str | None = None
+    # Which container runtime to use ("docker"/"podman"); None = first
+    # available (also keeps old hosts working).
+    container_runtime: str | None = None
 
 
 # Allowlisted structured engine args -> vLLM CLI flags. Booleans emit a bare
@@ -906,13 +988,17 @@ def _build_derived_image(
 
 
 def _ensure_image(
-    image_ref: str, extra_packages: list[str] | None, log, progress_cb=None
+    image_ref: str,
+    extra_packages: list[str] | None,
+    log,
+    progress_cb=None,
+    runtime: str = "docker",
 ) -> str:
     """Ensure the runtime image exists locally, returning the ref to run.
 
     When *extra_packages* are requested, returns a cached derived image tag.
     """
-    client = _docker()
+    client = _runtime_client(runtime)
     mutable = _image_tag(image_ref) in _MUTABLE_TAGS
 
     # Base image. Moving tags (nightly/latest) are always re-pulled so the node
@@ -1063,7 +1149,9 @@ def _check_gpu_resources(payload: "StartRequest") -> str | None:
     return None
 
 
-def _launch_manifest(payload: "StartRequest") -> dict[str, object]:
+def _launch_manifest(
+    payload: "StartRequest", container_runtime: str | None = None
+) -> dict[str, object]:
     """Launch metadata stored as a container label for host re-adoption.
 
     Everything needed to reconstruct the deployment row (and to re-launch with
@@ -1085,6 +1173,7 @@ def _launch_manifest(payload: "StartRequest") -> dict[str, object]:
         "gpu_ids": payload.gpu_ids or [],
         "tensor_parallel_size": payload.tensor_parallel_size,
         "max_failed_restarts": payload.max_failed_restarts,
+        "container_runtime": container_runtime or payload.container_runtime,
     }
 
 
@@ -1157,6 +1246,7 @@ def metrics() -> dict[str, object]:
         "memory_percent": psutil.virtual_memory().percent,
         "gpus": _gpu_metrics(),
         "disk": _disk_metrics(),
+        "available_runtimes": _available_runtimes(),
     }
 
 
@@ -1260,7 +1350,23 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    manifest = _launch_manifest(payload)
+    # Resolve which container runtime runs this deployment: the host's pick
+    # when valid, otherwise the first available one (old hosts send nothing).
+    available_runtimes = _available_runtimes()
+    runtime = payload.container_runtime or (
+        available_runtimes[0] if available_runtimes else None
+    )
+    if runtime not in available_runtimes:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Container runtime '{payload.container_runtime or 'any'}' is not "
+                f"available on this node (available: "
+                f"{', '.join(available_runtimes) or 'none'})."
+            ),
+        )
+
+    manifest = _launch_manifest(payload, runtime)
     # Provisional status so the host (and UI) can see image pull/build progress
     # during the potentially very long _ensure_image call. Replaced by the full
     # entry once the container starts; removed again on any failure before that.
@@ -1271,6 +1377,7 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
         "phase": "preparing image",
         "desired_state": "running",
         "launch_manifest": manifest,
+        "container_runtime": runtime,
     }
 
     def _pull_progress(downloaded: int, total: int) -> None:
@@ -1288,7 +1395,7 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
 
     try:
         run_image = await asyncio.to_thread(
-            _ensure_image, image_ref, payload.extra_packages, _log, _pull_progress
+            _ensure_image, image_ref, payload.extra_packages, _log, _pull_progress, runtime
         )
     except RuntimeError as exc:
         _statuses.pop(key, None)
@@ -1317,10 +1424,11 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
             _LABEL_KEY: key,
             _LABEL_PORT: str(payload.port),
             _LABEL_VERSION: resolved_version,
+            _LABEL_RUNTIME: runtime,
             _LABEL_LAUNCH: json.dumps(manifest, separators=(",", ":")),
         }
 
-        logger.info("Starting deployment %s", key)
+        logger.info("Starting deployment %s via %s", key, runtime)
         logger.info("Image: %s  Command: %s", run_image, " ".join(command))
         logger.info("Env overrides: %s", _mask_env_for_log(environment))
         container = await asyncio.to_thread(
@@ -1331,6 +1439,7 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
             environment,
             _device_requests(payload.gpu_ids),
             labels,
+            runtime,
         )
     except RuntimeError as exc:
         _statuses.pop(key, None)
@@ -1359,8 +1468,9 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
         "max_failed_restarts": payload.max_failed_restarts,
         "desired_state": "running",
         "launch_manifest": manifest,
+        "container_runtime": runtime,
     }
-    _log(f"[docker] Started container {name}")
+    _log(f"[docker] Started container {name} ({runtime})")
     asyncio.create_task(_stream_container_logs(key, container))
     asyncio.create_task(_monitor_container(key, container))
     return {"status": "started", "key": key, "vllm_version": resolved_version}
@@ -1373,8 +1483,9 @@ def _run_container(
     environment: dict[str, str],
     device_requests: list[DeviceRequest],
     labels: dict[str, str],
+    runtime: str = "docker",
 ) -> "docker.models.containers.Container":
-    client = _docker()
+    client = _runtime_client(runtime)
     # Remove any stale container left over from a previous run with this name.
     try:
         existing = client.containers.get(name)
@@ -1806,14 +1917,27 @@ async def _stream_container_logs(
     await asyncio.to_thread(_reader)
 
 
+def _managed_containers(all_states: bool = True) -> list[tuple[str, object]]:
+    """Union of managed containers across every available runtime, as
+    (runtime, container) pairs. A node may hold containers in both runtimes
+    (e.g. after switching its runtime), so enumeration must cover both."""
+    found: list[tuple[str, object]] = []
+    for runtime in _available_runtimes():
+        try:
+            containers = _runtime_client(runtime).containers.list(
+                all=all_states, filters={"label": f"{_LABEL_MANAGED}=true"}
+            )
+        except Exception as exc:
+            logger.warning("Listing %s containers failed: %s", runtime, exc)
+            continue
+        found.extend((runtime, container) for container in containers)
+    return found
+
+
 def _reconcile_containers() -> None:
     """Rebuild in-memory state from managed containers after an agent restart."""
-    client = _docker()
-    containers = client.containers.list(
-        all=True, filters={"label": f"{_LABEL_MANAGED}=true"}
-    )
     recovered = 0
-    for container in containers:
+    for runtime, container in _managed_containers():
         labels = container.labels or {}
         key = labels.get(_LABEL_KEY)
         if not key:
@@ -1836,6 +1960,7 @@ def _reconcile_containers() -> None:
             "container_id": container.id,
             "status": "loading",
             "desired_state": "running",
+            "container_runtime": labels.get(_LABEL_RUNTIME, runtime),
         }
         # Restore the launch manifest so deployment config survives agent
         # restarts and the host can re-adopt with full metadata.
@@ -1858,7 +1983,7 @@ def _reconcile_containers() -> None:
         asyncio.create_task(_monitor_container(key, container))
         recovered += 1
     if recovered:
-        logger.info("Reconciled %d running deployment(s) from Docker", recovered)
+        logger.info("Reconciled %d running deployment(s)", recovered)
 
 
 # ---------------------------------------------------------------------------
@@ -1891,40 +2016,52 @@ def list_containers() -> dict[str, list[dict[str, object]]]:
     deployment; everything else is "rogue" (crash leftovers, orphans after a
     restart, or a manual ``docker run``) and safe to stop from the UI.
     """
-    try:
-        client = _docker()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    available = _available_runtimes()
+    if not available:
+        raise HTTPException(
+            status_code=503,
+            detail="No container runtime (Docker or Podman) is available on this node.",
+        )
     containers: list[dict[str, object]] = []
-    for container in client.containers.list(all=True):
-        labels = container.labels or {}
-        managed = labels.get(_LABEL_MANAGED) == "true"
-        key = labels.get(_LABEL_KEY)
-        image = _container_image_ref(container)
-        if not (managed or _is_vllm_image(image)):
+    for runtime in available:
+        try:
+            runtime_containers = _runtime_client(runtime).containers.list(all=True)
+        except Exception as exc:
+            logger.warning("Listing %s containers failed: %s", runtime, exc)
             continue
-        containers.append({
-            "id": container.short_id,
-            "name": container.name,
-            "image": image,
-            "status": container.status,
-            "managed": managed,
-            "key": key,
-            "tracked": bool(key) and key in _containers,
-        })
+        for container in runtime_containers:
+            labels = container.labels or {}
+            managed = labels.get(_LABEL_MANAGED) == "true"
+            key = labels.get(_LABEL_KEY)
+            image = _container_image_ref(container)
+            if not (managed or _is_vllm_image(image)):
+                continue
+            containers.append({
+                "id": container.short_id,
+                "name": container.name,
+                "image": image,
+                "status": container.status,
+                "managed": managed,
+                "key": key,
+                "tracked": bool(key) and key in _containers,
+                "runtime": labels.get(_LABEL_RUNTIME, runtime),
+            })
     return {"containers": containers}
 
 
 @app.post("/containers/{container_id}/stop")
 def stop_container(container_id: str) -> dict[str, str]:
     """Stop and remove a single (rogue) container by id."""
-    try:
-        client = _docker()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    try:
-        container = client.containers.get(container_id)
-    except NotFound:
+    container = None
+    for runtime in _available_runtimes():
+        try:
+            container = _runtime_client(runtime).containers.get(container_id)
+            break
+        except NotFound:
+            continue
+        except Exception as exc:
+            logger.warning("Container lookup via %s failed: %s", runtime, exc)
+    if container is None:
         raise HTTPException(status_code=404, detail="Container not found")
     labels = container.labels or {}
     key = labels.get(_LABEL_KEY)
@@ -1946,37 +2083,47 @@ def stop_container(container_id: str) -> dict[str, str]:
 def list_images() -> dict[str, list[dict[str, object]]]:
     """List cached vLLM images (official + locally derived) on this node."""
     images: list[dict[str, object]] = []
-    try:
-        client = _docker()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    available = _available_runtimes()
+    if not available:
+        raise HTTPException(
+            status_code=503,
+            detail="No container runtime (Docker or Podman) is available on this node.",
+        )
     repo = settings.vllm_image_repo
-    for image in client.images.list():
-        tags = list(image.tags or [])
-        relevant = [t for t in tags if t.startswith(repo) or t.startswith(_LOCAL_IMAGE_REPO)]
-        if not relevant:
+    for runtime in available:
+        try:
+            runtime_images = _runtime_client(runtime).images.list()
+        except Exception as exc:
+            logger.warning("Listing %s images failed: %s", runtime, exc)
             continue
-        images.append({
-            "id": image.short_id,
-            "tags": relevant,
-            "size_mb": round((image.attrs.get("Size", 0) or 0) / (1024 * 1024)),
-        })
+        for image in runtime_images:
+            tags = list(image.tags or [])
+            relevant = [t for t in tags if t.startswith(repo) or t.startswith(_LOCAL_IMAGE_REPO)]
+            if not relevant:
+                continue
+            images.append({
+                "id": image.short_id,
+                "tags": relevant,
+                "size_mb": round((image.attrs.get("Size", 0) or 0) / (1024 * 1024)),
+                "runtime": runtime,
+            })
     return {"images": images}
 
 
 @app.delete("/images/{image_id}")
-def delete_image(image_id: str) -> dict[str, str]:
-    try:
-        client = _docker()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    try:
-        client.images.remove(image_id)
-    except ImageNotFound:
-        raise HTTPException(status_code=404, detail="Image not found")
-    except APIError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"status": "deleted", "id": image_id}
+def delete_image(image_id: str, runtime: str | None = None) -> dict[str, str]:
+    runtimes = [runtime] if runtime else _available_runtimes()
+    for candidate in runtimes:
+        try:
+            _runtime_client(candidate).images.remove(image_id)
+            return {"status": "deleted", "id": image_id}
+        except ImageNotFound:
+            continue
+        except APIError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    raise HTTPException(status_code=404, detail="Image not found")
 
 
 @app.post("/images/prune")
@@ -1988,49 +2135,58 @@ def prune_images() -> dict[str, object]:
     restartable deployment. Images Docker refuses to remove are reported in
     ``skipped`` rather than failing the whole request.
     """
-    try:
-        client = _docker()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    in_use: set[str] = set()
-    for container in client.containers.list(all=True):
-        try:
-            if container.image is not None:
-                in_use.add(container.image.id)
-        except Exception:  # pragma: no cover - image already gone
-            continue
+    available = _available_runtimes()
+    if not available:
+        raise HTTPException(
+            status_code=503,
+            detail="No container runtime (Docker or Podman) is available on this node.",
+        )
 
     removed: list[str] = []
     skipped: list[str] = []
     freed_mb = 0
 
-    def _try_remove(image) -> None:
-        nonlocal freed_mb
-        if image.id in in_use:
-            skipped.append(image.short_id)
-            return
-        size_mb = round((image.attrs.get("Size", 0) or 0) / (1024 * 1024))
+    for runtime in available:
         try:
-            client.images.remove(image.id)
-            removed.append(image.short_id)
-            freed_mb += size_mb
-        except APIError:
-            skipped.append(image.short_id)
+            client = _runtime_client(runtime)
+            in_use: set[str] = set()
+            for container in client.containers.list(all=True):
+                try:
+                    if container.image is not None:
+                        in_use.add(container.image.id)
+                except Exception:  # pragma: no cover - image already gone
+                    continue
 
-    # Tagged vLLM / derived images.
-    for image in client.images.list():
-        tags = list(image.tags or [])
-        if any(_is_vllm_image(t) for t in tags):
-            _try_remove(image)
+            def _try_remove(image) -> None:
+                nonlocal freed_mb
+                if image.id in in_use:
+                    skipped.append(image.short_id)
+                    return
+                size_mb = round((image.attrs.get("Size", 0) or 0) / (1024 * 1024))
+                try:
+                    client.images.remove(image.id)
+                    removed.append(image.short_id)
+                    freed_mb += size_mb
+                except APIError:
+                    skipped.append(image.short_id)
 
-    # Dangling (<none>) derived images left behind when a moving-tag base
-    # (nightly/latest) was rebuilt on a newer base. The build label scopes this
-    # to images we created, so unrelated dangling images are never touched.
-    for image in client.images.list(
-        filters={"dangling": True, "label": f"{_LABEL_DERIVED}=true"}
-    ):
-        _try_remove(image)
+            # Tagged vLLM / derived images.
+            for image in client.images.list():
+                tags = list(image.tags or [])
+                if any(_is_vllm_image(t) for t in tags):
+                    _try_remove(image)
+
+            # Dangling (<none>) derived images left behind when a moving-tag
+            # base (nightly/latest) was rebuilt on a newer base. The build
+            # label scopes this to images we created, so unrelated dangling
+            # images are never touched.
+            for image in client.images.list(
+                filters={"dangling": True, "label": f"{_LABEL_DERIVED}=true"}
+            ):
+                _try_remove(image)
+        except Exception as exc:
+            logger.warning("Image prune via %s failed: %s", runtime, exc)
+            continue
 
     return {"removed": removed, "freed_mb": freed_mb, "skipped": skipped}
 
@@ -2140,9 +2296,13 @@ def _delete_cache_dirs_via_docker(hub: Path, dir_name: str) -> None:
 
     vLLM containers download models as root onto the bind-mounted cache, so when
     the agent runs as a regular user it cannot rmtree them natively — but a root
-    container over the same mount can.
+    container over the same mount can. Uses whichever runtime is available
+    (under rootless Podman the files are agent-owned, so the native rmtree
+    normally succeeds before this fallback is reached).
     """
-    _docker().containers.run(
+    available = _available_runtimes()
+    client = _runtime_client(available[0]) if available else _docker()
+    client.containers.run(
         _CLEANUP_IMAGE,
         ["rm", "-rf", f"/hub/{dir_name}", f"/hub/.locks/{dir_name}"],
         volumes={str(hub): {"bind": "/hub", "mode": "rw"}},

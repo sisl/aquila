@@ -71,6 +71,7 @@ async def start_model(
     owner: str | None = None,
     duration_seconds: int | None = None,
     expires_at: str | None = None,
+    container_runtime: str | None = None,
 ) -> dict[str, object]:
     url = _satellite_url(node_ip, node_port, "/deployments/start")
     try:
@@ -97,6 +98,7 @@ async def start_model(
                 "owner": owner,
                 "duration_seconds": duration_seconds,
                 "expires_at": expires_at,
+                "container_runtime": container_runtime,
             },
         )
     except httpx.RequestError as exc:

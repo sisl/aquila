@@ -59,6 +59,7 @@ class TestRegistry:
 
     def test_literal_defaults(self):
         assert runtime_settings.get_bool("gateway_enabled") is True
+        assert runtime_settings.get_str("preferred_container_runtime") == "docker"
         assert runtime_settings.get_int("default_port") == 8001
         assert runtime_settings.get_float("default_gpu_fraction") == 0.5
         assert runtime_settings.get_str("default_vllm_version") == ""
@@ -145,6 +146,7 @@ class TestSettingsApi:
             {"webhook_url": "ftp://nope"},
             {"unknown_key": 1},
             {"nodes_sync_interval_seconds": 0},
+            {"preferred_container_runtime": "lxc"},
         ],
     )
     async def test_put_rejects_invalid(self, payload):

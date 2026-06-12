@@ -17,6 +17,7 @@ from app.schemas.deployment import (
     DeploymentStart,
     DeploymentRestart,
 )
+from app.services import runtime_settings
 from app.services import sync as sync_service
 from app.services.client_api import get_logs, start_model, stream_log_download
 from app.services.deployment_state import set_status
@@ -28,6 +29,27 @@ router = APIRouter()
 
 async def _broadcast_change(deployment_id: int) -> None:
     await manager.broadcast({"type": "deployments_changed", "ids": [deployment_id]})
+
+
+def _resolve_runtime(node: Node) -> str:
+    """Which container runtime a new deployment on *node* should use.
+
+    Precedence: the node's explicit override (when actually available) →
+    the global preferred runtime → whichever single runtime exists.
+    """
+    available = node.available_runtimes or []
+    if node.container_runtime and node.container_runtime in available:
+        return node.container_runtime
+    if not available:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{node.hostname} has no container runtime available — install "
+                "Docker or enable the Podman socket on the node."
+            ),
+        )
+    preferred = runtime_settings.get_str("preferred_container_runtime")
+    return preferred if preferred in available else available[0]
 
 
 def _launch_expires_at(duration_seconds: int | None) -> str | None:
@@ -126,11 +148,13 @@ async def _launch(payload: DeploymentStart, session: AsyncSession) -> Deployment
         )
 
     await _check_port_conflict(session, node, payload.port)
+    runtime = _resolve_runtime(node)
 
     # Create the row before the (potentially very long) client call so a
     # backend crash mid-start leaves a visible record instead of an
     # untracked container, and so the unique index reserves the port.
     payload_data = payload.model_dump(exclude={"status", "skip_resource_check"})
+    payload_data["container_runtime"] = runtime
     deployment = Deployment(**payload_data)
     set_status(deployment, "starting")
     session.add(deployment)
@@ -161,6 +185,7 @@ async def _launch(payload: DeploymentStart, session: AsyncSession) -> Deployment
             owner=payload.owner,
             duration_seconds=payload.duration_seconds,
             expires_at=_launch_expires_at(payload.duration_seconds),
+            container_runtime=runtime,
         )
     except HTTPException as exc:
         set_status(deployment, "error", error=str(exc.detail))
@@ -236,6 +261,13 @@ async def restart_deployment(
         )
 
     await _check_port_conflict(session, node, deployment.port, exclude_id=deployment.id)
+    # Keep the original runtime when it is still available; re-resolve when
+    # the node's runtimes changed underneath the stopped deployment.
+    if deployment.container_runtime in (node.available_runtimes or []):
+        runtime = deployment.container_runtime
+    else:
+        runtime = _resolve_runtime(node)
+        deployment.container_runtime = runtime
 
     # Claim the port (and surface the attempt) before the long client call.
     deployment.owner = payload.owner
@@ -267,6 +299,7 @@ async def restart_deployment(
             owner=deployment.owner,
             duration_seconds=deployment.duration_seconds,
             expires_at=_launch_expires_at(deployment.duration_seconds),
+            container_runtime=runtime,
         )
     except HTTPException as exc:
         set_status(deployment, "error", error=str(exc.detail))

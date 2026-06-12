@@ -23,12 +23,17 @@ export type Node = {
   default_pip_packages?: string[];
   installed_packages?: string[];
   rogue_container_count?: number | null;
+  // Detected container runtimes ("docker"/"podman"); empty = node unusable.
+  available_runtimes?: string[];
+  // Per-node runtime override; null = auto (preferred runtime).
+  container_runtime?: string | null;
   last_heartbeat_at?: string | null;
 };
 
 export type Deployment = {
   id: number;
   node_id: number;
+  container_runtime?: string | null;
   model_name: string;
   port: number;
   gpu_memory_fraction: number;
@@ -323,6 +328,7 @@ export type NodeContainer = {
   name: string;
   image: string;
   status: string;
+  runtime?: string;
   managed: boolean;
   tracked: boolean;
   key?: string | null;
@@ -332,6 +338,7 @@ export type NodeImage = {
   id: string;
   tags: string[];
   size_mb: number;
+  runtime?: string;
 };
 
 export type ImagePruneResult = {
@@ -477,6 +484,14 @@ export function deleteNodeModelCache(
   return requestWithDetail(`/nodes/${nodeId}/models/cache/${name}`, "DELETE");
 }
 
+// Set the node's runtime override (null = auto). New deployments only.
+export function setNodeRuntime(
+  nodeId: number,
+  runtime: string | null
+): Promise<Node> {
+  return requestWithDetail(`/nodes/${nodeId}/runtime`, "POST", { runtime });
+}
+
 // Removes a node and its deployment records. Containers are untouched: a live
 // node re-registers within seconds; a stale node disappears for good.
 export function deleteNode(
@@ -501,6 +516,7 @@ export type RuntimeSettings = {
   gateway_enabled: boolean;
   gateway_timeout_seconds: number;
   start_timeout_seconds: number;
+  preferred_container_runtime: string;
   default_port: number;
   default_gpu_fraction: number;
   default_duration_choice: string;

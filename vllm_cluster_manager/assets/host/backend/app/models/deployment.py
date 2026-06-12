@@ -38,6 +38,8 @@ class Deployment(Base):
     env_vars: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
     pip_packages: Mapped[list[str]] = mapped_column(JSON, default=list)
     vllm_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Which container runtime (docker/podman) runs this deployment.
+    container_runtime: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # Exact image identity (repo@sha256 or content id) reported by the client;
     # provenance for reproducibility manifests.
     image_digest: Mapped[str | None] = mapped_column(String(512), nullable=True)

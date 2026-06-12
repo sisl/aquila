@@ -14,6 +14,7 @@ from app.schemas.node import (
     NodeCreate,
     NodeMaintenanceRequest,
     NodeRead,
+    NodeSetRuntimeRequest,
 )
 from app.services import sync as sync_service
 from app.services.consul import consul_service
@@ -116,6 +117,31 @@ async def delete_node(
         "hostname": hostname,
         "deployments_deleted": len(deployment_ids),
     }
+
+
+@router.post("/{node_id}/runtime", response_model=NodeRead)
+async def set_node_runtime(
+    node_id: int,
+    payload: NodeSetRuntimeRequest,
+    session: AsyncSession = Depends(get_session),
+) -> NodeRead:
+    """Set the node's container runtime override (null = auto).
+
+    Applies to new deployments only; running containers keep the runtime
+    they started with.
+    """
+    if payload.runtime is not None and payload.runtime not in ("docker", "podman"):
+        raise HTTPException(
+            status_code=400, detail="Runtime must be 'docker', 'podman', or null."
+        )
+    node = await session.get(Node, node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    node.container_runtime = payload.runtime
+    await session.commit()
+    await session.refresh(node)
+    await manager.broadcast({"type": "nodes_changed"})
+    return node
 
 
 @router.post("/{node_id}/maintenance", response_model=NodeRead)

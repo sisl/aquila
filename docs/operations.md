@@ -92,6 +92,16 @@ To remove a **single** stale node instead of purging everything, open the node's
 !!! note
     Deployment environment variable values (e.g. `HF_TOKEN`) are stored on the vLLM container itself — in its Docker `Env` and in the launch-manifest label — and are reported by the client agent's unauthenticated LAN API during re-adoption. This is the same trust domain as the rest of the satellite API (logs, metrics); keep client ports restricted to your cluster network.
 
+## Container runtimes (Docker / Podman)
+
+Client nodes can run deployments via **Docker** or **Podman** (Podman exposes a Docker-compatible API socket and runs the same official images — useful on clusters that disallow the Docker daemon; rootless Podman is supported). Each agent detects which runtimes are available and reports them; the node's Manage dialog shows them and lets you pick.
+
+The runtime for a **new** deployment resolves as: the node's per-node override (Manage dialog → Container Runtime) → the global **Preferred runtime** (Settings → Deployments) → whichever single runtime exists. Running containers always keep the runtime they started with — switching a node's runtime never migrates them, and the agent manages containers in both runtimes side by side.
+
+A reachable node with **no** runtime at all shows status `no runtime` in the node table and cannot be selected for deployments.
+
+The host's own infrastructure (Postgres + Consul via docker compose) still requires Docker on the **host** machine; the Podman option applies to client GPU nodes.
+
 ## Service management
 Systemd unit names (service mode):
 

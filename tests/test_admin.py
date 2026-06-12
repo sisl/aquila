@@ -32,6 +32,7 @@ for _name in _saved_app_modules:
     del sys.modules[_name]
 
 import app.api.admin as admin  # noqa: E402
+import app.api.deployments as deployments_api  # noqa: E402
 import app.api.nodes as nodes_api  # noqa: E402
 import app.services.sync as sync  # noqa: E402
 from app.db.session import get_session  # noqa: E402
@@ -317,3 +318,103 @@ async def test_purge_empty_body_purges_everything():
         "nodes",
         "deployment_configs",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Container runtime resolution + per-node runtime endpoint
+# ---------------------------------------------------------------------------
+
+
+def _node_ns(**kw):
+    base = dict(
+        id=1, hostname="gpu-01", available_runtimes=["docker"], container_runtime=None
+    )
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+class TestResolveRuntime:
+    def test_explicit_override_when_available(self):
+        node = _node_ns(
+            available_runtimes=["docker", "podman"], container_runtime="podman"
+        )
+        assert deployments_api._resolve_runtime(node) == "podman"
+
+    def test_explicit_override_ignored_when_unavailable(self):
+        node = _node_ns(available_runtimes=["docker"], container_runtime="podman")
+        assert deployments_api._resolve_runtime(node) == "docker"
+
+    def test_preferred_breaks_tie(self):
+        node = _node_ns(available_runtimes=["docker", "podman"])
+        with mock.patch.object(
+            deployments_api.runtime_settings, "get_str", return_value="podman"
+        ):
+            assert deployments_api._resolve_runtime(node) == "podman"
+
+    def test_single_available_wins_over_preference(self):
+        node = _node_ns(available_runtimes=["podman"])
+        with mock.patch.object(
+            deployments_api.runtime_settings, "get_str", return_value="docker"
+        ):
+            assert deployments_api._resolve_runtime(node) == "podman"
+
+    def test_none_available_raises_409(self):
+        node = _node_ns(available_runtimes=[])
+        with pytest.raises(Exception) as excinfo:
+            deployments_api._resolve_runtime(node)
+        assert getattr(excinfo.value, "status_code", None) == 409
+        assert "no container runtime" in str(excinfo.value.detail)
+
+
+class _FakeRuntimeNodeSession:
+    def __init__(self, node):
+        self.node = node
+        self.committed = False
+
+    async def get(self, model, node_id):
+        return self.node if self.node and self.node.id == node_id else None
+
+    async def commit(self):
+        self.committed = True
+
+    async def refresh(self, obj):
+        pass
+
+
+@pytest.mark.anyio
+async def test_set_node_runtime_persists_and_broadcasts():
+    node = SimpleNamespace(
+        id=7,
+        hostname="gpu-01",
+        ip_address="10.0.0.5",
+        port=9000,
+        status="healthy",
+        maintenance=False,
+        gpu_usage=[],
+        disk_usage=None,
+        default_pip_packages=[],
+        installed_packages=[],
+        available_runtimes=["docker", "podman"],
+        container_runtime=None,
+        rogue_container_count=None,
+        last_heartbeat_at=None,
+        created_at=None,
+    )
+    session = _FakeRuntimeNodeSession(node)
+    with mock.patch.object(nodes_api.manager, "broadcast", new=mock.AsyncMock()) as broadcast:
+        transport = ASGITransport(app=_nodes_test_app(session))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/nodes/7/runtime", json={"runtime": "podman"})
+    assert resp.status_code == 200
+    assert node.container_runtime == "podman"
+    assert session.committed
+    broadcast.assert_awaited_once_with({"type": "nodes_changed"})
+
+
+@pytest.mark.anyio
+async def test_set_node_runtime_rejects_unknown_value():
+    session = _FakeRuntimeNodeSession(None)
+    transport = ASGITransport(app=_nodes_test_app(session))
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/nodes/7/runtime", json={"runtime": "lxc"})
+    assert resp.status_code == 400

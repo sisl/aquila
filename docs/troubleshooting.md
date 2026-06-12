@@ -87,7 +87,7 @@ Checks:
 **Symptoms**: Deployments change state but no Slack/webhook messages appear.
 
 Checks:
-- `WEBHOOK_URL` must be set in the **backend** `.env` (`host/backend/.env`); restart the backend after editing.
+- Set the webhook URL in the dashboard (Settings → Notifications; applies live) or as the `WEBHOOK_URL` default in `host/backend/.env`.
 - Verify the URL with a manual `curl -X POST -d '{"text":"test"}'`.
 - Delivery is fire-and-forget: failures are logged by the backend but never retried or surfaced in the UI.
 
@@ -101,8 +101,18 @@ Explanation:
 **Symptoms**: Previously created deployments are gone after shutdown.
 
 Explanation:
-- `host down` runs `docker compose down -v`, which wipes the Postgres volume.
-- Remove `-v` in code if you want persistent data.
+- Host data persists across `host down` by default. Data is only wiped by `host down --purge`, `vllm-cluster-manager clean`, or the dashboard's Settings → Data → Purge.
+- If data vanished without one of those, check whether the Postgres volume (`host_pgdata`) still exists: `docker volume ls`.
 
 !!! tip
     When debugging, start the host in the foreground to see backend and frontend logs in the terminal.
+
+## Podman is installed but not detected
+**Symptoms**: The node's Manage dialog doesn't list `podman` even though Podman is installed.
+
+The agent talks to Podman through its Docker-compatible API socket, which is off by default. Enable it: `systemctl --user enable --now podman.socket` (rootless) or `systemctl enable --now podman.socket` (rootful). A non-standard socket path can be supplied via `PODMAN_SOCK` in the client `.env`. Detection refreshes within ~1 minute.
+
+## GPU deployment fails on a Podman node
+**Symptoms**: Deployments on a Podman node error immediately; the log mentions devices or CDI.
+
+Podman uses CDI for NVIDIA GPU access. Install the NVIDIA Container Toolkit and generate the CDI specs: `sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`, then redeploy.

@@ -5,6 +5,7 @@ import {
   CircularProgress,
   Divider,
   LinearProgress,
+  MenuItem,
   Table,
   TableBody,
   TableCell,
@@ -19,6 +20,7 @@ import {
   deleteLocalModel,
   deleteNode,
   deleteNodeImage,
+  setNodeRuntime,
   deleteNodeModelCache,
   fetchLocalModels,
   fetchLocalModelTransfers,
@@ -176,6 +178,20 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
     onError: (error) => setActionError(errorMessage(error))
   });
 
+  const runtimeMutation = useMutation({
+    mutationFn: (runtime: string | null) => setNodeRuntime(nodeId as number, runtime),
+    onSuccess: (updated) => {
+      queryClient.invalidateQueries({ queryKey: ["nodes"] });
+      setActionError("");
+      toast.success(
+        updated.container_runtime
+          ? `New deployments on ${updated.hostname} will use ${updated.container_runtime}.`
+          : `${updated.hostname} follows the preferred runtime again.`
+      );
+    },
+    onError: (error) => setActionError(errorMessage(error))
+  });
+
   const removeNodeMutation = useMutation({
     mutationFn: () => deleteNode(nodeId as number),
     onSuccess: (result) => {
@@ -265,6 +281,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
     deleteLocalModelMutation.isPending ||
     pullMutation.isPending ||
     removeNodeMutation.isPending ||
+    runtimeMutation.isPending ||
     uploadProgress !== null;
 
   const containers = containersQuery.data ?? [];
@@ -337,6 +354,46 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
           </Typography>
         )}
 
+        {/* Container runtime ------------------------------------------------ */}
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 1,
+            mb: 0.5
+          }}
+        >
+          <Box>
+            <Typography variant="h6">Container Runtime</Typography>
+            <Typography variant="body2" className="muted">
+              {node?.available_runtimes && node.available_runtimes.length > 0
+                ? `Detected: ${node.available_runtimes.join(", ")}. Applies to new deployments; running containers keep the runtime they started with.`
+                : "None detected — install Docker or enable the Podman socket on this node."}
+            </Typography>
+          </Box>
+          <TextField
+            size="small"
+            select
+            label="Runtime"
+            value={node?.container_runtime ?? ""}
+            disabled={busy || !(node?.available_runtimes ?? []).length}
+            onChange={(event) =>
+              runtimeMutation.mutate(event.target.value === "" ? null : event.target.value)
+            }
+            sx={{ width: 170, flexShrink: 0 }}
+          >
+            <MenuItem value="">Auto (preferred)</MenuItem>
+            {(node?.available_runtimes ?? []).map((runtime) => (
+              <MenuItem key={runtime} value={runtime}>
+                {runtime}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Box>
+
+        <Divider sx={{ my: 2 }} />
+
         {/* Containers ----------------------------------------------------- */}
         <Typography variant="h6" sx={{ mb: 0.5 }}>
           vLLM Containers
@@ -370,6 +427,11 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
                   <TableCell>{container.name}</TableCell>
                   <TableCell>
                     <Mono>{container.image}</Mono>
+                    {container.runtime && (
+                      <Typography variant="caption" className="muted" sx={{ display: "block" }}>
+                        {container.runtime}
+                      </Typography>
+                    )}
                   </TableCell>
                   <TableCell>{container.status}</TableCell>
                   <TableCell>
@@ -471,6 +533,11 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
                 <TableRow key={image.id} hover>
                   <TableCell>
                     <Mono>{image.tags.length > 0 ? image.tags.join(", ") : image.id}</Mono>
+                    {image.runtime && (
+                      <Typography variant="caption" className="muted" sx={{ display: "block" }}>
+                        {image.runtime}
+                      </Typography>
+                    )}
                   </TableCell>
                   <TableCell align="right">{(image.size_mb / 1024).toFixed(1)} GB</TableCell>
                   <TableCell align="right">

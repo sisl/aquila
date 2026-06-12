@@ -45,8 +45,9 @@ const toGb = (mb?: number) => {
   return (mb / 1024).toFixed(1);
 };
 
-function statusColor(node: Node): "success" | "warning" | "default" {
+function statusColor(node: Node): "success" | "warning" | "error" | "default" {
   if (node.maintenance) return "warning";
+  if (node.status === "no-runtime") return "error";
   if (node.status === "healthy") return "success";
   return "default";
 }
@@ -277,9 +278,20 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
                   <TableCell>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
                       <Chip
-                        label={node.maintenance ? "maintenance" : node.status}
+                        label={
+                          node.maintenance
+                            ? "maintenance"
+                            : node.status === "no-runtime"
+                              ? "no runtime"
+                              : node.status
+                        }
                         size="small"
                         color={statusColor(node)}
+                        title={
+                          node.status === "no-runtime"
+                            ? "No container runtime detected — install Docker or enable the Podman socket."
+                            : undefined
+                        }
                       />
                       {node.rogue_container_count != null && node.rogue_container_count > 0 && (
                         <Chip

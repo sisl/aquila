@@ -60,6 +60,7 @@ The gateway routes by served model name (including LoRA adapter names), supports
 - **Notifications**: configure a Slack/webhook URL (Settings dialog or `WEBHOOK_URL` env default) to get messages when a model becomes ready, errors out (with classified cause), or is about to expire. Running deployments can be extended without a restart.
 - **Live global settings**: the dashboard's Settings dialog tunes the cluster without restarts — gateway on/off + timeout, deployment start timeout, deploy-form defaults (port, GPU fraction, duration, vLLM version), notifications, metric retention, granular database purge, and sync tuning. Saved values override env defaults.
 - **Local models & LoRA**: upload checkpoint folders/archives from the browser (streamed, with progress) or pull them from a URL directly onto a node — or allowlist pre-existing directories via `MODEL_DIRS`. Local checkpoints and LoRA adapters are mounted read-only and path-validated.
+- **Docker or Podman per node**: each agent detects which runtimes exist; pick per node in the Manage dialog, set a cluster-wide preference in Settings, and nodes without any runtime are flagged in the node table. Rootless Podman supports clusters that disallow the Docker daemon.
 
 ## Architecture
 - **Host**: Admin services for infrastructure, API, and UI.
@@ -84,7 +85,7 @@ Host:
 
 Client:
 - NVIDIA GPU with a recent driver (`nvidia-smi` working).
-- Docker Engine + the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). vLLM runs in the official `vllm/vllm-openai` containers, so the node no longer needs a local CUDA/PyTorch toolchain. Add the client user to the `docker` group so no sudo is required.
+- A container runtime: **Docker Engine** (add the client user to the `docker` group) **or Podman ≥ 4** with its API socket enabled (`systemctl --user enable --now podman.socket`) — useful on clusters that disallow the Docker daemon; rootless Podman works. Plus the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) (Podman nodes additionally need CDI specs: `nvidia-ctk cdi generate`). vLLM runs in the official `vllm/vllm-openai` containers either way; the node needs no local CUDA/PyTorch toolchain.
 - Python 3.10–3.14 (for the lightweight client agent).
 
 Verify Docker can see the GPUs before installing the client:

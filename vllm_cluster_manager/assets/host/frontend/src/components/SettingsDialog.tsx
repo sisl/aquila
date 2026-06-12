@@ -204,6 +204,20 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 helperText="Mark a deployment as errored if it isn't running by then."
                 sx={{ width: 220 }}
               />
+              <TextField
+                size="small"
+                select
+                label="Preferred runtime"
+                value={draft.preferred_container_runtime ?? "docker"}
+                onChange={(event) =>
+                  set("preferred_container_runtime", event.target.value)
+                }
+                helperText="Used when a node has both and no per-node override."
+                sx={{ width: 200 }}
+              >
+                <MenuItem value="docker">Docker</MenuItem>
+                <MenuItem value="podman">Podman</MenuItem>
+              </TextField>
             </Stack>
             <Typography variant="body2" className="muted" sx={{ mb: 1 }}>
               Defaults pre-filled in the deploy form:

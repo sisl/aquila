@@ -1051,12 +1051,26 @@ export function Dashboard() {
                 value={nodeId}
                 onChange={(event) => setNodeId(event.target.value)}
               >
-                {(nodesQuery.data ?? []).map((node) => (
-                  <MenuItem key={node.id} value={node.id} disabled={Boolean(node.maintenance)}>
-                    {node.hostname} ({node.ip_address})
-                    {node.maintenance ? " — maintenance" : ""}
-                  </MenuItem>
-                ))}
+                {(nodesQuery.data ?? []).map((node) => {
+                  const noRuntime =
+                    node.status === "no-runtime" ||
+                    (Array.isArray(node.available_runtimes) &&
+                      node.available_runtimes.length === 0);
+                  return (
+                    <MenuItem
+                      key={node.id}
+                      value={node.id}
+                      disabled={Boolean(node.maintenance) || noRuntime}
+                    >
+                      {node.hostname} ({node.ip_address})
+                      {node.maintenance
+                        ? " — maintenance"
+                        : noRuntime
+                          ? " — no runtime"
+                          : ""}
+                    </MenuItem>
+                  );
+                })}
               </TextField>
               <TextField
                 fullWidth

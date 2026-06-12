@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +19,7 @@ class RuntimeSettingsUpdate(BaseModel):
     gateway_enabled: bool | None = None
     gateway_timeout_seconds: int | None = Field(None, ge=10, le=86400)
     start_timeout_seconds: int | None = Field(None, ge=60, le=86400)
+    preferred_container_runtime: Literal["docker", "podman"] | None = None
     default_port: int | None = Field(None, ge=1024, le=65535)
     default_gpu_fraction: float | None = Field(None, ge=0.05, le=1.0)
     default_duration_choice: str | None = None

@@ -87,6 +87,7 @@ _MANIFEST = {
     "gpu_ids": [0, 1],
     "tensor_parallel_size": 2,
     "max_failed_restarts": 5,
+    "container_runtime": "podman",
 }
 
 
@@ -106,6 +107,7 @@ class TestAdoptedDeployment:
         assert dep.lora_modules == [{"name": "ad", "path": "p"}]
         assert dep.extra_packages == ["transformers"]
         assert dep.max_failed_restarts == 5
+        assert dep.container_runtime == "podman"
 
     def test_without_manifest_keeps_legacy_minimal_row(self):
         dep = sync._adopted_deployment(3, _client_dep(), _NOW)

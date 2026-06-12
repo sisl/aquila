@@ -28,7 +28,7 @@
 </div>
 
 ## What you can do
-- Register and manage GPU nodes that run vLLM workloads.
+- Register and manage GPU nodes that run vLLM workloads — via Docker or rootless Podman, selectable per node.
 - Deploy models with a specific vLLM version, nightly build, or commit hash — each runs in the matching official `vllm/vllm-openai` container.
 - Serve Hugging Face hub models, local fine-tuned checkpoints, and LoRA adapters — upload checkpoints from the browser (streamed) or pull them from a URL directly onto a node.
 - Reach every model through one [OpenAI-compatible gateway URL](gateway.md) that is stable across node moves — or talk to nodes directly.
