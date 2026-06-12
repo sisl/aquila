@@ -14,6 +14,8 @@ From the dashboard, select a target node, fill in the deployment form, and click
 
 Optional fields include **Owner** (free-text, used for attribution in the table and usage reports), **Serve for** (auto-stop after N hours; can be [extended later](#extending-a-running-deployment) without a restart), engine options, LoRA adapters, extra packages, extra args, and env vars.
 
+The form's pre-filled defaults (port, GPU fraction, serve duration, vLLM version, max failed restarts) are configurable cluster-wide in **Settings → Deployments**.
+
 ## vLLM version
 
 Every deployment runs in an official [`vllm/vllm-openai`](https://hub.docker.com/r/vllm/vllm-openai/tags) Docker container. The version you choose maps directly to an image tag — the image already bundles a matching CUDA runtime and PyTorch, so the node needs no local CUDA/PyTorch setup.
@@ -158,7 +160,7 @@ A deployment goes through these states:
 
 | Status | Meaning |
 | --- | --- |
-| **starting** | The client is preparing the vLLM image and starting the container. While a new image version is being pulled (20+ GB on first use), the status chip shows the phase and the row shows a live progress bar with downloaded/total GB; warm starts of cached versions skip this entirely. |
+| **starting** | The client is preparing the vLLM image and starting the container. While a new image version is being pulled (20+ GB on first use), the status chip shows live progress inline, e.g. `starting (pulling image · 3.5/21.6 GB)`; warm starts of cached versions skip this entirely. |
 | **loading** | The vLLM container is starting up. The status shows the current engine phase (downloading weights, loading weights, compiling). |
 | **running** | The vLLM server is healthy and responding to requests. |
 | **stopping** | A stop was requested and the process is shutting down. |

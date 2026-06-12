@@ -11,7 +11,8 @@ from alembic.config import Config as AlembicConfig
 from app.api.gateway import close_gateway_client, router as gateway_router
 from app.api.router import api_router
 from app.api.ws import router as ws_router
-from app.db.session import engine
+from app.db.session import SessionLocal, engine
+from app.services import runtime_settings
 from app.services.client_api import close_client
 from app.services.sync import (
     sync_deployments_from_clients,
@@ -50,6 +51,9 @@ async def lifespan(_: FastAPI):
     # created by the old create_all + ensure_*_column() path.
     await asyncio.to_thread(_run_migrations)
     logger.info("Database migrations applied")
+    # Load dashboard-saved setting overrides (env values are the defaults).
+    async with SessionLocal() as session:
+        await runtime_settings.load(session)
     task = asyncio.create_task(sync_nodes_from_consul())
     deploy_task = asyncio.create_task(sync_deployments_from_clients())
     expiry_task = asyncio.create_task(enforce_deployment_expiry())

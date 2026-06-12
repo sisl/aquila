@@ -10,7 +10,7 @@ scrape, not from the gateway.
 import random
 
 import httpx
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,8 +19,22 @@ from app.core.config import settings
 from app.db.session import get_session
 from app.models.deployment import Deployment
 from app.models.node import Node
+from app.services import runtime_settings
 
-router = APIRouter()
+
+def _require_gateway() -> None:
+    """Settings-controlled kill switch for the whole /v1 surface."""
+    if not runtime_settings.get_bool("gateway_enabled"):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "The OpenAI gateway is disabled by the administrator; "
+                "use the node's direct URL instead."
+            ),
+        )
+
+
+router = APIRouter(dependencies=[Depends(_require_gateway)])
 
 # Separate client from services.client_api: gateway requests need different
 # timeout semantics (no read timeout on streams, long reads on generations).
@@ -187,7 +201,7 @@ async def _proxy(request: Request, endpoint_path: str, session: AsyncSession) ->
                 json=body,
                 timeout=httpx.Timeout(
                     connect=10.0,
-                    read=float(settings.gateway_timeout_seconds),
+                    read=float(runtime_settings.get_int("gateway_timeout_seconds")),
                     write=30.0,
                     pool=10.0,
                 ),

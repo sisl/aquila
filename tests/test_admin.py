@@ -72,6 +72,17 @@ def _seed_caches():
     _warned_expiring.add((1, "2026-06-11"))
 
 
+def _purge_app(session):
+    test_app = FastAPI()
+    test_app.include_router(admin.router, prefix="/admin")
+
+    async def _override():
+        yield session
+
+    test_app.dependency_overrides[get_session] = _override
+    return test_app
+
+
 @pytest.mark.anyio
 async def test_purge_database_deletes_all_tables_and_clears_caches():
     session = _FakeSession()
@@ -230,3 +241,79 @@ async def test_delete_node_survives_consul_failure():
             resp = await client.delete("/nodes/7")
     assert resp.status_code == 200
     assert session.committed
+
+
+# ---------------------------------------------------------------------------
+# Granular purge targets
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_purge_configs_only():
+    session = _FakeSession()
+    with mock.patch.object(admin.manager, "broadcast", new=mock.AsyncMock()) as broadcast:
+        transport = ASGITransport(app=_purge_app(session))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/admin/purge", json={"targets": ["configs"]})
+    assert resp.status_code == 200
+    assert session.deleted_tables == ["deployment_configs"]
+    sent_types = {call.args[0]["type"] for call in broadcast.call_args_list}
+    assert sent_types == {"deployments_changed"}
+
+
+@pytest.mark.anyio
+async def test_purge_nodes_force_includes_children():
+    session = _FakeSession()
+    _seed_caches()
+    with mock.patch.object(admin.manager, "broadcast", new=mock.AsyncMock()):
+        transport = ASGITransport(app=_purge_app(session))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/admin/purge", json={"targets": ["nodes"]})
+    assert resp.status_code == 200
+    # Children deleted before nodes; configs untouched.
+    assert session.deleted_tables == ["deployments", "node_metrics", "nodes"]
+    assert not sync.live_usage
+    assert not rogue_container_counts
+
+
+@pytest.mark.anyio
+async def test_purge_deployments_keeps_node_caches():
+    session = _FakeSession()
+    _seed_caches()
+    with mock.patch.object(admin.manager, "broadcast", new=mock.AsyncMock()):
+        transport = ASGITransport(app=_purge_app(session))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/admin/purge", json={"targets": ["deployments"]})
+    assert resp.status_code == 200
+    assert session.deleted_tables == ["deployments"]
+    assert not sync.live_usage  # deployment caches cleared
+    assert rogue_container_counts  # node caches kept
+    rogue_container_counts.clear()
+    sync._deployment_fail_counts.clear()
+    _warned_expiring.clear()
+
+
+@pytest.mark.anyio
+async def test_purge_invalid_target_rejected():
+    session = _FakeSession()
+    transport = ASGITransport(app=_purge_app(session))
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/admin/purge", json={"targets": ["everything"]})
+    assert resp.status_code == 400
+    assert session.deleted_tables == []
+
+
+@pytest.mark.anyio
+async def test_purge_empty_body_purges_everything():
+    session = _FakeSession()
+    with mock.patch.object(admin.manager, "broadcast", new=mock.AsyncMock()):
+        transport = ASGITransport(app=_purge_app(session))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/admin/purge")
+    assert resp.status_code == 200
+    assert session.deleted_tables == [
+        "deployments",
+        "node_metrics",
+        "nodes",
+        "deployment_configs",
+    ]

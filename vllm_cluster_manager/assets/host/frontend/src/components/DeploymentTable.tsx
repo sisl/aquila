@@ -124,7 +124,9 @@ function usageTooltip(deployment: Deployment): string {
     perRequest.push(`generation ${formatRate(deployment.generation_tps)}`);
   }
   if (perRequest.length > 0) {
-    lines.push(`Per request: ${perRequest.join(" · ")} tok/s (processing time only)`);
+    lines.push(
+      `Avg per request: ${perRequest.join(" · ")} tok/s (over processing time, since start)`
+    );
   }
   const throughput: string[] = [];
   if (typeof deployment.prompt_throughput === "number") {
@@ -445,21 +447,18 @@ export function DeploymentTable({
                             sx={{ whiteSpace: "nowrap" }}
                           >
                             {formatTokens(deployment.total_requests)} req
-                            {typeof deployment.prompt_tps === "number" ||
-                            typeof deployment.generation_tps === "number"
-                              ? ` · ${[
-                                  typeof deployment.prompt_tps === "number"
-                                    ? `read ${formatRate(deployment.prompt_tps)}`
-                                    : null,
-                                  typeof deployment.generation_tps === "number"
-                                    ? `gen ${formatRate(deployment.generation_tps)}`
-                                    : null
-                                ]
-                                  .filter(Boolean)
-                                  .join(" · ")} tok/s`
-                              : deployment.status === "running"
-                                ? " · idle"
-                                : ""}
+                            {(typeof deployment.prompt_tps === "number" ||
+                              typeof deployment.generation_tps === "number") &&
+                              ` · ${[
+                                typeof deployment.prompt_tps === "number"
+                                  ? `read ${formatRate(deployment.prompt_tps)}`
+                                  : null,
+                                typeof deployment.generation_tps === "number"
+                                  ? `gen ${formatRate(deployment.generation_tps)}`
+                                  : null
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")} tok/s`}
                           </Typography>
                         </Box>
                       </Tooltip>

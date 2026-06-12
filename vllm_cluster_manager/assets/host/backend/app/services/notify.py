@@ -1,13 +1,14 @@
 """Fire-and-forget webhook notifications (Slack or generic JSON).
 
-Configured via settings.webhook_url; a no-op when unset. Posting happens in a
-detached task so notification latency or failures never touch the sync loops.
+Configured via the webhook_url setting (dashboard Settings or WEBHOOK_URL env
+default); a no-op when unset. Posting happens in a detached task so
+notification latency or failures never touch the sync loops.
 """
 
 import asyncio
 import logging
 
-from app.core.config import settings
+from app.services import runtime_settings
 from app.services.client_api import get_client
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ def _format_message(event: str, message: str, fields: dict[str, object]) -> str:
 
 def _payload(event: str, message: str, fields: dict[str, object]) -> dict[str, object]:
     text = _format_message(event, message, fields)
-    if "hooks.slack.com" in (settings.webhook_url or ""):
+    if "hooks.slack.com" in runtime_settings.get_str("webhook_url"):
         return {"text": text}
     return {"event": event, "message": message, **fields}
 
@@ -35,7 +36,9 @@ def _payload(event: str, message: str, fields: dict[str, object]) -> dict[str, o
 async def _post(event: str, message: str, fields: dict[str, object]) -> None:
     try:
         response = await get_client().post(
-            settings.webhook_url, json=_payload(event, message, fields), timeout=10.0
+            runtime_settings.get_str("webhook_url"),
+            json=_payload(event, message, fields),
+            timeout=10.0,
         )
         if response.status_code >= 400:
             logger.warning(
@@ -47,7 +50,7 @@ async def _post(event: str, message: str, fields: dict[str, object]) -> None:
 
 def notify(event: str, message: str, fields: dict[str, object] | None = None) -> None:
     """Send a notification without blocking or raising."""
-    if not settings.webhook_url:
+    if not runtime_settings.get_str("webhook_url"):
         return
     try:
         asyncio.get_running_loop().create_task(_post(event, message, fields or {}))

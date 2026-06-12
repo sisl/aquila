@@ -20,6 +20,8 @@ import { useToast } from "./ToastProvider";
 type EndpointDialogProps = {
   deployment: Deployment | null;
   node: Node | null;
+  // Settings-controlled: when the gateway is off, only direct URLs are shown.
+  gatewayEnabled?: boolean;
   open: boolean;
   onClose: () => void;
 };
@@ -55,7 +57,7 @@ function curlSnippet(baseUrl: string, model: string): string {
 type EndpointBlockProps = {
   label: string;
   content: (baseUrl: string) => string;
-  gatewayUrl: string;
+  gatewayUrl: string | null;
   directUrl: string | null;
   onCopy: (label: string, text: string) => void;
 };
@@ -94,8 +96,9 @@ function UrlKindOption({
 }
 
 function EndpointBlock({ label, content, gatewayUrl, directUrl, onCopy }: EndpointBlockProps) {
-  const [kind, setKind] = useState<UrlKind>("gateway");
-  const baseUrl = kind === "direct" && directUrl ? directUrl : gatewayUrl;
+  const [kind, setKind] = useState<UrlKind>(gatewayUrl ? "gateway" : "direct");
+  const baseUrl =
+    kind === "direct" && directUrl ? directUrl : gatewayUrl ?? directUrl ?? "";
   const text = content(baseUrl);
 
   return (
@@ -119,7 +122,7 @@ function EndpointBlock({ label, content, gatewayUrl, directUrl, onCopy }: Endpoi
             mb: -1.25
           }}
         >
-          {directUrl && (
+          {directUrl && gatewayUrl && (
             <>
               <UrlKindOption
                 label="gateway"
@@ -155,7 +158,13 @@ function EndpointBlock({ label, content, gatewayUrl, directUrl, onCopy }: Endpoi
   );
 }
 
-export function EndpointDialog({ deployment, node, open, onClose }: EndpointDialogProps) {
+export function EndpointDialog({
+  deployment,
+  node,
+  gatewayEnabled = true,
+  open,
+  onClose
+}: EndpointDialogProps) {
   const toast = useToast();
 
   if (!deployment) {
@@ -163,7 +172,7 @@ export function EndpointDialog({ deployment, node, open, onClose }: EndpointDial
   }
 
   const model = servedName(deployment);
-  const gatewayUrl = gatewayBaseUrl();
+  const gatewayUrl = gatewayEnabled ? gatewayBaseUrl() : null;
   const directUrl = node ? `http://${node.ip_address}:${deployment.port}/v1` : null;
   const loraNames = (deployment.lora_modules ?? [])
     .map((module) => module.name)
@@ -190,7 +199,11 @@ export function EndpointDialog({ deployment, node, open, onClose }: EndpointDial
           )}
         </Box>
       }
-      meta="The gateway URL is stable across node moves; the direct URL skips one hop."
+      meta={
+        gatewayEnabled
+          ? "The gateway URL is stable across node moves; the direct URL skips one hop."
+          : "The gateway is disabled in Settings — direct node URLs only."
+      }
       actions={
         <AppButton type="button" onClick={onClose}>
           Close

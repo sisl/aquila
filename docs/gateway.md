@@ -56,6 +56,8 @@ resp = client.chat.completions.create(
 
 There is no authentication (the tool targets small trusted environments); any `api_key` value is accepted.
 
+The gateway can be turned off entirely in **Settings → Gateway**: `/v1` requests then return `503` with a clear message, while direct node URLs keep working (the Endpoint dialog switches to direct-only automatically). The non-streaming request timeout is configurable in the same section.
+
 ## Usage metrics
 
 Usage is tracked **per deployment**, sourced from vLLM's own Prometheus counters: each client agent scrapes its containers' `/metrics` endpoint every ~15 s, and the host folds the deltas into the deployment's lifetime totals (reset-safe across container restarts). Because vLLM itself maintains the counters, every request is counted — whether it arrived via the gateway or directly at the node.
@@ -64,9 +66,9 @@ The **Usage** column of the deployments table shows, per deployment:
 
 - lifetime prompt / completion tokens
 - total completed requests
-- live **read** (prefill) and **generation** (decode) speeds in tokens/s — or `idle` when nothing ran in the last window
-- (in the tooltip) the full breakdown: per-request speeds, engine-wide window throughput, and requests currently running/queued
+- average **read** (prefill) and **generation** (decode) speeds in tokens/s
+- (in the tooltip) the full breakdown: average per-request speeds, engine-wide window throughput, and requests currently running/queued
 
-The two speeds are **per-request and idle-free**: token deltas are divided by the *processing-time* deltas from vLLM's per-request time histograms (`request_prefill_time_seconds` / `request_decode_time_seconds` on V1 engines), so a short burst inside a scrape window reports the speed *during* the burst, not a wall-clock average diluted by idle time. On older engines without those histograms, TTFT/TPOT histograms are used as a fallback (TTFT includes queue wait, so the read speed there is a lower bound). The tooltip additionally shows **engine throughput** — token deltas over the wall-clock window — the aggregate view across all concurrent requests.
+The two speeds are **running averages over processing time**: cumulative token counters divided by the cumulative processing-time sums from vLLM's per-request time histograms (`request_prefill_time_seconds` / `request_decode_time_seconds` on V1 engines). Idle time never enters the denominator, and once a deployment has served its first request the averages stay defined permanently — they never drop to zero or disappear between bursts (they reset only when the container restarts, together with the counters). On older engines without those histograms, TTFT/TPOT histograms are used as a fallback (TTFT includes queue wait, so the read speed there is a lower bound). The tooltip additionally shows **engine throughput** — token deltas over the last wall-clock scrape window — the aggregate view across all concurrent requests, present only for windows with activity.
 
 The same values are included in `GET /api/deployments/` (`total_prompt_tokens`, `total_completion_tokens`, `total_requests`, and — for running deployments — `prompt_tps`, `generation_tps`, `prompt_throughput`, `generation_throughput`, `requests_running`, `requests_waiting`).

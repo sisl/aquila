@@ -32,12 +32,13 @@
 - Deploy models with a specific vLLM version, nightly build, or commit hash — each runs in the matching official `vllm/vllm-openai` container.
 - Serve Hugging Face hub models, local fine-tuned checkpoints, and LoRA adapters — upload checkpoints from the browser (streamed) or pull them from a URL directly onto a node.
 - Reach every model through one [OpenAI-compatible gateway URL](gateway.md) that is stable across node moves — or talk to nodes directly.
-- Track per-deployment usage from vLLM's own metrics: lifetime tokens, request counts, and live tokens/s.
+- Track per-deployment usage from vLLM's own metrics: lifetime tokens, request counts, and average read (prefill) / generation speeds measured over actual processing time — idle phases never dilute them.
 - Export a reproducibility manifest per deployment (model, HF revision, seed, vLLM version, image digest, full config) and redeploy from it.
 - Get Slack/webhook notifications when deployments become ready, fail, or are about to expire — and extend running deployments without a restart.
 - Install extra pip packages and upload vLLM plugins (`.py`, `.whl`) per deployment.
 - Select GPUs with toggle buttons and configure tensor parallelism.
 - Save and reload deployment configurations for one-click redeployment.
+- Tune the cluster live from the Settings dialog: gateway on/off, timeouts, notification webhook, deploy-form defaults, data retention, and granular purge — no restarts.
 - Monitor node health, GPU utilization, disk usage, and deployment status in real time, with 48-hour metric history charts.
 - Put nodes into maintenance mode (optionally draining their deployments) for safe servicing.
 - Stream timestamped logs from running processes — the full per-run log is persisted on the node (monitoring noise filtered) and downloadable — with classified failure causes and crash-loop protection.

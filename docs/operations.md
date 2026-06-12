@@ -1,5 +1,17 @@
 # Operations
 
+## Global settings (dashboard)
+
+Most operational knobs live in the dashboard: **gear icon → Settings**. Saved values are stored in the database, override the backend's env defaults, and **apply live** — no restart needed. Sections:
+
+- **Gateway** — enable/disable the [OpenAI gateway](gateway.md) (disabled → `/v1` returns 503; direct node URLs keep working) and its request timeout.
+- **Deployments** — the start-timeout watchdog, plus the deploy form's pre-filled defaults: port, GPU fraction, serve duration, vLLM version, max failed restarts.
+- **Notifications** — webhook URL (Slack-aware) and the expiry-warning lead time.
+- **Data** — metric-history retention, and the granular purge (select any of: deployment records, nodes, metric history, saved configurations; purging nodes includes their deployments and metrics).
+- **Advanced** — sync-loop intervals and node/deployment failure thresholds.
+
+The env variables below remain the *defaults* for these settings (used until a value is saved in the UI); infrastructure values (Postgres, Consul, bind addresses) are env-only.
+
 ## Configuration files
 The CLI writes service-specific env files under `~/.local/share/vllm_cluster_manager`:
 - `host/.env` (Docker compose: Postgres + discovery service)
@@ -10,6 +22,8 @@ The CLI writes service-specific env files under `~/.local/share/vllm_cluster_man
 If you edit any env file, restart the affected service.
 
 ### Backend settings (`host/backend/.env`)
+
+These act as defaults for the corresponding [dashboard settings](#global-settings-dashboard); a value saved in the UI takes precedence.
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -69,7 +83,7 @@ To wipe the database intentionally:
 
 - `vllm-cluster-manager host down --purge` — stop the host and delete the Postgres volume.
 - `vllm-cluster-manager clean` — full factory reset (always deletes the volume).
-- Dashboard → gear icon → Settings → **Purge database** — wipes all tables while the host keeps running. Running models are not stopped: nodes re-register via discovery within seconds and their deployments are re-adopted automatically.
+- Dashboard → gear icon → Settings → **Data → Purge** — select which record categories to wipe (deployment records, nodes, metric history, saved configurations) while the host keeps running. Running models are not stopped: nodes re-register via discovery within seconds and their deployments are re-adopted automatically.
 
 Re-adoption restores owner, lease, and launch configuration from a manifest each vLLM container carries as a Docker label (set at launch). The restored lease is the original one — extensions granted later are not preserved, and a lease that elapsed in the meantime is enforced (the deployment is stopped as expired).
 
@@ -150,6 +164,8 @@ Use the **Maintenance** button on a node to cordon it: the node is marked as in 
 
 ## Node metrics history
 The backend samples GPU/CPU/memory/disk metrics from each node and keeps them for `NODE_METRICS_RETENTION_HOURS` (default 48). Expand a node row in the dashboard to see the charts; the raw data is available at `GET /api/nodes/{id}/metrics/history`.
+
+On unified-memory devices (e.g. DGX Spark), the GPU's dedicated-VRAM fields aren't reported by `nvidia-smi`/NVML: the **compute** percentage is still the real GPU utilization, while the **memory** figures come from system RAM (the shared pool) and are marked `(unified)` in the node table. Compute shows `n/a` only when the node has no NVIDIA tooling at all.
 
 ## Database migrations
 The backend manages its schema with Alembic and runs `upgrade head` automatically at startup, so upgrades never require manual migration steps. Databases created by older versions are absorbed by the baseline migration and upgraded in place. If you need to inspect or run migrations manually, the Alembic environment lives in the backend's install directory and reads the same `.env` as the API service.

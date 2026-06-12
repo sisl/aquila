@@ -1613,25 +1613,16 @@ _usage_snapshots: dict[str, dict[str, float]] = {}
 
 
 def _compute_usage_rates(key: str, snapshot: dict[str, float]) -> dict[str, float]:
-    """Token rates between consecutive scrapes, split read/generation.
+    """Token speeds split read/generation.
 
-    Per-request speeds divide token deltas by *processing-time* deltas from
-    vLLM's per-request histograms, so idle wall-clock never dilutes them (a
-    2 s burst inside a 15 s window divides by 2 s). Throughput keys divide by
-    wall clock — the engine-wide view. A rate is omitted whenever its
-    denominator didn't advance (idle window or metric not exposed); a counter
-    moving backwards means the container restarted and the window is skipped.
+    Per-request speeds are *running averages since container start*: cumulative
+    token counters divided by cumulative processing-time sums from vLLM's
+    per-request histograms. Idle time never enters the denominator, and once a
+    request has completed the averages stay defined forever (they never drop to
+    zero or disappear between bursts). Throughput keys are the engine-wide view
+    over the last scrape window (wall clock) and are only present for windows
+    with activity.
     """
-    snapshot = dict(snapshot)
-    snapshot["_ts"] = time.monotonic()
-    previous = _usage_snapshots.get(key)
-    _usage_snapshots[key] = snapshot
-    if previous is None:
-        return {}
-    deltas = {k: snapshot.get(k, 0.0) - previous.get(k, 0.0) for k in snapshot}
-    if any(value < 0 for value in deltas.values()):  # reset after restart
-        return {}
-
     rates: dict[str, float] = {}
 
     def _rate(numerator: float, denominator: float) -> float | None:
@@ -1639,30 +1630,40 @@ def _compute_usage_rates(key: str, snapshot: dict[str, float]) -> dict[str, floa
             return None
         return round(numerator / denominator, 1)
 
-    # Per-request speeds (idle-free): primary prefill/decode time sums,
-    # TTFT/TPOT fallback.
-    prompt_tps = _rate(deltas["prompt_tokens"], deltas.get("prefill_sum", 0.0))
+    # Lifetime per-request averages: primary prefill/decode time sums,
+    # TTFT/TPOT fallback for engines that don't expose them.
+    prompt_tps = _rate(snapshot["prompt_tokens"], snapshot.get("prefill_sum", 0.0))
     if prompt_tps is None:
-        prompt_tps = _rate(deltas["prompt_tokens"], deltas.get("ttft_sum", 0.0))
+        prompt_tps = _rate(snapshot["prompt_tokens"], snapshot.get("ttft_sum", 0.0))
     if prompt_tps is not None:
         rates["prompt_tps"] = prompt_tps
 
     generation_tps = _rate(
-        deltas["generation_tokens"], deltas.get("decode_sum", 0.0)
+        snapshot["generation_tokens"], snapshot.get("decode_sum", 0.0)
     )
     if generation_tps is None:
-        generation_tps = _rate(deltas.get("tpot_count", 0.0), deltas.get("tpot_sum", 0.0))
+        generation_tps = _rate(
+            snapshot.get("tpot_count", 0.0), snapshot.get("tpot_sum", 0.0)
+        )
     if generation_tps is not None:
         rates["generation_tps"] = generation_tps
 
-    # Engine-wide throughput over the wall-clock window (only when active).
-    wall = deltas["_ts"]
-    throughput = _rate(deltas["prompt_tokens"], wall)
-    if throughput is not None:
-        rates["prompt_throughput"] = throughput
-    throughput = _rate(deltas["generation_tokens"], wall)
-    if throughput is not None:
-        rates["generation_throughput"] = throughput
+    # Engine-wide throughput over the last wall-clock window (delta-based;
+    # skipped on the first sample and after a counter reset).
+    snapshot = dict(snapshot)
+    snapshot["_ts"] = time.monotonic()
+    previous = _usage_snapshots.get(key)
+    _usage_snapshots[key] = snapshot
+    if previous is not None:
+        deltas = {k: snapshot.get(k, 0.0) - previous.get(k, 0.0) for k in snapshot}
+        if all(value >= 0 for value in deltas.values()):
+            wall = deltas["_ts"]
+            throughput = _rate(deltas["prompt_tokens"], wall)
+            if throughput is not None:
+                rates["prompt_throughput"] = throughput
+            throughput = _rate(deltas["generation_tokens"], wall)
+            if throughput is not None:
+                rates["generation_throughput"] = throughput
     return rates
 
 

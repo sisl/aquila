@@ -49,9 +49,10 @@ import {
   setNodeMaintenance,
   startDeployment,
   stopDeployment,
-  purgeDatabase,
+  fetchSettings,
   restartDeployment,
-  uploadPackage
+  uploadPackage,
+  type RuntimeSettings
 } from "../services/api";
 import { connectWebSocket } from "../services/ws";
 import { StatusCard } from "../components/StatusCard";
@@ -63,6 +64,7 @@ import { EndpointDialog } from "../components/EndpointDialog";
 import { AppButton } from "../components/AppButton";
 import { AppDialog } from "../components/AppDialog";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { SettingsDialog } from "../components/SettingsDialog";
 import { EmptyState } from "../components/EmptyState";
 import { useToast } from "../components/ToastProvider";
 
@@ -164,7 +166,6 @@ export function Dashboard() {
   const [manifestDeployment, setManifestDeployment] = useState<Deployment | null>(null);
   const [endpointDeployment, setEndpointDeployment] = useState<Deployment | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [confirmPurge, setConfirmPurge] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -184,6 +185,8 @@ export function Dashboard() {
           queryClient.invalidateQueries({ queryKey: ["deployments"] });
         } else if (message.type === "nodes_changed") {
           queryClient.invalidateQueries({ queryKey: ["nodes"] });
+        } else if (message.type === "settings_changed") {
+          queryClient.invalidateQueries({ queryKey: ["settings"] });
         }
       });
       socket.onopen = () => {
@@ -242,6 +245,39 @@ export function Dashboard() {
     queryFn: fetchConfigs
   });
 
+  const settingsQuery = useQuery({
+    queryKey: ["settings"],
+    queryFn: fetchSettings,
+    staleTime: 60000
+  });
+
+  // Apply admin-configured deploy-form defaults once, when settings first
+  // arrive and the form is still pristine (hardcoded initials otherwise).
+  const settingsDefaultsApplied = useRef(false);
+  useEffect(() => {
+    const data = settingsQuery.data;
+    if (!data || settingsDefaultsApplied.current) {
+      return;
+    }
+    settingsDefaultsApplied.current = true;
+    if (port === 8001) {
+      setPort(data.default_port);
+    }
+    if (gpuFraction === 0.5) {
+      setGpuFraction(data.default_gpu_fraction);
+    }
+    if (durationChoice === DEFAULT_DURATION_CHOICE) {
+      setDurationChoice(data.default_duration_choice);
+    }
+    if (vllmVersion === "") {
+      setVllmVersion(data.default_vllm_version);
+    }
+    if (maxFailedRestarts === "" && data.default_max_failed_restarts != null) {
+      setMaxFailedRestarts(String(data.default_max_failed_restarts));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsQuery.data]);
+
   // Local checkpoints on the selected node, offered as a deploy-form picker.
   const localModelsQuery = useQuery({
     queryKey: ["node-local-models", nodeId === "" ? null : Number(nodeId)],
@@ -278,15 +314,17 @@ export function Dashboard() {
       });
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
       toast.success(`Deployment of ${deployment.model_name} started.`);
+      const defaults = queryClient.getQueryData<RuntimeSettings>(["settings"]);
       setModelName("");
-      setPort(8001);
-      setGpuFraction(0.5);
+      setPort(defaults?.default_port ?? 8001);
+      setGpuFraction(defaults?.default_gpu_fraction ?? 0.5);
+      setDurationChoice(defaults?.default_duration_choice ?? DEFAULT_DURATION_CHOICE);
       setGpuIds([]);
       setAdvancedArgs([]);
       setRawArgs("");
       setEnvVars([]);
       setLoraModules([]);
-      setVllmVersion("");
+      setVllmVersion(defaults?.default_vllm_version ?? "");
       setMaxModelLen("");
       setRevision("");
       setSeed("");
@@ -296,7 +334,11 @@ export function Dashboard() {
       setMaxNumSeqs("");
       setEnforceEager(false);
       setTrustRemoteCode(false);
-      setMaxFailedRestarts("");
+      setMaxFailedRestarts(
+        defaults?.default_max_failed_restarts != null
+          ? String(defaults.default_max_failed_restarts)
+          : ""
+      );
       setSkipResourceCheck(false);
       setExtraPackagesText("");
       setExpandedSection(false);
@@ -342,22 +384,6 @@ export function Dashboard() {
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Failed to extend deployment.");
-    }
-  });
-
-  const purgeMutation = useMutation({
-    mutationFn: purgeDatabase,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["deployments"] });
-      queryClient.invalidateQueries({ queryKey: ["nodes"] });
-      queryClient.invalidateQueries({ queryKey: ["configs"] });
-      setConfirmPurge(false);
-      setSettingsOpen(false);
-      toast.success("Database purged. Nodes and running models re-register shortly.");
-    },
-    onError: (error) => {
-      setConfirmPurge(false);
-      toast.error(error instanceof Error ? error.message : "Failed to purge database.");
     }
   });
 
@@ -1872,47 +1898,12 @@ export function Dashboard() {
             (node) => node.id === endpointDeployment?.node_id
           ) ?? null
         }
+        gatewayEnabled={settingsQuery.data?.gateway_enabled ?? true}
         open={endpointDeployment !== null}
         onClose={() => setEndpointDeployment(null)}
       />
 
-      <AppDialog
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        title="Settings"
-        maxWidth="xs"
-        actions={
-          <AppButton type="button" onClick={() => setSettingsOpen(false)}>
-            Close
-          </AppButton>
-        }
-      >
-        <SectionLabel sx={{ mb: 0.5 }}>Danger zone</SectionLabel>
-        <Typography variant="body2" className="muted" sx={{ mb: 1.5 }}>
-          Purging deletes all deployments, nodes, metric history, and saved
-          configurations from the database. Running models are not stopped —
-          nodes re-register and their deployments are re-adopted automatically
-          within ~15 seconds.
-        </Typography>
-        <AppButton
-          type="button"
-          variant="stop"
-          onClick={() => setConfirmPurge(true)}
-          disabled={purgeMutation.isPending}
-        >
-          Purge database
-        </AppButton>
-      </AppDialog>
-
-      <ConfirmDialog
-        open={confirmPurge}
-        title="Purge the database?"
-        body="All deployments, nodes, metric history, and saved configurations will be deleted. This cannot be undone."
-        confirmLabel="Purge"
-        danger
-        onConfirm={() => purgeMutation.mutate()}
-        onCancel={() => setConfirmPurge(false)}
-      />
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       <AppDialog
         open={maintenanceTarget !== null}

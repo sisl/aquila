@@ -9,6 +9,7 @@ from app.models.node import Node
 from app.models.node_metric import NodeMetric
 from app.models.deployment import ACTIVE_STATUSES, Deployment
 from app.core.config import settings
+from app.services import runtime_settings
 from app.services.consul import consul_service
 from app.services.client_api import get_metrics, get_statuses, list_containers
 from app.services.deployment_state import set_status
@@ -20,6 +21,8 @@ from app.ws.manager import manager
 logger = logging.getLogger(__name__)
 
 # Consecutive failure counts before degrading status.
+# Defaults only — the live values come from runtime_settings
+# (node_failure_threshold / deployment_failure_threshold).
 _NODE_FAILURE_THRESHOLD = 3
 _DEPLOYMENT_FAILURE_THRESHOLD = 3
 
@@ -81,7 +84,7 @@ async def sync_nodes_from_consul(interval_seconds: int = 10) -> None:
                     # Only degrade to critical after consecutive failures.
                     if consul_status in ("critical", "warning"):
                         _node_fail_counts[service_id] = _node_fail_counts.get(service_id, 0) + 1
-                        if _node_fail_counts[service_id] < _NODE_FAILURE_THRESHOLD:
+                        if _node_fail_counts[service_id] < runtime_settings.get_int("node_failure_threshold"):
                             consul_status = "healthy"
                     else:
                         _node_fail_counts.pop(service_id, None)
@@ -162,7 +165,7 @@ async def sync_nodes_from_consul(interval_seconds: int = 10) -> None:
             # Avoid crashing the API if Consul/DB is temporarily unavailable.
             _log_loop_error("sync_nodes_from_consul", exc)
 
-        await asyncio.sleep(interval_seconds)
+        await asyncio.sleep(runtime_settings.get_int("nodes_sync_interval_seconds"))
 
 
 # Last cumulative counters seen per deployment, to compute deltas. vLLM's
@@ -258,7 +261,7 @@ def _start_timed_out(deployment, now: datetime) -> bool:
     if changed_at is None:
         return False
     return now - _as_aware(changed_at) > timedelta(
-        seconds=settings.start_timeout_seconds
+        seconds=runtime_settings.get_int("start_timeout_seconds")
     )
 
 
@@ -327,14 +330,14 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
                         _deployment_fail_counts[node_id] = (
                             _deployment_fail_counts.get(node_id, 0) + 1
                         )
-                        if _deployment_fail_counts[node_id] < _DEPLOYMENT_FAILURE_THRESHOLD:
+                        if _deployment_fail_counts[node_id] < runtime_settings.get_int("deployment_failure_threshold"):
                             # Keep previous deployment statuses on transient failure.
                             continue
-                        if _deployment_fail_counts[node_id] == _DEPLOYMENT_FAILURE_THRESHOLD:
+                        if _deployment_fail_counts[node_id] == runtime_settings.get_int("deployment_failure_threshold"):
                             logger.warning(
                                 "Client %s unreachable for %d checks: %s",
                                 node.hostname,
-                                _DEPLOYMENT_FAILURE_THRESHOLD,
+                                runtime_settings.get_int("deployment_failure_threshold"),
                                 exc,
                             )
                         reachable = False
@@ -445,7 +448,7 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
                                     error=(
                                         f"Start timed out: {node.hostname} never "
                                         f"reported deployment {key} within "
-                                        f"{settings.start_timeout_seconds}s."
+                                        f"{runtime_settings.get_int('start_timeout_seconds')}s."
                                     ),
                                 )
                         elif deployment.status == "running":
@@ -501,7 +504,7 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
         except Exception as exc:
             _log_loop_error("sync_deployments_from_clients", exc)
 
-        await asyncio.sleep(interval_seconds)
+        await asyncio.sleep(runtime_settings.get_int("deployments_sync_interval_seconds"))
 
 
 # Statuses considered "live" — eligible for expiry once past expires_at.
@@ -559,7 +562,7 @@ async def warn_expiring_deployments(session, now: datetime | None = None) -> lis
     warning automatically. Returns the ids warned about (for tests).
     """
     now = now or datetime.now(timezone.utc)
-    window = timedelta(minutes=settings.expiry_warning_minutes)
+    window = timedelta(minutes=runtime_settings.get_int("expiry_warning_minutes"))
     result = await session.execute(
         select(Deployment).where(Deployment.status.in_(_LIVE_STATUSES))
     )
@@ -591,7 +594,7 @@ async def warn_expiring_deployments(session, now: datetime | None = None) -> lis
 async def prune_node_metrics(session, now: datetime | None = None) -> None:
     """Drop metric samples older than the retention window."""
     now = now or datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=settings.node_metrics_retention_hours)
+    cutoff = now - timedelta(hours=runtime_settings.get_int("node_metrics_retention_hours"))
     await session.execute(delete(NodeMetric).where(NodeMetric.recorded_at < cutoff))
     await session.commit()
 
@@ -606,4 +609,4 @@ async def enforce_deployment_expiry(interval_seconds: int = 30) -> None:
             _clear_loop_error("enforce_deployment_expiry")
         except Exception as exc:
             _log_loop_error("enforce_deployment_expiry", exc)
-        await asyncio.sleep(interval_seconds)
+        await asyncio.sleep(runtime_settings.get_int("expiry_check_interval_seconds"))

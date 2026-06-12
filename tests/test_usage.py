@@ -223,75 +223,92 @@ class TestComputeUsageRates:
                 results.append(client_main._compute_usage_rates("d-1", snapshot))
         return results
 
-    def test_first_sample_has_no_rates(self):
-        (rates,) = self._rates([100.0], [_snapshot(prompt_tokens=1000)])
+    def test_unused_deployment_has_no_rates(self):
+        (rates,) = self._rates([100.0], [_snapshot()])
         assert rates == {}
 
-    def test_split_rates_from_time_histograms(self):
-        first, second = self._rates(
-            [100.0, 115.0],
+    def test_lifetime_averages_from_time_histograms(self):
+        # 3000 prompt tokens over 2s of cumulative prefill time, 300 generated
+        # tokens over 6s of decode time. Averages are available from the very
+        # first scrape — no previous window needed.
+        (rates,) = self._rates(
+            [100.0],
             [
-                _snapshot(),
                 _snapshot(
-                    # 3000 prompt tokens prefilled in 2s of processing time,
-                    # 300 generated tokens over 6s of decode time — inside a
-                    # 15s wall window. Idle time must not dilute the speeds.
                     prompt_tokens=3000.0,
                     generation_tokens=300.0,
                     prefill_sum=2.0,
                     decode_sum=6.0,
+                )
+            ],
+        )
+        assert rates["prompt_tps"] == 1500.0  # 3000 / 2s processing
+        assert rates["generation_tps"] == 50.0  # 300 / 6s decode
+
+    def test_idle_window_keeps_lifetime_averages(self):
+        active = _snapshot(
+            prompt_tokens=1000.0, generation_tokens=100.0, prefill_sum=1.0, decode_sum=2.0
+        )
+        first, idle = self._rates([100.0, 115.0], [active, dict(active)])
+        # Averages persist through idle windows — never zero, never absent.
+        assert idle["prompt_tps"] == first["prompt_tps"] == 1000.0
+        assert idle["generation_tps"] == first["generation_tps"] == 50.0
+        # Window throughput, by contrast, is only reported while active.
+        assert "prompt_throughput" not in idle
+        assert "generation_throughput" not in idle
+
+    def test_throughput_from_window_deltas(self):
+        _, second = self._rates(
+            [100.0, 115.0],
+            [
+                _snapshot(prompt_tokens=1000.0, prefill_sum=1.0),
+                _snapshot(
+                    prompt_tokens=4000.0,
+                    generation_tokens=300.0,
+                    prefill_sum=3.0,
+                    decode_sum=6.0,
                 ),
             ],
         )
-        assert first == {}
-        assert second["prompt_tps"] == 1500.0  # 3000 / 2s processing
-        assert second["generation_tps"] == 50.0  # 300 / 6s decode
-        assert second["prompt_throughput"] == 200.0  # 3000 / 15s wall
+        assert second["prompt_throughput"] == 200.0  # (4000-1000) / 15s wall
         assert second["generation_throughput"] == 20.0  # 300 / 15s wall
 
-    def test_idle_window_yields_no_rates(self):
-        active = _snapshot(prompt_tokens=1000.0, prefill_sum=1.0)
-        _, _, idle = self._rates(
-            [100.0, 115.0, 130.0], [_snapshot(), active, dict(active)]
-        )
-        assert idle == {}  # nothing moved: no stale speeds reported
-
-    def test_counter_reset_skips_window(self):
+    def test_counter_reset_recomputes_averages_skips_throughput(self):
         _, reset = self._rates(
             [100.0, 115.0],
-            [_snapshot(prompt_tokens=5000.0, prefill_sum=3.0), _snapshot(prompt_tokens=10.0)],
+            [
+                _snapshot(prompt_tokens=5000.0, prefill_sum=3.0),
+                _snapshot(prompt_tokens=10.0, prefill_sum=0.1),
+            ],
         )
-        assert reset == {}
+        # Lifetime averages restart cleanly from the new counters...
+        assert reset["prompt_tps"] == 100.0
+        # ...but no bogus negative-delta throughput is reported.
+        assert "prompt_throughput" not in reset
 
     def test_ttft_tpot_fallback_for_older_engines(self):
-        _, rates = self._rates(
-            [100.0, 110.0],
+        (rates,) = self._rates(
+            [100.0],
             [
-                _snapshot(),
                 _snapshot(
                     prompt_tokens=2000.0,
                     generation_tokens=100.0,
                     ttft_sum=4.0,  # no prefill/decode sums exposed
                     tpot_sum=2.5,
                     tpot_count=100.0,
-                ),
+                )
             ],
         )
         assert rates["prompt_tps"] == 500.0  # 2000 / 4s TTFT
         assert rates["generation_tps"] == 40.0  # 100 tokens / 2.5s TPOT
 
     def test_partial_availability(self):
-        _, rates = self._rates(
-            [100.0, 110.0],
-            [
-                _snapshot(),
-                _snapshot(generation_tokens=100.0, decode_sum=2.0),
-            ],
+        (rates,) = self._rates(
+            [100.0],
+            [_snapshot(generation_tokens=100.0, decode_sum=2.0)],
         )
         assert rates["generation_tps"] == 50.0
         assert "prompt_tps" not in rates
-        assert "prompt_throughput" not in rates
-        assert rates["generation_throughput"] == 10.0
 
 
 class TestHistogramRegex:

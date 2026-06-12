@@ -342,7 +342,7 @@ export type ImagePruneResult = {
 
 async function requestWithDetail<T>(
   path: string,
-  method: "GET" | "POST" | "DELETE" = "GET",
+  method: "GET" | "POST" | "PUT" | "DELETE" = "GET",
   jsonBody?: unknown
 ): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
@@ -485,10 +485,45 @@ export function deleteNode(
   return requestWithDetail(`/nodes/${nodeId}`, "DELETE");
 }
 
-// Factory reset: wipes deployments, nodes, metric history, and saved configs.
-// Running containers are untouched and re-register/re-adopt automatically.
-export function purgeDatabase(): Promise<{ purged: Record<string, number> }> {
-  return requestWithDetail(`/admin/purge`, "POST");
+// Selective purge: targets ⊆ {deployments, nodes, metrics, configs}; empty =
+// everything. Running containers are untouched and re-register/re-adopt.
+export function purgeDatabase(
+  targets: string[]
+): Promise<{ purged: Record<string, number> }> {
+  return requestWithDetail(`/admin/purge`, "POST", { targets });
+}
+
+// ---------------------------------------------------------------------------
+// Global runtime settings (DB-backed, editable in the Settings dialog)
+// ---------------------------------------------------------------------------
+
+export type RuntimeSettings = {
+  gateway_enabled: boolean;
+  gateway_timeout_seconds: number;
+  start_timeout_seconds: number;
+  default_port: number;
+  default_gpu_fraction: number;
+  default_duration_choice: string;
+  default_vllm_version: string;
+  default_max_failed_restarts: number | null;
+  webhook_url: string;
+  expiry_warning_minutes: number;
+  node_metrics_retention_hours: number;
+  nodes_sync_interval_seconds: number;
+  deployments_sync_interval_seconds: number;
+  expiry_check_interval_seconds: number;
+  node_failure_threshold: number;
+  deployment_failure_threshold: number;
+};
+
+export function fetchSettings(): Promise<RuntimeSettings> {
+  return requestWithDetail<RuntimeSettings>(`/settings`);
+}
+
+export function updateSettings(
+  partial: Partial<RuntimeSettings>
+): Promise<RuntimeSettings> {
+  return requestWithDetail<RuntimeSettings>(`/settings`, "PUT", partial);
 }
 
 // ---------------------------------------------------------------------------

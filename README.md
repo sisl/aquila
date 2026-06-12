@@ -21,7 +21,7 @@ Deployment is as simple as running the CLI on the host and on each client, with 
 - Register and manage GPU nodes that run vLLM workloads.
 - Create model configurations and launch models on selected nodes — HF hub models, local fine-tuned checkpoints, and LoRA adapters.
 - Reach every model through one OpenAI-compatible gateway URL (`/v1`) that stays stable across node moves, or talk to nodes directly.
-- Track per-deployment usage from vLLM's own metrics: lifetime tokens, request counts, and live tokens/s.
+- Track per-deployment usage from vLLM's own metrics: lifetime tokens, request counts, and average read/generation speeds (over processing time, idle-free).
 - Export a reproducibility manifest per deployment (model, HF revision, seed, vLLM version, image digest, full config) and redeploy from it.
 - Get Slack/webhook notifications when deployments become ready, fail, or are about to expire — and extend running deployments without a restart.
 - Monitor node health, GPU/disk metrics with history charts, and model status; put nodes into maintenance mode for servicing.
@@ -56,8 +56,9 @@ The gateway routes by served model name (including LoRA adapter names), supports
 
 ## Built for research workflows
 - **Reproducibility**: pin HF revision + seed, capture the exact vLLM image digest, and export a one-click JSON manifest per deployment that can be cited and redeployed (`POST /api/deployments/from-manifest`). Secrets never leave the cluster — manifests contain env var keys only.
-- **Usage accounting**: each deployment's row shows lifetime prompt/completion tokens, total requests, and live tokens/s, fed by vLLM's own Prometheus counters — gateway and direct traffic are both counted.
-- **Notifications**: set `WEBHOOK_URL` in the backend env to get Slack/webhook messages when a model becomes ready, errors out (with classified cause), or is about to expire. Running deployments can be extended without a restart.
+- **Usage accounting**: each deployment's row shows lifetime prompt/completion tokens, total requests, and average read (prefill) / generation (decode) speeds measured over actual processing time — idle never dilutes them and they stay visible between bursts; the tooltip adds engine-wide throughput and queue depth. Fed by vLLM's own Prometheus metrics, so gateway and direct traffic are both counted.
+- **Notifications**: configure a Slack/webhook URL (Settings dialog or `WEBHOOK_URL` env default) to get messages when a model becomes ready, errors out (with classified cause), or is about to expire. Running deployments can be extended without a restart.
+- **Live global settings**: the dashboard's Settings dialog tunes the cluster without restarts — gateway on/off + timeout, deployment start timeout, deploy-form defaults (port, GPU fraction, duration, vLLM version), notifications, metric retention, granular database purge, and sync tuning. Saved values override env defaults.
 - **Local models & LoRA**: upload checkpoint folders/archives from the browser (streamed, with progress) or pull them from a URL directly onto a node — or allowlist pre-existing directories via `MODEL_DIRS`. Local checkpoints and LoRA adapters are mounted read-only and path-validated.
 
 ## Architecture
