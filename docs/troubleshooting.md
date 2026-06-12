@@ -110,7 +110,14 @@ Explanation:
 ## Podman is installed but not detected
 **Symptoms**: The node's Manage dialog doesn't list `podman` even though Podman is installed.
 
-The agent talks to Podman through its Docker-compatible API socket, which is off by default. Enable it: `systemctl --user enable --now podman.socket` (rootless) or `systemctl enable --now podman.socket` (rootful). A non-standard socket path can be supplied via `PODMAN_SOCK` in the client `.env`. Detection refreshes within ~1 minute.
+The agent talks to Podman through its Docker-compatible API socket — **installing the podman package does not start it**. The two common causes:
+
+- The user socket service is enabled but not running (`systemctl --user status podman.socket` shows `inactive (dead)`). Start it: `systemctl --user enable --now podman.socket`. If the agent runs as a systemd service for a user that isn't logged in, also enable lingering: `loginctl enable-linger <user>`.
+- Only the **rootful** socket (`/run/podman/podman.sock`, owned `root:root`) exists, which the agent user cannot access. Use the rootless socket instead (command above); the agent logs a warning naming this case.
+
+A non-standard socket path can be supplied via `PODMAN_SOCK` in the client `.env`. Detection refreshes within ~1 minute of the socket appearing.
+
+Version note: Podman 3.x works for deployments, but its API streams no byte-level pull progress (the status chip shows `pulling image` without GB figures) and GPU support via CDI needs Podman ≥ 4.1 — prefer Podman 4+ where available.
 
 ## GPU deployment fails on a Podman node
 **Symptoms**: Deployments on a Podman node error immediately; the log mentions devices or CDI.

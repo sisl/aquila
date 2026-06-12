@@ -28,6 +28,22 @@ with mock.patch.dict("sys.modules", {"app.consul": mock.MagicMock()}):
 from httpx import AsyncClient, ASGITransport
 
 
+@pytest.fixture(autouse=True)
+def _isolate_runtimes():
+    """Keep unit tests off the machine's real container daemons.
+
+    The runtime probe is reset around every test and Podman is unreachable by
+    default (tests that exercise Podman paths patch `_podman` themselves,
+    which takes precedence inside their own `with` blocks).
+    """
+    client_main._runtime_probe = (0.0, [])
+    with mock.patch.object(
+        client_main, "_podman", side_effect=RuntimeError("isolated in tests")
+    ):
+        yield
+    client_main._runtime_probe = (0.0, [])
+
+
 # ---------------------------------------------------------------------------
 # _resolve_image_tag
 # ---------------------------------------------------------------------------
@@ -1287,9 +1303,12 @@ async def test_images_list():
 async def test_delete_image_not_found():
     # Use the ImageNotFound class the module itself imported so the endpoint's
     # `except` matches it regardless of how docker was imported under test.
+    # Runtime detection is pinned so the test never probes a real daemon.
     fake = mock.MagicMock()
     fake.images.remove.side_effect = client_main.ImageNotFound("nope")
-    with mock.patch.object(client_main, "_docker", return_value=fake):
+    with mock.patch.object(
+        client_main, "_available_runtimes", return_value=["docker"]
+    ), mock.patch.object(client_main, "_docker", return_value=fake):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.delete("/images/nonexistent")

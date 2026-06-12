@@ -358,8 +358,24 @@ def _available_runtimes() -> list[str]:
         try:
             _runtime_client(runtime).ping()
             available.append(runtime)
-        except Exception:
-            continue
+        except Exception as exc:
+            # Surface actionable failures: a podman socket that exists but
+            # refuses the connection (service down mid-handshake, root-owned
+            # rootful socket) is invisible otherwise.
+            if runtime == "podman" and any(
+                Path(sock).exists() for sock in _podman_socket_candidates()
+            ):
+                logger.warning(
+                    "A Podman socket exists but is not usable (%s). If it is "
+                    "the rootful /run/podman/podman.sock, the agent user "
+                    "cannot access it — enable the rootless socket instead: "
+                    "systemctl --user enable --now podman.socket",
+                    exc,
+                )
+            else:
+                logger.debug("Runtime %s unavailable: %s", runtime, exc)
+    if available != cached:
+        logger.info("Container runtimes available: %s", ", ".join(available) or "none")
     _runtime_probe = (now, available)
     return list(available)
 
@@ -1339,8 +1355,11 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
     def _log(msg: str) -> None:
         logger.info(msg)
         _append_agent_log(key, msg)
-        # Surface the derived-image build in the reported phase (builds have
-        # no byte totals, unlike pulls).
+        # Surface pull/build phases from the log stream too: some runtimes
+        # (e.g. Podman 3.x) stream no byte-level progress, so the progress
+        # callback alone would leave the phase stuck at "preparing image".
+        if msg.startswith("[docker] Pulling ") and key in _statuses:
+            _statuses[key]["phase"] = "pulling image"
         if msg.startswith("[docker] Building image") and key in _statuses:
             _statuses[key]["phase"] = "building image"
             _statuses[key].pop("pull_progress", None)
