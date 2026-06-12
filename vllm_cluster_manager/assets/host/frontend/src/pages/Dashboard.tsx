@@ -269,7 +269,6 @@ export function Dashboard() {
         return [deployment, ...existing];
       });
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
-      setLogsDeploymentId(deployment.id);
       toast.success(`Deployment of ${deployment.model_name} started.`);
       setModelName("");
       setPort(8001);
@@ -390,7 +389,6 @@ export function Dashboard() {
     onSuccess: (deployment) => {
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
       setRestartTarget(null);
-      setLogsDeploymentId(deployment.id);
       toast.success(`Restarted ${deployment.model_name}.`);
     },
     onError: (error) => {
@@ -1584,20 +1582,6 @@ export function Dashboard() {
                 >
                   {startMutation.isPending ? "Starting..." : "Deploy Model"}
                 </Button>
-                {startMutation.isPending && (
-                  <Box sx={{ mt: 1.5 }}>
-                    <LinearProgress sx={{ mb: 0.5, borderRadius: 1 }} />
-                    <Typography variant="caption" className="muted">
-                      {vllmVersion.trim()
-                        ? `Installing vLLM ${vllmVersion.trim()}`
-                        : "Installing latest stable vLLM"}
-                      {cleanedExtraPackages.length > 0
-                        ? ` + ${cleanedExtraPackages.length} extra package(s)`
-                        : ""}
-                      {" — creating isolated environment. This may take a few minutes."}
-                    </Typography>
-                  </Box>
-                )}
               </Box>
             </Stack>
           </Paper>
