@@ -70,7 +70,7 @@ function gpuLine(nodeId: number, gpu: GpuUsage) {
       <Box component="span" sx={{ opacity: 0.65 }}>
         {" "}· compute{" "}
       </Box>
-      {gpu.utilization ?? "?"}%
+      {gpu.utilization != null ? `${gpu.utilization}%` : "n/a"}
       <Box component="span" sx={{ opacity: 0.65 }}>
         {" "}· memory{" "}
       </Box>
@@ -118,7 +118,7 @@ function GpuCell({ nodeId, gpus }: { nodeId: number; gpus: GpuUsage[] }) {
         <Box component="span" sx={{ opacity: 0.65 }}>
           {" "}· compute{" "}
         </Box>
-        {avgUtil ?? "?"}% avg
+        {avgUtil != null ? `${avgUtil}% avg` : "n/a"}
         <Box component="span" sx={{ opacity: 0.65 }}>
           {" "}· memory{" "}
         </Box>

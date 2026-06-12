@@ -64,7 +64,9 @@ The **Usage** column of the deployments table shows, per deployment:
 
 - lifetime prompt / completion tokens
 - total completed requests
-- the current generation rate in tokens/s
-- (in the tooltip, when the vLLM version exposes them) requests currently running and queued
+- live **read** (prefill) and **generation** (decode) speeds in tokens/s — or `idle` when nothing ran in the last window
+- (in the tooltip) the full breakdown: per-request speeds, engine-wide window throughput, and requests currently running/queued
 
-The same values are included in `GET /api/deployments/` (`total_prompt_tokens`, `total_completion_tokens`, `total_requests`, and — for running deployments — `tokens_per_second`, `requests_running`, `requests_waiting`).
+The two speeds are **per-request and idle-free**: token deltas are divided by the *processing-time* deltas from vLLM's per-request time histograms (`request_prefill_time_seconds` / `request_decode_time_seconds` on V1 engines), so a short burst inside a scrape window reports the speed *during* the burst, not a wall-clock average diluted by idle time. On older engines without those histograms, TTFT/TPOT histograms are used as a fallback (TTFT includes queue wait, so the read speed there is a lower bound). The tooltip additionally shows **engine throughput** — token deltas over the wall-clock window — the aggregate view across all concurrent requests.
+
+The same values are included in `GET /api/deployments/` (`total_prompt_tokens`, `total_completion_tokens`, `total_requests`, and — for running deployments — `prompt_tps`, `generation_tps`, `prompt_throughput`, `generation_throughput`, `requests_running`, `requests_waiting`).

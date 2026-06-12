@@ -180,7 +180,14 @@ live_usage: dict[int, dict[str, float | int]] = {}
 # DeploymentRead by the deployments API; never persisted.
 pull_progress: dict[int, dict[str, float | int]] = {}
 
-_LIVE_USAGE_KEYS = ("tokens_per_second", "requests_running", "requests_waiting")
+_LIVE_USAGE_KEYS = (
+    "prompt_tps",
+    "generation_tps",
+    "prompt_throughput",
+    "generation_throughput",
+    "requests_running",
+    "requests_waiting",
+)
 
 
 def _update_live_usage(deployment_id: int, usage: dict[str, object]) -> None:

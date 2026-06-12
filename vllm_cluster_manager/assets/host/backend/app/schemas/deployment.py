@@ -47,8 +47,13 @@ class DeploymentRead(DeploymentBase):
     total_completion_tokens: int = 0
     total_requests: int = 0
     # Live metrics from the latest scrape (not persisted; attached to running
-    # deployments by the list endpoint).
-    tokens_per_second: float | None = None
+    # deployments by the list endpoint). Speeds are split read (prefill) vs
+    # generation (decode): *_tps are per-request, idle-free (token deltas over
+    # processing-time deltas); *_throughput are engine-wide over the window.
+    prompt_tps: float | None = None
+    generation_tps: float | None = None
+    prompt_throughput: float | None = None
+    generation_throughput: float | None = None
     requests_running: int | None = None
     requests_waiting: int | None = None
     # Image-pull progress while starting (not persisted; attached by the list

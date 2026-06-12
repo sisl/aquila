@@ -617,6 +617,87 @@ class TestLocalModelPull:
 
 
 # ---------------------------------------------------------------------------
+# GPU metrics (unified-memory devices)
+# ---------------------------------------------------------------------------
+
+
+def _fake_vmem(used_mb: int = 51200, total_mb: int = 131072):
+    return mock.MagicMock(
+        used=used_mb * 1024 * 1024, total=total_mb * 1024 * 1024, percent=39.1
+    )
+
+
+class TestGpuMetricsUnifiedMemory:
+    def test_smi_int(self):
+        assert client_main._smi_int("42") == 42
+        assert client_main._smi_int("42.7") == 42
+        assert client_main._smi_int("[N/A]") is None
+
+    def test_parse_keeps_utilization_when_memory_na(self):
+        output = "0, NVIDIA GB10, 37, [N/A], [N/A]\n"
+        (gpu,) = client_main._parse_nvidia_smi_gpus(output)
+        assert gpu["utilization"] == 37
+        assert gpu["memory_total_mb"] is None
+
+    def test_parse_normal_row_and_junk_lines(self):
+        output = "garbage line\n0, NVIDIA H100, 64, 73728, 81920\n"
+        (gpu,) = client_main._parse_nvidia_smi_gpus(output)
+        assert gpu == {
+            "index": 0,
+            "name": "NVIDIA H100",
+            "source": "nvidia-smi",
+            "utilization": 64,
+            "memory_used_mb": 73728,
+            "memory_total_mb": 81920,
+        }
+
+    def test_substitute_fills_ram_keeps_compute(self):
+        gpus = [
+            {"index": 0, "utilization": 37, "memory_used_mb": None, "memory_total_mb": None},
+            {"index": 1, "utilization": 64, "memory_used_mb": 100, "memory_total_mb": 200},
+        ]
+        with mock.patch.object(client_main.psutil, "virtual_memory", return_value=_fake_vmem()):
+            result = client_main._substitute_unified_memory(gpus)
+        assert result[0]["utilization"] == 37  # real compute preserved
+        assert result[0]["memory_total_mb"] == 131072  # RAM substituted
+        assert result[0]["source"] == "unified"
+        assert result[1]["memory_total_mb"] == 200  # dedicated VRAM untouched
+        assert "source" not in result[1]
+
+    def test_gpu_metrics_unified_device_via_nvidia_smi(self):
+        # DGX Spark-style device: real utilization.gpu, [N/A] VRAM fields.
+        broken_nvml = mock.MagicMock()
+        broken_nvml.nvmlInit.side_effect = RuntimeError("no NVML")
+        with mock.patch.dict("sys.modules", {"pynvml": broken_nvml}), mock.patch.object(
+            client_main.shutil, "which", return_value="/usr/bin/nvidia-smi"
+        ), mock.patch.object(
+            client_main.subprocess,
+            "check_output",
+            return_value="0, NVIDIA GB10, 37, [N/A], [N/A]\n",
+        ), mock.patch.object(
+            client_main.psutil, "virtual_memory", return_value=_fake_vmem()
+        ):
+            (gpu,) = client_main._gpu_metrics()
+        assert gpu["utilization"] == 37  # compute, NOT the memory percentage
+        assert gpu["memory_used_mb"] == 51200
+        assert gpu["memory_total_mb"] == 131072
+        assert gpu["source"] == "unified"
+
+    def test_gpu_metrics_no_tooling_reports_unknown_compute(self):
+        broken_nvml = mock.MagicMock()
+        broken_nvml.nvmlInit.side_effect = RuntimeError("no NVML")
+        with mock.patch.dict("sys.modules", {"pynvml": broken_nvml}), mock.patch.object(
+            client_main.shutil, "which", return_value=None
+        ), mock.patch.object(
+            client_main.psutil, "virtual_memory", return_value=_fake_vmem()
+        ):
+            (gpu,) = client_main._gpu_metrics()
+        # Without any GPU tooling, compute is unknown — never the RAM percent.
+        assert gpu["utilization"] is None
+        assert gpu["memory_total_mb"] == 131072
+
+
+# ---------------------------------------------------------------------------
 # Image pull progress
 # ---------------------------------------------------------------------------
 

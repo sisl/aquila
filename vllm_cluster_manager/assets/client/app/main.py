@@ -835,7 +835,7 @@ def _pull_image(client: "docker.DockerClient", image_ref: str, log, progress_cb=
                 if total > 0:
                     percent = downloaded / total * 100
                     now = time.monotonic()
-                    if now - last_report[0] >= 2.0 or percent - last_report[1] >= 1.0:
+                    if now - last_report[0] >= 1.0 or percent - last_report[1] >= 1.0:
                         last_report = (now, percent)
                         progress_cb(downloaded, total)
     except (APIError, RuntimeError) as exc:
@@ -1597,23 +1597,73 @@ _VLLM_GAUGE_RE = re.compile(
     r"(?:\{[^}]*\})?\s+(\S+)\s*$"
 )
 
-# Last (total_tokens, monotonic_time) per deployment key, to report a
-# tokens-per-second rate alongside the cumulative counters.
-_usage_rate_state: dict[str, tuple[int, float]] = {}
+# Per-request processing-time histograms. prefill/decode time (V1 engines) are
+# the precise sources for idle-free read/generation speeds; TTFT/TPOT are the
+# fallback on older engines (TTFT includes queue wait — a lower bound).
+_VLLM_HIST_RE = re.compile(
+    r"^vllm:(request_prefill_time_seconds|request_decode_time_seconds"
+    r"|time_to_first_token_seconds|time_per_output_token_seconds)"
+    r"_(sum|count)"
+    r"(?:\{[^}]*\})?\s+(\S+)\s*$"
+)
+
+# Last usage snapshot per deployment key (counters + histogram sums + "_ts"),
+# to derive rates between consecutive scrapes.
+_usage_snapshots: dict[str, dict[str, float]] = {}
 
 
-def _tokens_per_second(key: str, total_tokens: int) -> float | None:
-    """Rate from consecutive scrapes; None on the first sample or a reset."""
-    now = time.monotonic()
-    previous = _usage_rate_state.get(key)
-    _usage_rate_state[key] = (total_tokens, now)
+def _compute_usage_rates(key: str, snapshot: dict[str, float]) -> dict[str, float]:
+    """Token rates between consecutive scrapes, split read/generation.
+
+    Per-request speeds divide token deltas by *processing-time* deltas from
+    vLLM's per-request histograms, so idle wall-clock never dilutes them (a
+    2 s burst inside a 15 s window divides by 2 s). Throughput keys divide by
+    wall clock — the engine-wide view. A rate is omitted whenever its
+    denominator didn't advance (idle window or metric not exposed); a counter
+    moving backwards means the container restarted and the window is skipped.
+    """
+    snapshot = dict(snapshot)
+    snapshot["_ts"] = time.monotonic()
+    previous = _usage_snapshots.get(key)
+    _usage_snapshots[key] = snapshot
     if previous is None:
-        return None
-    last_total, last_time = previous
-    elapsed = now - last_time
-    if elapsed <= 0 or total_tokens < last_total:  # reset after restart
-        return None
-    return round((total_tokens - last_total) / elapsed, 1)
+        return {}
+    deltas = {k: snapshot.get(k, 0.0) - previous.get(k, 0.0) for k in snapshot}
+    if any(value < 0 for value in deltas.values()):  # reset after restart
+        return {}
+
+    rates: dict[str, float] = {}
+
+    def _rate(numerator: float, denominator: float) -> float | None:
+        if numerator <= 0 or denominator <= 0:
+            return None
+        return round(numerator / denominator, 1)
+
+    # Per-request speeds (idle-free): primary prefill/decode time sums,
+    # TTFT/TPOT fallback.
+    prompt_tps = _rate(deltas["prompt_tokens"], deltas.get("prefill_sum", 0.0))
+    if prompt_tps is None:
+        prompt_tps = _rate(deltas["prompt_tokens"], deltas.get("ttft_sum", 0.0))
+    if prompt_tps is not None:
+        rates["prompt_tps"] = prompt_tps
+
+    generation_tps = _rate(
+        deltas["generation_tokens"], deltas.get("decode_sum", 0.0)
+    )
+    if generation_tps is None:
+        generation_tps = _rate(deltas.get("tpot_count", 0.0), deltas.get("tpot_sum", 0.0))
+    if generation_tps is not None:
+        rates["generation_tps"] = generation_tps
+
+    # Engine-wide throughput over the wall-clock window (only when active).
+    wall = deltas["_ts"]
+    throughput = _rate(deltas["prompt_tokens"], wall)
+    if throughput is not None:
+        rates["prompt_throughput"] = throughput
+    throughput = _rate(deltas["generation_tokens"], wall)
+    if throughput is not None:
+        rates["generation_throughput"] = throughput
+    return rates
 
 
 async def _scrape_vllm_metrics(port: int, key: str | None = None) -> dict[str, object] | None:
@@ -1636,6 +1686,7 @@ async def _scrape_vllm_metrics(port: int, key: str | None = None) -> dict[str, o
         "request_success_total": 0.0,
     }
     gauges: dict[str, float] = {}
+    hist: dict[str, float] = {}
     matched = False
     for line in text.splitlines():
         match = _VLLM_COUNTER_RE.match(line)
@@ -1654,6 +1705,14 @@ async def _scrape_vllm_metrics(port: int, key: str | None = None) -> dict[str, o
                 )
             except ValueError:
                 continue
+            continue
+        match = _VLLM_HIST_RE.match(line)
+        if match:
+            hist_key = f"{match.group(1)}_{match.group(2)}"
+            try:
+                hist[hist_key] = hist.get(hist_key, 0.0) + float(match.group(3))
+            except ValueError:
+                continue
     if not matched:
         return None
 
@@ -1667,11 +1726,16 @@ async def _scrape_vllm_metrics(port: int, key: str | None = None) -> dict[str, o
     if "num_requests_waiting" in gauges:
         usage["requests_waiting"] = int(gauges["num_requests_waiting"])
     if key is not None:
-        rate = _tokens_per_second(
-            key, usage["prompt_tokens"] + usage["generation_tokens"]
-        )
-        if rate is not None:
-            usage["tokens_per_second"] = rate
+        snapshot = {
+            "prompt_tokens": totals["prompt_tokens_total"],
+            "generation_tokens": totals["generation_tokens_total"],
+            "prefill_sum": hist.get("request_prefill_time_seconds_sum", 0.0),
+            "decode_sum": hist.get("request_decode_time_seconds_sum", 0.0),
+            "ttft_sum": hist.get("time_to_first_token_seconds_sum", 0.0),
+            "tpot_sum": hist.get("time_per_output_token_seconds_sum", 0.0),
+            "tpot_count": hist.get("time_per_output_token_seconds_count", 0.0),
+        }
+        usage.update(_compute_usage_rates(key, snapshot))
     return usage
 
 
@@ -2533,17 +2597,71 @@ def delete_local_model(name: str) -> dict[str, str]:
     return {"status": "deleted", "name": name}
 
 
+def _unified_memory_mb() -> tuple[int, int]:
+    mem = psutil.virtual_memory()
+    return round(mem.used / (1024 * 1024)), round(mem.total / (1024 * 1024))
+
+
+def _smi_int(value: str) -> int | None:
+    """Parse a numeric nvidia-smi CSV field; '[N/A]' (unified memory) -> None."""
+    try:
+        return int(float(value))
+    except ValueError:
+        return None
+
+
+def _parse_nvidia_smi_gpus(output: str) -> list[dict[str, object]]:
+    """Per-field tolerant parse: unified-memory devices (e.g. DGX Spark)
+    report real utilization.gpu but '[N/A]' for dedicated VRAM fields."""
+    gpus: list[dict[str, object]] = []
+    for line in output.strip().splitlines():
+        parts = [item.strip() for item in line.split(",")]
+        if len(parts) < 5:
+            continue
+        index = _smi_int(parts[0])
+        if index is None:
+            continue
+        gpus.append(
+            {
+                "index": index,
+                "name": parts[1],
+                "source": "nvidia-smi",
+                "utilization": _smi_int(parts[2]),
+                "memory_used_mb": _smi_int(parts[3]),
+                "memory_total_mb": _smi_int(parts[4]),
+            }
+        )
+    return gpus
+
+
+def _substitute_unified_memory(
+    gpus: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Fill missing dedicated-VRAM numbers from system RAM (unified memory),
+    keeping the device's real compute utilization untouched."""
+    for gpu in gpus:
+        if not gpu.get("memory_total_mb"):
+            used, total = _unified_memory_mb()
+            gpu["memory_used_mb"] = used
+            gpu["memory_total_mb"] = total
+            gpu["source"] = "unified"
+    return gpus
+
+
 def _gpu_metrics() -> list[dict[str, object]]:
     def _unified_memory_metrics() -> list[dict[str, object]]:
-        mem = psutil.virtual_memory()
+        # Last resort (no NVML, no nvidia-smi): memory comes from system RAM
+        # and compute is genuinely unknown — report it as such instead of
+        # passing the RAM percentage off as utilization.
+        used, total = _unified_memory_mb()
         return [
             {
                 "index": 0,
                 "name": "Unified memory",
                 "source": "unified",
-                "utilization": int(round(mem.percent)),
-                "memory_used_mb": round(mem.used / (1024 * 1024)),
-                "memory_total_mb": round(mem.total / (1024 * 1024)),
+                "utilization": None,
+                "memory_used_mb": used,
+                "memory_total_mb": total,
             }
         ]
 
@@ -2555,20 +2673,30 @@ def _gpu_metrics() -> list[dict[str, object]]:
         gpus = []
         for index in range(count):
             handle = pynvml.nvmlDeviceGetHandleByIndex(index)
-            util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-            mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            name = pynvml.nvmlDeviceGetName(handle).decode("utf-8", errors="ignore")
+            name = pynvml.nvmlDeviceGetName(handle)
+            if isinstance(name, bytes):
+                name = name.decode("utf-8", errors="ignore")
+            try:
+                utilization = pynvml.nvmlDeviceGetUtilizationRates(handle).gpu
+            except Exception:
+                utilization = None
+            try:
+                mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                mem_used = round(mem.used / (1024 * 1024))
+                mem_total = round(mem.total / (1024 * 1024))
+            except Exception:
+                mem_used = mem_total = 0
             gpus.append(
                 {
                     "index": index,
                     "name": name,
                     "source": "nvml",
-                    "utilization": util.gpu,
-                    "memory_used_mb": round(mem.used / (1024 * 1024)),
-                    "memory_total_mb": round(mem.total / (1024 * 1024)),
+                    "utilization": utilization,
+                    "memory_used_mb": mem_used,
+                    "memory_total_mb": mem_total,
                 }
             )
-        return gpus
+        return _substitute_unified_memory(gpus)
     except Exception as exc:
         logger.warning("NVML GPU metrics failed, falling back to nvidia-smi: %s", exc)
 
@@ -2592,29 +2720,11 @@ def _gpu_metrics() -> list[dict[str, object]]:
         logger.warning("Falling back to unified memory metrics from system RAM.")
         return _unified_memory_metrics()
 
-    gpus = []
-    for line in output.strip().splitlines():
-        parts = [item.strip() for item in line.split(",")]
-        if len(parts) < 5:
-            continue
-        index_str, name, util_str, used_str, total_str = parts[:5]
-        try:
-            gpus.append(
-                {
-                    "index": int(index_str),
-                    "name": name,
-                    "source": "nvidia-smi",
-                    "utilization": int(float(util_str)),
-                    "memory_used_mb": int(float(used_str)),
-                    "memory_total_mb": int(float(total_str)),
-                }
-            )
-        except ValueError:
-            continue
+    gpus = _parse_nvidia_smi_gpus(output)
     if not gpus:
         logger.warning("nvidia-smi returned no GPU rows; using unified memory metrics.")
         return _unified_memory_metrics()
-    return gpus
+    return _substitute_unified_memory(gpus)
 
 
 if __name__ == "__main__":

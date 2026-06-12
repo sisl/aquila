@@ -51,7 +51,11 @@ export type Deployment = {
   total_completion_tokens?: number;
   total_requests?: number;
   // Live metrics from the latest scrape (running deployments only).
-  tokens_per_second?: number | null;
+  // *_tps: per-request, idle-free speeds; *_throughput: engine-wide window rate.
+  prompt_tps?: number | null;
+  generation_tps?: number | null;
+  prompt_throughput?: number | null;
+  generation_throughput?: number | null;
   requests_running?: number | null;
   requests_waiting?: number | null;
   // Image-pull progress while starting (transient).
@@ -471,6 +475,14 @@ export function deleteNodeModelCache(
   name: string
 ): Promise<{ status: string; name: string }> {
   return requestWithDetail(`/nodes/${nodeId}/models/cache/${name}`, "DELETE");
+}
+
+// Removes a node and its deployment records. Containers are untouched: a live
+// node re-registers within seconds; a stale node disappears for good.
+export function deleteNode(
+  nodeId: number
+): Promise<{ status: string; hostname: string; deployments_deleted: number }> {
+  return requestWithDetail(`/nodes/${nodeId}`, "DELETE");
 }
 
 // Factory reset: wipes deployments, nodes, metric history, and saved configs.

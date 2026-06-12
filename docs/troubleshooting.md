@@ -10,6 +10,11 @@ Checks:
 - Confirm the host is reachable from the client (use a non-loopback `--host-ip`).
 - Check firewall rules between client and host.
 
+## Node stuck as "critical" after decommissioning
+**Symptoms**: A node whose agent was shut down (or that no longer exists) stays in the Nodes table with status `critical`.
+
+Nodes are created automatically from discovery but never removed automatically. Open the node's **Manage** dialog and click **Remove Node** — this deletes the node, its deployment records, and its discovery registration. If the agent is actually still running, the node simply re-registers within seconds (no harm done).
+
 ## UI loads but data is empty
 **Symptoms**: UI opens, but no nodes or deployments show up.
 

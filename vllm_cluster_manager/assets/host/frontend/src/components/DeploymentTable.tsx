@@ -113,16 +113,40 @@ function formatRate(value: number): string {
 }
 
 function usageTooltip(deployment: Deployment): string {
-  const parts = [
+  const lines = [
     `${deployment.total_requests} requests — prompt / completion tokens`
   ];
+  const perRequest: string[] = [];
+  if (typeof deployment.prompt_tps === "number") {
+    perRequest.push(`read ${formatRate(deployment.prompt_tps)}`);
+  }
+  if (typeof deployment.generation_tps === "number") {
+    perRequest.push(`generation ${formatRate(deployment.generation_tps)}`);
+  }
+  if (perRequest.length > 0) {
+    lines.push(`Per request: ${perRequest.join(" · ")} tok/s (processing time only)`);
+  }
+  const throughput: string[] = [];
+  if (typeof deployment.prompt_throughput === "number") {
+    throughput.push(`read ${formatRate(deployment.prompt_throughput)}`);
+  }
+  if (typeof deployment.generation_throughput === "number") {
+    throughput.push(`generation ${formatRate(deployment.generation_throughput)}`);
+  }
+  if (throughput.length > 0) {
+    lines.push(`Engine throughput: ${throughput.join(" · ")} tok/s (last window)`);
+  }
+  const queue: string[] = [];
   if (typeof deployment.requests_running === "number") {
-    parts.push(`${deployment.requests_running} running`);
+    queue.push(`${deployment.requests_running} running`);
   }
   if (typeof deployment.requests_waiting === "number") {
-    parts.push(`${deployment.requests_waiting} queued`);
+    queue.push(`${deployment.requests_waiting} queued`);
   }
-  return parts.join(" · ");
+  if (queue.length > 0) {
+    lines.push(queue.join(" · "));
+  }
+  return lines.join("\n");
 }
 
 // Show the client-reported load phase while a deployment is loading, so a
@@ -402,7 +426,14 @@ export function DeploymentTable({
                 {!compact && (
                   <TableCell>
                     {deployment.total_requests ? (
-                      <Tooltip title={usageTooltip(deployment)} enterDelay={500}>
+                      <Tooltip
+                        title={
+                          <Box sx={{ whiteSpace: "pre-line" }}>
+                            {usageTooltip(deployment)}
+                          </Box>
+                        }
+                        enterDelay={500}
+                      >
                         <Box>
                           <Typography variant="body2" sx={{ whiteSpace: "nowrap" }}>
                             {formatTokens(deployment.total_prompt_tokens)} /{" "}
@@ -414,8 +445,21 @@ export function DeploymentTable({
                             sx={{ whiteSpace: "nowrap" }}
                           >
                             {formatTokens(deployment.total_requests)} req
-                            {typeof deployment.tokens_per_second === "number" &&
-                              ` · ${formatRate(deployment.tokens_per_second)} tok/s`}
+                            {typeof deployment.prompt_tps === "number" ||
+                            typeof deployment.generation_tps === "number"
+                              ? ` · ${[
+                                  typeof deployment.prompt_tps === "number"
+                                    ? `read ${formatRate(deployment.prompt_tps)}`
+                                    : null,
+                                  typeof deployment.generation_tps === "number"
+                                    ? `gen ${formatRate(deployment.generation_tps)}`
+                                    : null
+                                ]
+                                  .filter(Boolean)
+                                  .join(" · ")} tok/s`
+                              : deployment.status === "running"
+                                ? " · idle"
+                                : ""}
                           </Typography>
                         </Box>
                       </Tooltip>

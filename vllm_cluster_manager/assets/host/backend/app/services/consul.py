@@ -39,5 +39,9 @@ class ConsulService:
         _, services = self.client.catalog.services()
         return services or {}
 
+    def deregister_service(self, service_id: str) -> None:
+        """Drop a service registration (used when removing a stale node)."""
+        self.client.agent.service.deregister(service_id)
+
 
 consul_service = ConsulService()

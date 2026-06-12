@@ -73,6 +73,8 @@ To wipe the database intentionally:
 
 Re-adoption restores owner, lease, and launch configuration from a manifest each vLLM container carries as a Docker label (set at launch). The restored lease is the original one — extensions granted later are not preserved, and a lease that elapsed in the meantime is enforced (the deployment is stopped as expired).
 
+To remove a **single** stale node instead of purging everything, open the node's **Manage** dialog and click **Remove Node**: it deletes the node, its deployment records, and its Consul registration. Running containers are not touched — an active node re-registers within seconds (and its deployments are re-adopted), while a decommissioned node disappears for good.
+
 !!! note
     Deployment environment variable values (e.g. `HF_TOKEN`) are stored on the vLLM container itself — in its Docker `Env` and in the launch-manifest label — and are reported by the client agent's unauthenticated LAN API during re-adoption. This is the same trust domain as the rest of the satellite API (logs, metrics); keep client ports restricted to your cluster network.
 

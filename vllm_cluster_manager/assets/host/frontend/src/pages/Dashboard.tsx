@@ -223,9 +223,17 @@ export function Dashboard() {
   const deploymentsQuery = useQuery({
     queryKey: ["deployments"],
     queryFn: fetchDeployments,
-    refetchInterval: pollInterval,
+    // Poll fast while a deployment is starting up so image-pull progress and
+    // load phases tick visibly; pull progress deliberately doesn't broadcast
+    // over the websocket (it would spam every connected dashboard).
+    refetchInterval: (query) =>
+      (query.state.data ?? []).some(
+        (d) => d.status === "starting" || d.status === "loading"
+      )
+        ? 2000
+        : pollInterval,
     refetchIntervalInBackground: true,
-    staleTime: 4000,
+    staleTime: 1500,
     placeholderData: (previous) => previous
   });
 

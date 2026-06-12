@@ -99,24 +99,30 @@ class TestLiveUsage:
             1,
             {
                 "prompt_tokens": 100,
-                "tokens_per_second": 42.5,
+                "prompt_tps": 1800.0,
+                "generation_tps": 52.3,
+                "prompt_throughput": 410.0,
+                "generation_throughput": 12.5,
                 "requests_running": 3,
                 "requests_waiting": 1,
             },
         )
         assert sync.live_usage[1] == {
-            "tokens_per_second": 42.5,
+            "prompt_tps": 1800.0,
+            "generation_tps": 52.3,
+            "prompt_throughput": 410.0,
+            "generation_throughput": 12.5,
             "requests_running": 3,
             "requests_waiting": 1,
         }
 
     def test_entry_removed_when_no_live_values(self):
-        sync._update_live_usage(1, {"tokens_per_second": 10.0})
+        sync._update_live_usage(1, {"generation_tps": 10.0})
         sync._update_live_usage(1, {"prompt_tokens": 100})
         assert 1 not in sync.live_usage
 
     def test_non_numeric_live_values_ignored(self):
-        sync._update_live_usage(1, {"tokens_per_second": "fast", "requests_running": 2})
+        sync._update_live_usage(1, {"generation_tps": "fast", "requests_running": 2})
         assert sync.live_usage[1] == {"requests_running": 2}
 
 
@@ -181,32 +187,137 @@ class TestPrometheusRegex:
         assert gauges == {"num_requests_running": 3.0, "num_requests_waiting": 2.0}
 
 
-class TestTokensPerSecond:
+def _snapshot(**overrides):
+    base = {
+        "prompt_tokens": 0.0,
+        "generation_tokens": 0.0,
+        "prefill_sum": 0.0,
+        "decode_sum": 0.0,
+        "ttft_sum": 0.0,
+        "tpot_sum": 0.0,
+        "tpot_count": 0.0,
+    }
+    base.update(overrides)
+    return base
+
+
+class TestComputeUsageRates:
     @pytest.fixture(autouse=True)
     def _clean_rate_state(self):
         from tests.test_failure_classification import client_main
 
-        client_main._usage_rate_state.clear()
+        client_main._usage_snapshots.clear()
         yield
-        client_main._usage_rate_state.clear()
+        client_main._usage_snapshots.clear()
 
-    def test_first_sample_has_no_rate(self):
-        from tests.test_failure_classification import client_main
-
-        assert client_main._tokens_per_second("d-1", 1000) is None
-
-    def test_rate_from_consecutive_samples(self):
-        from tests.test_failure_classification import client_main
+    def _rates(self, monotonic_values, snapshots):
         from unittest import mock
 
-        with mock.patch.object(client_main.time, "monotonic", side_effect=[100.0, 110.0]):
-            assert client_main._tokens_per_second("d-1", 1000) is None
-            assert client_main._tokens_per_second("d-1", 1500) == 50.0
-
-    def test_counter_reset_yields_no_rate(self):
         from tests.test_failure_classification import client_main
-        from unittest import mock
 
-        with mock.patch.object(client_main.time, "monotonic", side_effect=[100.0, 110.0]):
-            client_main._tokens_per_second("d-1", 1000)
-            assert client_main._tokens_per_second("d-1", 200) is None
+        results = []
+        with mock.patch.object(
+            client_main.time, "monotonic", side_effect=monotonic_values
+        ):
+            for snapshot in snapshots:
+                results.append(client_main._compute_usage_rates("d-1", snapshot))
+        return results
+
+    def test_first_sample_has_no_rates(self):
+        (rates,) = self._rates([100.0], [_snapshot(prompt_tokens=1000)])
+        assert rates == {}
+
+    def test_split_rates_from_time_histograms(self):
+        first, second = self._rates(
+            [100.0, 115.0],
+            [
+                _snapshot(),
+                _snapshot(
+                    # 3000 prompt tokens prefilled in 2s of processing time,
+                    # 300 generated tokens over 6s of decode time — inside a
+                    # 15s wall window. Idle time must not dilute the speeds.
+                    prompt_tokens=3000.0,
+                    generation_tokens=300.0,
+                    prefill_sum=2.0,
+                    decode_sum=6.0,
+                ),
+            ],
+        )
+        assert first == {}
+        assert second["prompt_tps"] == 1500.0  # 3000 / 2s processing
+        assert second["generation_tps"] == 50.0  # 300 / 6s decode
+        assert second["prompt_throughput"] == 200.0  # 3000 / 15s wall
+        assert second["generation_throughput"] == 20.0  # 300 / 15s wall
+
+    def test_idle_window_yields_no_rates(self):
+        active = _snapshot(prompt_tokens=1000.0, prefill_sum=1.0)
+        _, _, idle = self._rates(
+            [100.0, 115.0, 130.0], [_snapshot(), active, dict(active)]
+        )
+        assert idle == {}  # nothing moved: no stale speeds reported
+
+    def test_counter_reset_skips_window(self):
+        _, reset = self._rates(
+            [100.0, 115.0],
+            [_snapshot(prompt_tokens=5000.0, prefill_sum=3.0), _snapshot(prompt_tokens=10.0)],
+        )
+        assert reset == {}
+
+    def test_ttft_tpot_fallback_for_older_engines(self):
+        _, rates = self._rates(
+            [100.0, 110.0],
+            [
+                _snapshot(),
+                _snapshot(
+                    prompt_tokens=2000.0,
+                    generation_tokens=100.0,
+                    ttft_sum=4.0,  # no prefill/decode sums exposed
+                    tpot_sum=2.5,
+                    tpot_count=100.0,
+                ),
+            ],
+        )
+        assert rates["prompt_tps"] == 500.0  # 2000 / 4s TTFT
+        assert rates["generation_tps"] == 40.0  # 100 tokens / 2.5s TPOT
+
+    def test_partial_availability(self):
+        _, rates = self._rates(
+            [100.0, 110.0],
+            [
+                _snapshot(),
+                _snapshot(generation_tokens=100.0, decode_sum=2.0),
+            ],
+        )
+        assert rates["generation_tps"] == 50.0
+        assert "prompt_tps" not in rates
+        assert "prompt_throughput" not in rates
+        assert rates["generation_throughput"] == 10.0
+
+
+class TestHistogramRegex:
+    def test_matches_time_histograms_with_labels(self):
+        from tests.test_failure_classification import client_main
+
+        sample = (
+            'vllm:request_prefill_time_seconds_sum{model_name="x"} 12.5\n'
+            'vllm:request_prefill_time_seconds_count{model_name="x"} 40\n'
+            'vllm:request_decode_time_seconds_sum{model_name="x"} 90.0\n'
+            "vllm:time_to_first_token_seconds_sum 4.25\n"
+            "vllm:time_per_output_token_seconds_sum 2.5\n"
+            "vllm:time_per_output_token_seconds_count 100\n"
+            'vllm:time_per_output_token_seconds_bucket{le="0.025"} 31\n'
+        )
+        hist = {}
+        for line in sample.splitlines():
+            match = client_main._VLLM_HIST_RE.match(line)
+            if match:
+                key = f"{match.group(1)}_{match.group(2)}"
+                hist[key] = hist.get(key, 0.0) + float(match.group(3))
+        assert hist == {
+            "request_prefill_time_seconds_sum": 12.5,
+            "request_prefill_time_seconds_count": 40.0,
+            "request_decode_time_seconds_sum": 90.0,
+            "time_to_first_token_seconds_sum": 4.25,
+            "time_per_output_token_seconds_sum": 2.5,
+            "time_per_output_token_seconds_count": 100.0,
+        }

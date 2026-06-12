@@ -17,6 +17,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   deleteLocalModel,
+  deleteNode,
   deleteNodeImage,
   deleteNodeModelCache,
   fetchLocalModels,
@@ -37,6 +38,7 @@ import { AppButton } from "./AppButton";
 import { AppDialog } from "./AppDialog";
 import { Mono } from "./Mono";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { useToast } from "./ToastProvider";
 
 type NodeDockerDialogProps = {
   node: Node | null;
@@ -67,6 +69,7 @@ type PendingUpload = {
 
 export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const nodeId = node?.id ?? null;
   const enabled = open && nodeId !== null;
   const [actionError, setActionError] = useState("");
@@ -76,6 +79,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
   const [confirmPrune, setConfirmPrune] = useState(false);
   const [confirmModelName, setConfirmModelName] = useState<string | null>(null);
   const [confirmLocalModel, setConfirmLocalModel] = useState<string | null>(null);
+  const [confirmRemoveNode, setConfirmRemoveNode] = useState(false);
   const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
   const [uploadProgress, setUploadProgress] = useState<
     { name: string; fraction: number } | null
@@ -172,6 +176,19 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
     onError: (error) => setActionError(errorMessage(error))
   });
 
+  const removeNodeMutation = useMutation({
+    mutationFn: () => deleteNode(nodeId as number),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["nodes"] });
+      queryClient.invalidateQueries({ queryKey: ["deployments"] });
+      toast.success(
+        `Removed ${result.hostname}. An active node re-registers automatically.`
+      );
+      handleClose();
+    },
+    onError: (error) => setActionError(errorMessage(error))
+  });
+
   const deleteLocalModelMutation = useMutation({
     mutationFn: (name: string) => deleteLocalModel(nodeId as number, name),
     onSuccess: () => {
@@ -247,6 +264,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
     deleteModelMutation.isPending ||
     deleteLocalModelMutation.isPending ||
     pullMutation.isPending ||
+    removeNodeMutation.isPending ||
     uploadProgress !== null;
 
   const containers = containersQuery.data ?? [];
@@ -270,6 +288,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
     setPendingUpload(null);
     setUploadNotice("");
     setShowPullForm(false);
+    setConfirmRemoveNode(false);
     onClose();
   };
 
@@ -280,9 +299,20 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
         onClose={handleClose}
         title={`Manage${node ? ` — ${node.hostname}` : ""}`}
         actions={
-          <AppButton type="button" onClick={handleClose}>
-            Close
-          </AppButton>
+          <>
+            <AppButton
+              type="button"
+              variant="stop"
+              ghost
+              disabled={busy}
+              onClick={() => setConfirmRemoveNode(true)}
+            >
+              Remove Node
+            </AppButton>
+            <AppButton type="button" onClick={handleClose}>
+              Close
+            </AppButton>
+          </>
         }
       >
         {disk && diskUsedFraction !== null && (
@@ -844,6 +874,18 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
           setConfirmPrune(false);
         }}
         onCancel={() => setConfirmPrune(false)}
+      />
+      <ConfirmDialog
+        open={confirmRemoveNode}
+        title={`Remove node ${node?.hostname ?? ""}?`}
+        body="Removes this node and its deployment records from the dashboard. Running containers on the node are not stopped — an active node re-registers within seconds and its deployments are re-adopted; a stale node disappears for good."
+        confirmLabel="Remove"
+        danger
+        onConfirm={() => {
+          setConfirmRemoveNode(false);
+          removeNodeMutation.mutate();
+        }}
+        onCancel={() => setConfirmRemoveNode(false)}
       />
       <ConfirmDialog
         open={confirmLocalModel !== null}

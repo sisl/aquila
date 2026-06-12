@@ -1,7 +1,8 @@
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
@@ -14,9 +15,11 @@ from app.schemas.node import (
     NodeMaintenanceRequest,
     NodeRead,
 )
+from app.services import sync as sync_service
 from app.services.consul import consul_service
 from app.services.deployment_stop import stop_deployment_internal
 from app.services.node_state import rogue_container_counts
+from app.services.notify import _warned_expiring
 from app.services.client_api import (
     check_port,
     upload_package,
@@ -41,6 +44,7 @@ from app.services.client_api import (
 from app.ws.manager import manager
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/", response_model=list[NodeRead])
@@ -60,6 +64,58 @@ async def create_node(payload: NodeCreate, session: AsyncSession = Depends(get_s
     await session.commit()
     await session.refresh(node)
     return node
+
+
+@router.delete("/{node_id}")
+async def delete_node(
+    node_id: int, session: AsyncSession = Depends(get_session)
+) -> dict[str, object]:
+    """Remove a node and its deployment records (the stale-node escape hatch).
+
+    Containers on the node are untouched: a live node re-registers via Consul
+    within seconds and its deployments are re-adopted from container manifests;
+    a stale node disappears for good.
+    """
+    node = await session.get(Node, node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    hostname = node.hostname
+
+    result = await session.execute(
+        select(Deployment.id).where(Deployment.node_id == node_id)
+    )
+    deployment_ids = [row[0] for row in result.all()]
+
+    # deployments.node_id has no ON DELETE cascade — clear children first.
+    await session.execute(delete(Deployment).where(Deployment.node_id == node_id))
+    await session.execute(delete(NodeMetric).where(NodeMetric.node_id == node_id))
+    await session.delete(node)
+    await session.commit()
+
+    # Best-effort: drop the Consul registration, or the sync loop re-creates
+    # a stale node within seconds. A live agent re-registers itself anyway.
+    try:
+        consul_service.deregister_service(hostname)
+    except Exception as exc:
+        logger.warning("Consul deregistration of %s failed: %s", hostname, exc)
+
+    # Drop in-memory state keyed by the deleted ids.
+    rogue_container_counts.pop(node_id, None)
+    sync_service._node_fail_counts.pop(hostname, None)
+    for dep_id in deployment_ids:
+        sync_service.live_usage.pop(dep_id, None)
+        sync_service.pull_progress.pop(dep_id, None)
+        sync_service._usage_last_seen.pop(dep_id, None)
+    for entry in [e for e in _warned_expiring if e[0] in deployment_ids]:
+        _warned_expiring.discard(entry)
+
+    await manager.broadcast({"type": "nodes_changed"})
+    await manager.broadcast({"type": "deployments_changed"})
+    return {
+        "status": "deleted",
+        "hostname": hostname,
+        "deployments_deleted": len(deployment_ids),
+    }
 
 
 @router.post("/{node_id}/maintenance", response_model=NodeRead)
