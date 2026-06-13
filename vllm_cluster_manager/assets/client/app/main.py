@@ -2386,6 +2386,20 @@ def stop_container(container_id: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
+def _find_image_by_content(client, content_key: str | None):
+    """The runtime's copy of the image identified by *content_key*, or None."""
+    if not content_key:
+        return None
+    try:
+        candidates = client.images.list()
+    except Exception:
+        return None
+    for image in candidates:
+        if _image_content_key(image) == content_key:
+            return image
+    return None
+
+
 def _image_content_key(image) -> str:
     """Runtime-independent identity for an image.
 
@@ -2406,7 +2420,7 @@ def _image_content_key(image) -> str:
             return f"layers:{digest}"
     except Exception:  # pragma: no cover - racing image removal
         pass
-    return "id:" + (image.id or image.short_id).removeprefix("sha256:")
+    return "id:" + str(image.id or image.short_id).removeprefix("sha256:")
 
 
 @app.get("/images")
@@ -2443,9 +2457,10 @@ def list_images() -> dict[str, list[dict[str, object]]]:
             image_id = (image.id or image.short_id).removeprefix("sha256:")
             # Merge by content, not id — the same image carries different ids
             # across stores (see _image_content_key).
-            entry = merged.get(_image_content_key(image))
+            content_key = _image_content_key(image)
+            entry = merged.get(content_key)
             if entry is None:
-                merged[_image_content_key(image)] = {
+                merged[content_key] = {
                     "id": image_id,
                     "tags": relevant,
                     "size_mb": size_mb,
@@ -2472,6 +2487,18 @@ def delete_image(image_id: str, runtime: str | None = None) -> dict[str, object]
     runtimes = [runtime] if runtime else _available_runtimes()
     removed: list[str] = []
     in_use: dict[str, str] = {}
+    # The id is store-specific (Docker's containerd store reports the manifest
+    # digest, Podman the config digest), so resolve the requested id once and
+    # match the other stores' copy by content where the id is unknown.
+    ref_key: str | None = None
+    for candidate in runtimes:
+        try:
+            ref_key = _image_content_key(
+                _runtime_client(candidate).images.get(image_id)
+            )
+            break
+        except Exception:
+            continue
     for candidate in runtimes:
         try:
             client = _runtime_client(candidate)
@@ -2480,7 +2507,9 @@ def delete_image(image_id: str, runtime: str | None = None) -> dict[str, object]
         try:
             image = client.images.get(image_id)
         except ImageNotFound:
-            continue
+            image = _find_image_by_content(client, ref_key)
+            if image is None:
+                continue
         except APIError as exc:
             in_use[candidate] = str(exc)
             continue
@@ -2498,7 +2527,10 @@ def delete_image(image_id: str, runtime: str | None = None) -> dict[str, object]
                 for tag in relevant:
                     client.images.remove(tag)
             else:
-                client.images.remove(image_id)
+                # This store's own id — the requested one may not exist here.
+                client.images.remove(
+                    (image.id or image.short_id).removeprefix("sha256:")
+                )
             removed.append(candidate)
         except ImageNotFound:
             continue
