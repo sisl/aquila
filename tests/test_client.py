@@ -466,7 +466,7 @@ class TestCrossRuntimeEnumeration:
     async def test_images_tagged_with_runtime(self):
         image = mock.MagicMock()
         image.tags = ["vllm/vllm-openai:v0.9.1"]
-        image.short_id = "sha256:abc"
+        image.id = "sha256:" + "ab" * 32
         image.attrs = {"Size": 1024**3}
         docker_client = mock.MagicMock()
         docker_client.images.list.return_value = [image]
@@ -479,6 +479,46 @@ class TestCrossRuntimeEnumeration:
                 resp = await client.get("/images")
         (entry,) = resp.json()["images"]
         assert entry["runtime"] == "docker"
+        assert entry["runtimes"] == ["docker"]
+        # Full hex id, no sha256: prefix — Podman's compat API rejects the
+        # prefixed short form on delete.
+        assert entry["id"] == "ab" * 32
+
+    @pytest.mark.anyio
+    async def test_images_deduped_across_runtimes(self):
+        # The same image cached in both stores is ONE logical cache entry.
+        def _image(tags):
+            image = mock.MagicMock()
+            image.tags = tags
+            image.id = "sha256:" + "ab" * 32
+            image.attrs = {"Size": 1024**3}
+            return image
+
+        docker_client = mock.MagicMock()
+        docker_client.images.list.return_value = [_image(["vllm/vllm-openai:v0.9.1"])]
+        podman_client = mock.MagicMock()
+        podman_client.images.list.return_value = [
+            _image([
+                "docker.io/vllm/vllm-openai:v0.9.1",
+                "docker.io/vllm/vllm-openai:extra",
+            ])
+        ]
+
+        def fake_runtime_client(runtime):
+            return docker_client if runtime == "docker" else podman_client
+
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker", "podman"]
+        ), mock.patch.object(
+            client_main, "_runtime_client", side_effect=fake_runtime_client
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/images")
+        (entry,) = resp.json()["images"]
+        assert entry["runtimes"] == ["docker", "podman"]
+        assert entry["runtime"] == "docker"
+        assert entry["tags"] == ["vllm/vllm-openai:v0.9.1", "vllm/vllm-openai:extra"]
 
     @pytest.mark.anyio
     async def test_metrics_reports_available_runtimes(self):
@@ -1475,6 +1515,180 @@ async def test_delete_image_not_found():
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.delete("/images/nonexistent")
             assert resp.status_code == 404
+
+
+class TestDeleteImageEverywhere:
+    """Plain deletes treat both stores as one cache — no surviving copies."""
+
+    def _clients(self, docker_tags=None, podman_tags=None):
+        def _client(tags):
+            client = mock.MagicMock()
+            image = mock.MagicMock()
+            image.tags = ["vllm/vllm-openai:v0.9.1"] if tags is None else tags
+            client.images.get.return_value = image
+            return client
+
+        docker_client = _client(docker_tags)
+        podman_client = _client(podman_tags)
+
+        def fake_runtime_client(runtime):
+            return docker_client if runtime == "docker" else podman_client
+
+        return docker_client, podman_client, fake_runtime_client
+
+    @pytest.mark.anyio
+    async def test_delete_removes_from_all_runtimes(self):
+        docker_client, podman_client, fake = self._clients()
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker", "podman"]
+        ), mock.patch.object(client_main, "_runtime_client", side_effect=fake):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.delete("/images/sha256:abc")
+        assert resp.status_code == 200
+        assert resp.json()["runtimes"] == ["docker", "podman"]
+        docker_client.images.remove.assert_called_once_with("sha256:abc")
+        podman_client.images.remove.assert_called_once_with("sha256:abc")
+
+    @pytest.mark.anyio
+    async def test_delete_with_runtime_param_targets_one(self):
+        docker_client, podman_client, fake = self._clients()
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker", "podman"]
+        ), mock.patch.object(client_main, "_runtime_client", side_effect=fake):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.delete("/images/sha256:abc?runtime=podman")
+        assert resp.status_code == 200
+        assert resp.json()["runtimes"] == ["podman"]
+        docker_client.images.remove.assert_not_called()
+        podman_client.images.remove.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_partial_in_use_still_succeeds_with_skip_note(self):
+        docker_client, podman_client, fake = self._clients()
+        podman_client.images.remove.side_effect = client_main.APIError("in use")
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker", "podman"]
+        ), mock.patch.object(client_main, "_runtime_client", side_effect=fake):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.delete("/images/sha256:abc")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["runtimes"] == ["docker"]
+        assert "podman" in body["skipped"]
+
+    @pytest.mark.anyio
+    async def test_foreign_tags_protected(self):
+        # Docker's copy of the id also carries a user's own tag: only the
+        # vLLM ref is untagged; podman's single-tag copy is removed by id.
+        docker_client, podman_client, fake = self._clients(
+            docker_tags=["vllm/vllm-openai:v0.9.1", "alpine:3"]
+        )
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker", "podman"]
+        ), mock.patch.object(client_main, "_runtime_client", side_effect=fake):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.delete("/images/sha256:abc")
+        assert resp.status_code == 200
+        assert resp.json()["runtimes"] == ["docker", "podman"]
+        docker_client.images.remove.assert_called_once_with("vllm/vllm-openai:v0.9.1")
+        podman_client.images.remove.assert_called_once_with("sha256:abc")
+
+    @pytest.mark.anyio
+    async def test_id_held_only_under_foreign_tags_skipped(self):
+        docker_client, podman_client, fake = self._clients(
+            docker_tags=["alpine:3"]
+        )
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker", "podman"]
+        ), mock.patch.object(client_main, "_runtime_client", side_effect=fake):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.delete("/images/sha256:abc")
+        assert resp.status_code == 200
+        assert resp.json()["runtimes"] == ["podman"]
+        docker_client.images.remove.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_all_copies_in_use_conflicts(self):
+        docker_client, podman_client, fake = self._clients()
+        docker_client.images.remove.side_effect = client_main.APIError("in use")
+        podman_client.images.remove.side_effect = client_main.APIError("in use")
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker", "podman"]
+        ), mock.patch.object(client_main, "_runtime_client", side_effect=fake):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.delete("/images/sha256:abc")
+        assert resp.status_code == 409
+
+
+class TestCrossRuntimeImageCopy:
+    """_ensure_image transfers locally instead of re-pulling from the registry."""
+
+    def _clients(self, target_has_image=False):
+        target = mock.MagicMock()
+        if not target_has_image:
+            # get() fails until a load() succeeds, then the post-load check passes.
+            target.images.get.side_effect = [
+                client_main.ImageNotFound("missing"),
+                mock.MagicMock(),
+            ]
+        source = mock.MagicMock()  # images.get succeeds -> source has the image
+
+        def fake_runtime_client(runtime):
+            return target if runtime == "podman" else source
+
+        return target, source, fake_runtime_client
+
+    def test_copies_from_other_runtime_instead_of_pulling(self):
+        target, source, fake = self._clients()
+        logged = []
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker", "podman"]
+        ), mock.patch.object(
+            client_main, "_runtime_client", side_effect=fake
+        ), mock.patch.object(client_main, "_pull_image") as pull:
+            ref = client_main._ensure_image(
+                "vllm/vllm-openai:v0.9.1", None, logged.append, runtime="podman"
+            )
+        assert ref == "vllm/vllm-openai:v0.9.1"
+        pull.assert_not_called()
+        source.api.get_image.assert_called_once_with("vllm/vllm-openai:v0.9.1")
+        target.images.load.assert_called_once()
+        assert any("Copying image" in line for line in logged)
+
+    def test_failed_copy_falls_back_to_pull(self):
+        target, source, fake = self._clients()
+        target.images.load.side_effect = client_main.APIError("load failed")
+        target.images.get.side_effect = client_main.ImageNotFound("missing")
+        logged = []
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker", "podman"]
+        ), mock.patch.object(
+            client_main, "_runtime_client", side_effect=fake
+        ), mock.patch.object(client_main, "_pull_image") as pull:
+            client_main._ensure_image(
+                "vllm/vllm-openai:v0.9.1", None, logged.append, runtime="podman"
+            )
+        pull.assert_called_once()
+        assert any("falling back" in line for line in logged)
+
+    def test_moving_tags_never_copy(self):
+        target, source, fake = self._clients()
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker", "podman"]
+        ), mock.patch.object(
+            client_main, "_runtime_client", side_effect=fake
+        ), mock.patch.object(client_main, "_pull_image") as pull:
+            client_main._ensure_image(
+                "vllm/vllm-openai:latest", None, lambda _msg: None, runtime="podman"
+            )
+        pull.assert_called_once()
+        source.api.get_image.assert_not_called()
 
 
 @pytest.mark.anyio

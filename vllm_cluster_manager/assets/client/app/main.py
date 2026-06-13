@@ -1021,6 +1021,43 @@ def _build_derived_image(
         shutil.rmtree(ctx, ignore_errors=True)
 
 
+def _copy_image_between_runtimes(image_ref: str, runtime: str, log) -> bool:
+    """Copy *image_ref* into *runtime* from another local runtime's store.
+
+    Both stores form one logical cache, so an image already pulled under the
+    other runtime is transferred locally (save→load stream between the two
+    API sockets) instead of re-downloading tens of GB from the registry.
+    Returns True when the image is now present in the target runtime.
+    """
+    for source in _available_runtimes():
+        if source == runtime:
+            continue
+        try:
+            source_client = _runtime_client(source)
+            source_client.images.get(image_ref)
+        except Exception:
+            continue
+        log(
+            f"[docker] Copying image {image_ref} from {source} "
+            "(local transfer, no download) ..."
+        )
+        try:
+            target_client = _runtime_client(runtime)
+            # Export by REF (not id) so the repo tag survives in the tarball.
+            data = source_client.api.get_image(image_ref)
+            target_client.images.load(data)
+            target_client.images.get(image_ref)
+        except Exception as exc:
+            log(
+                f"[docker] Local copy from {source} failed ({exc}); "
+                "falling back to a registry pull."
+            )
+            continue
+        log(f"[docker] Copied {image_ref} from {source}")
+        return True
+    return False
+
+
 def _ensure_image(
     image_ref: str,
     extra_packages: list[str] | None,
@@ -1037,7 +1074,8 @@ def _ensure_image(
 
     # Base image. Moving tags (nightly/latest) are always re-pulled so the node
     # never runs a stale build; Docker only downloads changed layers, so this is
-    # cheap when nothing upstream changed. Immutable tags reuse the local cache.
+    # cheap when nothing upstream changed. Immutable tags reuse the local cache
+    # — including the other runtime's store, via a local copy.
     if mutable:
         log(f"[docker] '{image_ref}' is a moving tag — checking for a newer build ...")
         _pull_image(client, image_ref, log, progress_cb)
@@ -1046,7 +1084,8 @@ def _ensure_image(
             client.images.get(image_ref)
             log(f"[docker] Using cached image {image_ref}")
         except ImageNotFound:
-            _pull_image(client, image_ref, log, progress_cb)
+            if not _copy_image_between_runtimes(image_ref, runtime, log):
+                _pull_image(client, image_ref, log, progress_cb)
 
     if not extra_packages:
         return image_ref
@@ -1060,7 +1099,8 @@ def _ensure_image(
             log(f"[docker] Reusing cached derived image {derived_tag}")
             return derived_tag
         except ImageNotFound:
-            pass
+            if _copy_image_between_runtimes(derived_tag, runtime, log):
+                return derived_tag
     _build_derived_image(client, image_ref, derived_tag, extra_packages, log)
     return derived_tag
 
@@ -1460,6 +1500,9 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
         if msg.startswith("[docker] Building image") and key in _statuses:
             _statuses[key]["phase"] = "building image"
             _statuses[key].pop("pull_progress", None)
+        if msg.startswith("[docker] Copying image") and key in _statuses:
+            # Local save→load between runtimes; streams no byte progress.
+            _statuses[key]["phase"] = "copying image"
 
     try:
         image_ref, resolved_version = _resolve_image_tag(payload.vllm_version)
@@ -2143,9 +2186,23 @@ def _reconcile_containers() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _normalize_image_tag(tag: str) -> str:
+    """Strip the registry prefix Podman's compat API adds to repo tags.
+
+    Podman stores Docker-Hub refs fully qualified (docker.io/vllm/vllm-openai
+    or docker.io/library/alpine); Docker reports them short. Normalizing lets
+    one repo filter match both, and lets copies of the same image merge.
+    """
+    for prefix in ("docker.io/library/", "docker.io/"):
+        if tag.startswith(prefix):
+            return tag[len(prefix):]
+    return tag
+
+
 def _is_vllm_image(image_ref: str) -> bool:
     """True if an image reference is an official vLLM or locally-derived image."""
-    return image_ref.startswith(settings.vllm_image_repo) or image_ref.startswith(
+    normalized = _normalize_image_tag(image_ref)
+    return normalized.startswith(settings.vllm_image_repo) or normalized.startswith(
         _LOCAL_IMAGE_REPO
     )
 
@@ -2233,15 +2290,19 @@ def stop_container(container_id: str) -> dict[str, str]:
 
 @app.get("/images")
 def list_images() -> dict[str, list[dict[str, object]]]:
-    """List cached vLLM images (official + locally derived) on this node."""
-    images: list[dict[str, object]] = []
+    """List cached vLLM images (official + locally derived) on this node.
+
+    Both runtimes' stores are presented as ONE logical cache: an image cached
+    in Docker and Podman appears once, with ``runtimes`` naming every store
+    that holds a copy (``runtime`` keeps the first for older hosts).
+    """
+    merged: dict[str, dict[str, object]] = {}
     available = _available_runtimes()
     if not available:
         raise HTTPException(
             status_code=503,
             detail="No container runtime (Docker or Podman) is available on this node.",
         )
-    repo = settings.vllm_image_repo
     for runtime in available:
         try:
             runtime_images = _runtime_client(runtime).images.list()
@@ -2249,32 +2310,90 @@ def list_images() -> dict[str, list[dict[str, object]]]:
             logger.warning("Listing %s images failed: %s", runtime, exc)
             continue
         for image in runtime_images:
-            tags = list(image.tags or [])
-            relevant = [t for t in tags if t.startswith(repo) or t.startswith(_LOCAL_IMAGE_REPO)]
+            # Normalized so Podman's fully-qualified refs match the repo
+            # filter and merge with Docker's copy of the same image.
+            tags = [_normalize_image_tag(t) for t in image.tags or []]
+            relevant = [t for t in tags if _is_vllm_image(t)]
             if not relevant:
                 continue
-            images.append({
-                "id": image.short_id,
-                "tags": relevant,
-                "size_mb": round((image.attrs.get("Size", 0) or 0) / (1024 * 1024)),
-                "runtime": runtime,
-            })
-    return {"images": images}
+            size_mb = round((image.attrs.get("Size", 0) or 0) / (1024 * 1024))
+            # Full hex id: Docker accepts it everywhere, and Podman's compat
+            # API rejects the sha256:-prefixed short form on delete.
+            image_id = (image.id or image.short_id).removeprefix("sha256:")
+            entry = merged.get(image_id)
+            if entry is None:
+                merged[image_id] = {
+                    "id": image_id,
+                    "tags": relevant,
+                    "size_mb": size_mb,
+                    "runtime": runtime,
+                    "runtimes": [runtime],
+                }
+                continue
+            entry["tags"] = list(entry["tags"]) + [
+                t for t in relevant if t not in entry["tags"]
+            ]
+            entry["size_mb"] = max(int(entry["size_mb"]), size_mb)
+            if runtime not in entry["runtimes"]:
+                entry["runtimes"] = list(entry["runtimes"]) + [runtime]
+    return {"images": list(merged.values())}
 
 
 @app.delete("/images/{image_id}")
-def delete_image(image_id: str, runtime: str | None = None) -> dict[str, str]:
+def delete_image(image_id: str, runtime: str | None = None) -> dict[str, object]:
+    """Delete a cached image — from every runtime's store unless one is named.
+
+    The image cache is presented as one logical store, so a plain delete must
+    not leave a surviving copy in the other runtime.
+    """
     runtimes = [runtime] if runtime else _available_runtimes()
+    removed: list[str] = []
+    in_use: dict[str, str] = {}
     for candidate in runtimes:
         try:
-            _runtime_client(candidate).images.remove(image_id)
-            return {"status": "deleted", "id": image_id}
+            client = _runtime_client(candidate)
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        try:
+            image = client.images.get(image_id)
         except ImageNotFound:
             continue
         except APIError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except (RuntimeError, ValueError) as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            in_use[candidate] = str(exc)
+            continue
+        tags = list(image.tags or [])
+        relevant = [t for t in tags if _is_vllm_image(t)]
+        if tags and not relevant:
+            # This runtime holds the id only under foreign tags (e.g. a user
+            # image with identical content) — not ours to delete here.
+            continue
+        try:
+            if len(tags) > 1:
+                # Removing by id would fail (or take foreign tags with it);
+                # untag just the vLLM refs. Docker/Podman drop the image
+                # itself once its last tag goes.
+                for tag in relevant:
+                    client.images.remove(tag)
+            else:
+                client.images.remove(image_id)
+            removed.append(candidate)
+        except ImageNotFound:
+            continue
+        except APIError as exc:
+            in_use[candidate] = str(exc)
+    if removed:
+        result: dict[str, object] = {
+            "status": "deleted",
+            "id": image_id,
+            "runtimes": removed,
+        }
+        if in_use:
+            result["skipped"] = {
+                rt: "image is in use by a container" for rt in in_use
+            }
+        return result
+    if in_use:
+        raise HTTPException(status_code=409, detail="; ".join(in_use.values()))
     raise HTTPException(status_code=404, detail="Image not found")
 
 

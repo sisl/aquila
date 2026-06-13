@@ -101,6 +101,8 @@ The runtime for a **new** deployment resolves as: the node's per-node override (
 
 A reachable node with **no** runtime at all shows status `no runtime` in the node table and cannot be selected for deployments.
 
+**One image cache.** Docker and Podman keep physically separate image stores, but the manager presents them as a single logical cache: the Manage dialog lists each image once (noting which runtimes hold a copy), **Delete removes every copy**, and when a deployment needs an image the *other* runtime already has, the agent copies it locally (a save→load transfer between the two API sockets, phase `copying image`) instead of re-downloading it from the registry.
+
 The host's own infrastructure (Postgres + Consul via docker compose) still requires Docker on the **host** machine; the Podman option applies to client GPU nodes.
 
 ### Setting up Podman on a node

@@ -339,6 +339,8 @@ export type NodeImage = {
   tags: string[];
   size_mb: number;
   runtime?: string;
+  // Every runtime store holding a copy; the cache is one logical store.
+  runtimes?: string[];
 };
 
 export type ImagePruneResult = {

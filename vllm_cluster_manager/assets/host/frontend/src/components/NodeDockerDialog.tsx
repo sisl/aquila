@@ -512,9 +512,9 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
                 <TableRow key={image.id} hover>
                   <TableCell>
                     <Mono>{image.tags.length > 0 ? image.tags.join(", ") : image.id}</Mono>
-                    {image.runtime && (
+                    {(image.runtimes?.length || image.runtime) && (
                       <Typography variant="caption" className="muted" sx={{ display: "block" }}>
-                        {image.runtime}
+                        {image.runtimes?.join(" \u00b7 ") ?? image.runtime}
                       </Typography>
                     )}
                   </TableCell>
@@ -880,7 +880,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
       <ConfirmDialog
         open={confirmImageId !== null}
         title="Delete this image?"
-        body="The next deployment using it will pull it again from Docker Hub."
+        body="Removes it from every container runtime on this node. The next deployment using it will pull it again from Docker Hub."
         confirmLabel="Delete"
         danger
         onConfirm={() => {
