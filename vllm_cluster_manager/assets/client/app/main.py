@@ -250,7 +250,15 @@ def _append_log_line(key: str, formatted: str, raw_ts: str | None = None) -> Non
 
 
 def _append_agent_log(key: str, msg: str) -> None:
-    """Agent-injected log lines ([docker]/[agent] ...), always kept."""
+    """Agent-injected log lines ([docker]/[agent] ...), always kept.
+
+    Producers tag container-runtime messages "[docker]" without knowing which
+    runtime the deployment uses; rewrite the tag here (the one place with the
+    status at hand) so Podman deployments read "[podman]".
+    """
+    runtime = (_statuses.get(key) or {}).get("container_runtime")
+    if runtime and runtime != "docker" and msg.startswith("[docker]"):
+        msg = f"[{runtime}]{msg[len('[docker]'):]}"
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     _append_log_line(key, f"[{stamp}] {_strip_ansi(msg)}")
 
@@ -1582,7 +1590,7 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
         "launch_manifest": manifest,
         "container_runtime": runtime,
     }
-    _log(f"[docker] Started container {name} ({runtime})")
+    _log(f"[docker] Started container {name}")
     asyncio.create_task(_stream_container_logs(key, container))
     asyncio.create_task(_monitor_container(key, container))
     return {"status": "started", "key": key, "vllm_version": resolved_version}
@@ -1821,9 +1829,10 @@ _VLLM_GAUGE_RE = re.compile(
     r"(?:\{[^}]*\})?\s+(\S+)\s*$"
 )
 
-# Per-request processing-time histograms. prefill/decode time (V1 engines) are
-# the precise sources for idle-free read/generation speeds; TTFT/TPOT are the
-# fallback on older engines (TTFT includes queue wait — a lower bound).
+# Per-request processing-time histograms. Read speed divides prompt tokens by
+# prefill-phase time (queue wait excluded); generation divides output tokens
+# by decode time (first → last token). TTFT/TPOT serve as fallbacks where the
+# primary histogram is missing (TTFT includes queue wait — a lower bound).
 _VLLM_HIST_RE = re.compile(
     r"^vllm:(request_prefill_time_seconds|request_decode_time_seconds"
     r"|time_to_first_token_seconds|time_per_output_token_seconds)"
@@ -1835,17 +1844,26 @@ _VLLM_HIST_RE = re.compile(
 # to derive rates between consecutive scrapes.
 _usage_snapshots: dict[str, dict[str, float]] = {}
 
+# Zero point for the per-request averages: the cumulative state right after
+# the first completed request(s). vLLM charges its lazy warmup (CUDA-graph
+# capture, torch.compile on the first forward pass) to that request's
+# prefill/TTFT histograms — a 13-token prompt can book ~17s of "prefill",
+# which would drag the lifetime read average toward zero forever.
+_usage_baselines: dict[str, dict[str, float]] = {}
+
 
 def _compute_usage_rates(key: str, snapshot: dict[str, float]) -> dict[str, float]:
     """Token speeds split read/generation.
 
-    Per-request speeds are *running averages since container start*: cumulative
-    token counters divided by cumulative processing-time sums from vLLM's
-    per-request histograms. Idle time never enters the denominator, and once a
-    request has completed the averages stay defined forever (they never drop to
-    zero or disappear between bursts). Throughput keys are the engine-wide view
-    over the last scrape window (wall clock) and are only present for windows
-    with activity.
+    Per-request speeds are *running averages since the warmup request*:
+    cumulative token counters divided by cumulative processing-time sums from
+    vLLM's per-request histograms, both measured relative to the baseline
+    taken after the first completed request (whose timings include engine
+    warmup). Idle time never enters the denominator, and once a post-warmup
+    request has completed the averages stay defined forever (they never drop
+    to zero or disappear between bursts). Throughput keys are the engine-wide
+    view over the last scrape window (wall clock) and are only present for
+    windows with activity.
     """
     rates: dict[str, float] = {}
 
@@ -1854,23 +1872,43 @@ def _compute_usage_rates(key: str, snapshot: dict[str, float]) -> dict[str, floa
             return None
         return round(numerator / denominator, 1)
 
-    # Lifetime per-request averages: primary prefill/decode time sums,
-    # TTFT/TPOT fallback for engines that don't expose them.
-    prompt_tps = _rate(snapshot["prompt_tokens"], snapshot.get("prefill_sum", 0.0))
-    if prompt_tps is None:
-        prompt_tps = _rate(snapshot["prompt_tokens"], snapshot.get("ttft_sum", 0.0))
-    if prompt_tps is not None:
-        rates["prompt_tps"] = prompt_tps
+    baseline = _usage_baselines.get(key)
+    if baseline is not None and any(
+        snapshot.get(field, 0.0) < value for field, value in baseline.items()
+    ):
+        # Counters reset — the engine restarted, and its warmup will recur on
+        # the next request. Re-baseline just like a fresh deployment.
+        baseline = None
+        _usage_baselines.pop(key, None)
+    if baseline is None and snapshot.get("requests", 0.0) > 0:
+        baseline = dict(snapshot)
+        _usage_baselines[key] = baseline
 
-    generation_tps = _rate(
-        snapshot["generation_tokens"], snapshot.get("decode_sum", 0.0)
-    )
-    if generation_tps is None:
+    if baseline is not None:
+        adjusted = {
+            field: value - baseline.get(field, 0.0)
+            for field, value in snapshot.items()
+        }
+        # Per-request averages, as defined for the dashboard: read = prompt
+        # tokens over prefill-phase time (queue wait excluded); generation =
+        # output tokens over decode time (first → last token). TTFT/TPOT sums
+        # fill in on engines that don't expose the primary histograms (TTFT
+        # includes queue wait — a lower bound).
+        prompt_tps = _rate(adjusted["prompt_tokens"], adjusted.get("prefill_sum", 0.0))
+        if prompt_tps is None:
+            prompt_tps = _rate(adjusted["prompt_tokens"], adjusted.get("ttft_sum", 0.0))
+        if prompt_tps is not None:
+            rates["prompt_tps"] = prompt_tps
+
         generation_tps = _rate(
-            snapshot.get("tpot_count", 0.0), snapshot.get("tpot_sum", 0.0)
+            adjusted["generation_tokens"], adjusted.get("decode_sum", 0.0)
         )
-    if generation_tps is not None:
-        rates["generation_tps"] = generation_tps
+        if generation_tps is None:
+            generation_tps = _rate(
+                adjusted.get("tpot_count", 0.0), adjusted.get("tpot_sum", 0.0)
+            )
+        if generation_tps is not None:
+            rates["generation_tps"] = generation_tps
 
     # Engine-wide throughput over the last wall-clock window (delta-based;
     # skipped on the first sample and after a counter reset).
@@ -1954,6 +1992,7 @@ async def _scrape_vllm_metrics(port: int, key: str | None = None) -> dict[str, o
         snapshot = {
             "prompt_tokens": totals["prompt_tokens_total"],
             "generation_tokens": totals["generation_tokens_total"],
+            "requests": totals["request_success_total"],
             "prefill_sum": hist.get("request_prefill_time_seconds_sum", 0.0),
             "decode_sum": hist.get("request_decode_time_seconds_sum", 0.0),
             "ttft_sum": hist.get("time_to_first_token_seconds_sum", 0.0),

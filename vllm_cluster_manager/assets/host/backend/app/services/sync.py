@@ -228,6 +228,18 @@ _USAGE_FIELDS = (
 )
 
 
+def _persist_token_speeds(deployment, usage: dict[str, object]) -> None:
+    """Store the latest read/generation averages on the row.
+
+    Live values vanish with the agent's status report once a deployment
+    stops; the persisted copy keeps the usage stats visible afterwards.
+    """
+    for field in ("prompt_tps", "generation_tps"):
+        value = usage.get(field)
+        if isinstance(value, (int, float)):
+            setattr(deployment, field, float(value))
+
+
 def _accumulate_usage(deployment, counters: dict[str, object]) -> None:
     """Fold a cumulative counter snapshot into the deployment's totals."""
     last = _usage_last_seen.get(deployment.id, {})
@@ -447,6 +459,7 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
                             if isinstance(usage, dict):
                                 _accumulate_usage(deployment, usage)
                                 _update_live_usage(deployment.id, usage)
+                                _persist_token_speeds(deployment, usage)
                             # Start the serve countdown the first time the model is
                             # actually serving (status -> running).
                             if (

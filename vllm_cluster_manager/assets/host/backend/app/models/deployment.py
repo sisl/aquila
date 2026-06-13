@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, JSON, String, Text, text
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -67,6 +67,10 @@ class Deployment(Base):
     total_prompt_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     total_completion_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     total_requests: Mapped[int] = mapped_column(BigInteger, default=0)
+    # Last-known per-request token speeds (read/generation averages from the
+    # client scrape), persisted so stopped deployments keep their stats.
+    prompt_tps: Mapped[float | None] = mapped_column(Float, nullable=True)
+    generation_tps: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Who launched the deployment (free text id/name; required at the API layer).
     owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Requested serve duration in seconds; NULL means serve indefinitely.

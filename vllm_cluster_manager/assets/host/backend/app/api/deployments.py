@@ -107,14 +107,21 @@ async def list_deployments(session: AsyncSession = Depends(get_session)) -> list
     for deployment in result.scalars().all():
         read = DeploymentRead.model_validate(deployment)
         # Attach live scrape metrics (tokens/s, queue depth) to running rows.
+        # prompt_tps/generation_tps come from the row via model_validate (the
+        # persisted last-known averages — kept after a deployment stops);
+        # fresher live values override them only when actually present.
         if deployment.status == "running":
             live = sync_service.live_usage.get(deployment.id, {})
-            read.prompt_tps = live.get("prompt_tps")
-            read.generation_tps = live.get("generation_tps")
-            read.prompt_throughput = live.get("prompt_throughput")
-            read.generation_throughput = live.get("generation_throughput")
-            read.requests_running = live.get("requests_running")
-            read.requests_waiting = live.get("requests_waiting")
+            for field in (
+                "prompt_tps",
+                "generation_tps",
+                "prompt_throughput",
+                "generation_throughput",
+                "requests_running",
+                "requests_waiting",
+            ):
+                if field in live:
+                    setattr(read, field, live[field])
         # Attach image-pull progress to rows still starting up.
         elif deployment.status in ("starting", "loading"):
             progress = sync_service.pull_progress.get(deployment.id, {})

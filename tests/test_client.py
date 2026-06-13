@@ -1257,6 +1257,30 @@ class TestLogLineHelpers:
         assert client_main._is_noise_line(line) is False
 
 
+class TestAgentLogRuntimeTag:
+    def test_podman_deployment_lines_tagged_podman(self, logs_dir):
+        key = "org/model:8002"
+        with mock.patch.dict(
+            client_main._statuses, {key: {"container_runtime": "podman"}}, clear=False
+        ):
+            client_main._append_agent_log(key, "[docker] Started container vllm-cluster-x")
+            client_main._append_agent_log(key, "[agent] Probable cause: GPU OOM")
+        client_main._close_log_file(key)
+        lines = list(client_main._logs[key])
+        assert "[podman] Started container vllm-cluster-x" in lines[0]
+        # Non-runtime tags pass through untouched.
+        assert "[agent] Probable cause" in lines[1]
+
+    def test_docker_deployment_lines_unchanged(self, logs_dir):
+        key = "org/model:8003"
+        with mock.patch.dict(
+            client_main._statuses, {key: {"container_runtime": "docker"}}, clear=False
+        ):
+            client_main._append_agent_log(key, "[docker] Pulled vllm/vllm-openai:v1")
+        client_main._close_log_file(key)
+        assert "[docker] Pulled" in client_main._logs[key][0]
+
+
 class TestAppendLogLine:
     def test_writes_deque_and_file_and_sidecar(self, logs_dir):
         key = "org/model:8001"

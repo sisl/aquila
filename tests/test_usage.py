@@ -93,6 +93,31 @@ class TestAccumulateUsage:
         assert b.total_prompt_tokens == 7
 
 
+class TestPersistTokenSpeeds:
+    def _dep(self):
+        return SimpleNamespace(id=1, prompt_tps=None, generation_tps=None)
+
+    def test_stores_averages_on_row(self):
+        dep = self._dep()
+        sync._persist_token_speeds(dep, {"prompt_tps": 1800.0, "generation_tps": 52})
+        assert dep.prompt_tps == 1800.0
+        assert dep.generation_tps == 52.0
+
+    def test_keeps_last_value_when_scrape_lacks_averages(self):
+        # Warmup-only scrapes (and old clients) send no averages; a stopped
+        # deployment must keep showing the last persisted numbers.
+        dep = self._dep()
+        sync._persist_token_speeds(dep, {"prompt_tps": 1800.0, "generation_tps": 52.0})
+        sync._persist_token_speeds(dep, {"requests_running": 1})
+        assert dep.prompt_tps == 1800.0
+        assert dep.generation_tps == 52.0
+
+    def test_non_numeric_ignored(self):
+        dep = self._dep()
+        sync._persist_token_speeds(dep, {"prompt_tps": "fast"})
+        assert dep.prompt_tps is None
+
+
 class TestLiveUsage:
     def test_live_values_stored_for_running_metrics(self):
         sync._update_live_usage(
@@ -191,6 +216,7 @@ def _snapshot(**overrides):
     base = {
         "prompt_tokens": 0.0,
         "generation_tokens": 0.0,
+        "requests": 0.0,
         "prefill_sum": 0.0,
         "decode_sum": 0.0,
         "ttft_sum": 0.0,
@@ -198,7 +224,24 @@ def _snapshot(**overrides):
         "tpot_count": 0.0,
     }
     base.update(overrides)
+    if "requests" not in overrides and base["prompt_tokens"] > 0:
+        base["requests"] = 1.0
     return base
+
+
+# The first completed request carries vLLM's lazy warmup in its prefill/TTFT
+# timings; _compute_usage_rates baselines on it so averages exclude it. Tests
+# prime that baseline with this snapshot (13 tokens booked against ~17s).
+_WARMUP = dict(
+    prompt_tokens=13.0,
+    generation_tokens=12.0,
+    requests=1.0,
+    prefill_sum=16.9,
+    decode_sum=0.1,
+    ttft_sum=16.9,
+    tpot_sum=0.1,
+    tpot_count=12.0,
+)
 
 
 class TestComputeUsageRates:
@@ -207,8 +250,10 @@ class TestComputeUsageRates:
         from tests.test_failure_classification import client_main
 
         client_main._usage_snapshots.clear()
+        client_main._usage_baselines.clear()
         yield
         client_main._usage_snapshots.clear()
+        client_main._usage_baselines.clear()
 
     def _rates(self, monotonic_values, snapshots):
         from unittest import mock
@@ -227,29 +272,74 @@ class TestComputeUsageRates:
         (rates,) = self._rates([100.0], [_snapshot()])
         assert rates == {}
 
-    def test_lifetime_averages_from_time_histograms(self):
-        # 3000 prompt tokens over 2s of cumulative prefill time, 300 generated
-        # tokens over 6s of decode time. Averages are available from the very
-        # first scrape — no previous window needed.
-        (rates,) = self._rates(
-            [100.0],
+    def test_warmup_request_excluded_from_averages(self):
+        # The observed bug: one 13-token request booking 16.9s of "prefill"
+        # (engine warmup) showed read 0.8 tok/s, creeping up forever. The
+        # warmup request must yield NO average, and later requests must be
+        # measured against post-warmup deltas only.
+        warmup, after = self._rates(
+            [100.0, 115.0],
             [
+                _snapshot(**_WARMUP),
                 _snapshot(
-                    prompt_tokens=3000.0,
-                    generation_tokens=300.0,
-                    prefill_sum=2.0,
-                    decode_sum=6.0,
-                )
+                    **{**_WARMUP, "prompt_tokens": 3013.0, "requests": 2.0,
+                       "prefill_sum": _WARMUP["prefill_sum"] + 0.2}  # +3000 tok, +0.2s
+                ),
             ],
         )
-        assert rates["prompt_tps"] == 1500.0  # 3000 / 2s processing
-        assert rates["generation_tps"] == 50.0  # 300 / 6s decode
+        assert "prompt_tps" not in warmup  # never report the 0.8 artifact
+        assert after["prompt_tps"] == 15000.0  # 3000 / 0.2s real prefill
+
+    def test_lifetime_averages_from_time_histograms(self):
+        # Post-warmup: 3000 prompt tokens over 2s of added prefill time, 300
+        # generated tokens over 6s of added first→last-token time.
+        _, rates = self._rates(
+            [100.0, 115.0],
+            [
+                _snapshot(**_WARMUP),
+                _snapshot(
+                    **{**_WARMUP,
+                       "prompt_tokens": _WARMUP["prompt_tokens"] + 3000.0,
+                       "generation_tokens": _WARMUP["generation_tokens"] + 300.0,
+                       "requests": 4.0,
+                       "prefill_sum": _WARMUP["prefill_sum"] + 2.0,
+                       "decode_sum": _WARMUP["decode_sum"] + 6.0}
+                ),
+            ],
+        )
+        assert rates["prompt_tps"] == 1500.0  # 3000 / 2s prefill
+        assert rates["generation_tps"] == 50.0  # 300 / 6s first→last token
+
+    def test_read_prefers_prefill_time_over_ttft(self):
+        # read is prompt tokens / prefill-phase time (queue wait excluded), so
+        # the prefill histogram wins over TTFT when both are present.
+        _, rates = self._rates(
+            [100.0, 115.0],
+            [
+                _snapshot(**_WARMUP),
+                _snapshot(
+                    **{**_WARMUP,
+                       "prompt_tokens": _WARMUP["prompt_tokens"] + 2000.0,
+                       "requests": 2.0,
+                       "ttft_sum": _WARMUP["ttft_sum"] + 4.0,
+                       "prefill_sum": _WARMUP["prefill_sum"] + 2.0}
+                ),
+            ],
+        )
+        assert rates["prompt_tps"] == 1000.0  # 2000 / 2s prefill, not 4s TTFT
 
     def test_idle_window_keeps_lifetime_averages(self):
         active = _snapshot(
-            prompt_tokens=1000.0, generation_tokens=100.0, prefill_sum=1.0, decode_sum=2.0
+            **{**_WARMUP,
+               "prompt_tokens": _WARMUP["prompt_tokens"] + 1000.0,
+               "generation_tokens": _WARMUP["generation_tokens"] + 100.0,
+               "requests": 3.0,
+               "prefill_sum": _WARMUP["prefill_sum"] + 1.0,
+               "decode_sum": _WARMUP["decode_sum"] + 2.0}
         )
-        first, idle = self._rates([100.0, 115.0], [active, dict(active)])
+        _, first, idle = self._rates(
+            [100.0, 115.0, 130.0], [_snapshot(**_WARMUP), active, dict(active)]
+        )
         # Averages persist through idle windows — never zero, never absent.
         assert idle["prompt_tps"] == first["prompt_tps"] == 1000.0
         assert idle["generation_tps"] == first["generation_tps"] == 50.0
@@ -272,40 +362,55 @@ class TestComputeUsageRates:
         )
         assert second["prompt_throughput"] == 200.0  # (4000-1000) / 15s wall
         assert second["generation_throughput"] == 20.0  # 300 / 15s wall
+        # Window throughput is baseline-free; averages use post-warmup deltas.
+        assert second["prompt_tps"] == 1500.0  # 3000 / 2s added prefill
 
-    def test_counter_reset_recomputes_averages_skips_throughput(self):
-        _, reset = self._rates(
-            [100.0, 115.0],
+    def test_counter_reset_rebaselines_and_skips_throughput(self):
+        _, reset, recovered = self._rates(
+            [100.0, 115.0, 130.0],
             [
                 _snapshot(prompt_tokens=5000.0, prefill_sum=3.0),
-                _snapshot(prompt_tokens=10.0, prefill_sum=0.1),
+                # Engine restarted: counters start over, and its warmup will
+                # land in the next request's timings — re-baseline on it.
+                _snapshot(prompt_tokens=10.0, prefill_sum=8.0),
+                _snapshot(prompt_tokens=2010.0, requests=2.0, prefill_sum=9.0),
             ],
         )
-        # Lifetime averages restart cleanly from the new counters...
-        assert reset["prompt_tps"] == 100.0
-        # ...but no bogus negative-delta throughput is reported.
+        assert "prompt_tps" not in reset
+        # ...and no bogus negative-delta throughput either.
         assert "prompt_throughput" not in reset
+        assert recovered["prompt_tps"] == 2000.0  # 2000 / 1s post-restart
 
     def test_ttft_tpot_fallback_for_older_engines(self):
-        (rates,) = self._rates(
-            [100.0],
+        _, rates = self._rates(
+            [100.0, 115.0],
             [
+                _snapshot(**_WARMUP),
                 _snapshot(
-                    prompt_tokens=2000.0,
-                    generation_tokens=100.0,
-                    ttft_sum=4.0,  # no prefill/decode sums exposed
-                    tpot_sum=2.5,
-                    tpot_count=100.0,
-                )
+                    prompt_tokens=_WARMUP["prompt_tokens"] + 2000.0,
+                    generation_tokens=_WARMUP["generation_tokens"] + 100.0,
+                    requests=3.0,
+                    ttft_sum=_WARMUP["ttft_sum"] + 4.0,
+                    tpot_sum=_WARMUP["tpot_sum"] + 2.5,
+                    tpot_count=_WARMUP["tpot_count"] + 100.0,
+                    prefill_sum=_WARMUP["prefill_sum"],  # no new prefill data
+                    decode_sum=_WARMUP["decode_sum"],
+                ),
             ],
         )
         assert rates["prompt_tps"] == 500.0  # 2000 / 4s TTFT
         assert rates["generation_tps"] == 40.0  # 100 tokens / 2.5s TPOT
 
     def test_partial_availability(self):
-        (rates,) = self._rates(
-            [100.0],
-            [_snapshot(generation_tokens=100.0, decode_sum=2.0)],
+        _, rates = self._rates(
+            [100.0, 115.0],
+            [
+                _snapshot(**_WARMUP),
+                _snapshot(
+                    **{**_WARMUP, "generation_tokens": _WARMUP["generation_tokens"] + 100.0,
+                       "requests": 2.0, "decode_sum": _WARMUP["decode_sum"] + 2.0}
+                ),
+            ],
         )
         assert rates["generation_tps"] == 50.0
         assert "prompt_tps" not in rates

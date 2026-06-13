@@ -125,7 +125,7 @@ function usageTooltip(deployment: Deployment): string {
   }
   if (perRequest.length > 0) {
     lines.push(
-      `Avg per request: ${perRequest.join(" · ")} tok/s (over processing time, since start)`
+      `Avg per request: ${perRequest.join(" · ")} tok/s (read: prefill · generation: first → last token; excludes queue wait and warm-up request)`
     );
   }
   const throughput: string[] = [];
