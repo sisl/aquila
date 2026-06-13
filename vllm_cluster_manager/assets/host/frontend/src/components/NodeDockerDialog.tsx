@@ -880,7 +880,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
       <ConfirmDialog
         open={confirmImageId !== null}
         title="Delete this image?"
-        body="Removes it from every container runtime on this node. The next deployment using it will pull it again from Docker Hub."
+        body="Removes it from every container runtime on this node. The next deployment using it will pull it again from the registry."
         confirmLabel="Delete"
         danger
         onConfirm={() => {

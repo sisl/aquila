@@ -428,6 +428,7 @@ async def deployment_manifest(
         "seed": engine_args.get("seed"),
         "vllm_version": deployment.vllm_version,
         "image_digest": deployment.image_digest,
+        "container_runtime": deployment.container_runtime,
         "engine_args": engine_args,
         "extra_args": deployment.extra_args or [],
         "extra_packages": deployment.extra_packages or [],

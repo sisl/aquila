@@ -418,3 +418,56 @@ async def test_set_node_runtime_rejects_unknown_value():
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post("/nodes/7/runtime", json={"runtime": "lxc"})
     assert resp.status_code == 400
+
+
+class _FakeManifestSession:
+    """Resolves session.get() for the manifest endpoint by model name."""
+
+    def __init__(self, deployment, node):
+        self.deployment = deployment
+        self.node = node
+
+    async def get(self, model, obj_id):
+        if model.__name__ == "Deployment":
+            return self.deployment if self.deployment.id == obj_id else None
+        return self.node
+
+
+@pytest.mark.anyio
+async def test_manifest_includes_container_runtime():
+    deployment = SimpleNamespace(
+        id=21,
+        node_id=14,
+        model_name="org/model",
+        engine_args={},
+        gpu_ids=[0],
+        vllm_version="0.9.1",
+        image_digest=None,
+        container_runtime="podman",
+        extra_args=[],
+        extra_packages=[],
+        lora_modules=[],
+        env_vars=[],
+        gpu_memory_fraction=0.5,
+        tensor_parallel_size=None,
+        owner="alice",
+        created_at=None,
+        duration_seconds=None,
+        status="running",
+    )
+    node = SimpleNamespace(hostname="gpu-01", gpu_usage=[])
+    test_app = FastAPI()
+    test_app.include_router(deployments_api.router, prefix="/deployments")
+    session = _FakeManifestSession(deployment, node)
+
+    async def _override():
+        yield session
+
+    test_app.dependency_overrides[get_session] = _override
+    transport = ASGITransport(app=test_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/deployments/21/manifest")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["container_runtime"] == "podman"
+    assert body["model"] == "org/model"

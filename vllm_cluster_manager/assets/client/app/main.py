@@ -24,7 +24,7 @@ import httpx
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import psutil
 from urllib.request import Request as UrllibRequest, urlopen
@@ -166,6 +166,13 @@ def _log_sidecar_for(path: Path) -> Path:
     return Path(str(path) + ".pos")
 
 
+def _log_overflow_for(path: Path) -> Path:
+    """Same-run overflow part: when the active file hits the size cap, its
+    content moves here so the full run stays downloadable ("<file>.0" holds
+    the older part, "<file>" the newest)."""
+    return Path(str(path) + ".0")
+
+
 def _split_docker_ts(raw_line: str) -> tuple[str | None, str]:
     """Split a docker timestamps=True line into (raw_ts, rest)."""
     match = _DOCKER_TS_RE.match(raw_line)
@@ -193,10 +200,12 @@ def _open_log_file(key: str, rotate: bool = False) -> dict[str, object]:
         _close_log_file(key)
     _LOGS_DIR.mkdir(parents=True, exist_ok=True)
     path = _log_file_for(key)
-    if rotate and path.exists():
+    if rotate:
         # One file per deployment run; keep the previous run as "<file>.1".
-        path.replace(Path(str(path) + ".1"))
+        if path.exists():
+            path.replace(Path(str(path) + ".1"))
         _log_sidecar_for(path).unlink(missing_ok=True)
+        _log_overflow_for(path).unlink(missing_ok=True)
     raw_ts = ""
     sidecar = _log_sidecar_for(path)
     if not rotate and sidecar.exists():
@@ -238,10 +247,18 @@ def _append_log_line(key: str, formatted: str, raw_ts: str | None = None) -> Non
             except OSError:
                 pass
         if int(state["size"]) > settings.log_max_mb * 1024 * 1024:  # type: ignore[arg-type]
-            # Size cap reached: keep the overflow as "<file>.1", start fresh.
+            # Size cap reached: roll the active file into the same-run
+            # overflow part "<file>.0" and start the active file fresh, so
+            # the download (".0" + active) always holds the entire run.
             _close_log_file(key)
             path = _log_file_for(key)
-            path.replace(Path(str(path) + ".1"))
+            overflow = _log_overflow_for(path)
+            if overflow.exists():
+                with open(overflow, "ab") as dst, open(path, "rb") as src:
+                    shutil.copyfileobj(src, dst)
+                path.unlink()
+            else:
+                path.replace(overflow)
             _open_log_file(key)
             if raw_ts:
                 _log_state[key]["raw_ts"] = raw_ts
@@ -299,6 +316,8 @@ def _docker() -> "docker.DockerClient":
 # Podman speaks the Docker REST API on its own socket, so the same docker-py
 # client (pulls, builds, labels, log streams) works against it unchanged.
 _podman_client: "docker.DockerClient | None" = None
+# Resolved by _podman() so other clients (e.g. transfers) reuse the same socket.
+_podman_base_url: str | None = None
 
 RUNTIMES = ("docker", "podman")
 
@@ -328,7 +347,7 @@ def _socket_exists(sock: str) -> bool:
 
 def _podman() -> "docker.DockerClient":
     """Return a cached client for Podman's Docker-compatible API socket."""
-    global _podman_client
+    global _podman_client, _podman_base_url
     if _podman_client is None:
         last_exc: Exception | None = None
         for sock in _podman_socket_candidates():
@@ -338,6 +357,7 @@ def _podman() -> "docker.DockerClient":
                 client = docker.DockerClient(base_url=f"unix://{sock}")
                 client.ping()
                 _podman_client = client
+                _podman_base_url = f"unix://{sock}"
                 break
             except Exception as exc:  # pragma: no cover - environment dependent
                 last_exc = exc
@@ -357,6 +377,27 @@ def _runtime_client(runtime: str) -> "docker.DockerClient":
     if runtime == "podman":
         return _podman()
     raise ValueError(f"Unknown container runtime: {runtime}")
+
+
+# Streaming a multi-GB image between the two stores takes minutes; the regular
+# clients keep docker-py's 60s default so probes fail fast.
+_TRANSFER_TIMEOUT_S = 3600
+_transfer_clients: dict[str, "docker.DockerClient"] = {}
+
+
+def _transfer_client(runtime: str) -> "docker.DockerClient":
+    """A client for *runtime* with a timeout sized for image transfers."""
+    client = _transfer_clients.get(runtime)
+    if client is None:
+        _runtime_client(runtime)  # resolve/validate the endpoint first
+        if runtime == "docker":
+            client = docker.from_env(timeout=_TRANSFER_TIMEOUT_S)
+        else:
+            client = docker.DockerClient(
+                base_url=_podman_base_url, timeout=_TRANSFER_TIMEOUT_S
+            )
+        _transfer_clients[runtime] = client
+    return client
 
 
 # (monotonic ts, runtimes) — probing involves socket pings, so cache briefly.
@@ -1042,11 +1083,12 @@ def _copy_image_between_runtimes(image_ref: str, runtime: str, log) -> bool:
             "(local transfer, no download) ..."
         )
         try:
-            target_client = _runtime_client(runtime)
             # Export by REF (not id) so the repo tag survives in the tarball.
-            data = source_client.api.get_image(image_ref)
-            target_client.images.load(data)
-            target_client.images.get(image_ref)
+            # Long-timeout clients: streaming tens of GB through the load call
+            # takes minutes, well past the regular clients' 60s read timeout.
+            data = _transfer_client(source).api.get_image(image_ref)
+            _transfer_client(runtime).images.load(data)
+            _runtime_client(runtime).images.get(image_ref)
         except Exception as exc:
             log(
                 f"[docker] Local copy from {source} failed ({exc}); "
@@ -1426,12 +1468,29 @@ def deployment_logs(key: str, tail: int = 200) -> dict[str, object]:
 
 
 @app.get("/deployments/logs/download")
-def download_deployment_logs(key: str) -> FileResponse:
-    """Full persisted log of the deployment's current run."""
+def download_deployment_logs(key: str) -> StreamingResponse:
+    """Full persisted log of the deployment's current run.
+
+    A run may span two files once the size cap rolls the active file into the
+    "<file>.0" overflow part; stream them in order so the download always
+    holds the run from the beginning.
+    """
     path = _log_file_for(key)
-    if not path.exists():
+    parts = [p for p in (_log_overflow_for(path), path) if p.exists()]
+    if not parts:
         raise HTTPException(status_code=404, detail="No log file for this deployment.")
-    return FileResponse(path, media_type="text/plain", filename=path.name)
+
+    def body():
+        for part in parts:
+            with open(part, "rb") as fh:
+                while chunk := fh.read(1024 * 1024):
+                    yield chunk
+
+    return StreamingResponse(
+        body(),
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{path.name}"'},
+    )
 
 
 @app.get("/ports/check")
@@ -2070,44 +2129,83 @@ async def _stream_container_logs(
     def _reader() -> None:
         state = _open_log_file(key)
         last_ts = str(state.get("raw_ts") or "")
-        kwargs: dict[str, object] = {"stream": True, "follow": True, "timestamps": True}
         if resume and last_ts:
-            # Resume after an agent restart: ask Docker for logs since the
-            # last persisted timestamp (second granularity) and drop the
-            # overlap below via the exact nanosecond skip-guard.
             try:
-                since_dt = datetime.fromisoformat(last_ts[:19] + "+00:00")
-                kwargs["since"] = int(since_dt.timestamp())
+                datetime.fromisoformat(last_ts[:19] + "+00:00")
             except ValueError:
-                kwargs["tail"] = 200
-        elif resume:
-            # Legacy file without a sidecar: keep the old tail behavior.
-            kwargs["tail"] = 200
-        try:
-            stream = container.logs(**kwargs)
-        except Exception as exc:  # pragma: no cover - environment dependent
-            logger.warning("Failed to attach to logs for %s: %s", key, exc)
-            return
-        for raw in stream:
+                last_ts = ""  # unusable resume point: refetch the full history
+        if resume and not last_ts and int(state.get("size") or 0) > 0:
+            # No usable sidecar but a non-empty file: at best a partial copy
+            # of the container history (e.g. the old 200-line backfill). Set
+            # it aside and refetch everything so the fresh file holds the
+            # complete run with no duplicates.
             try:
-                line = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+                _close_log_file(key)
+                path = _log_file_for(key)
+                path.replace(Path(str(path) + ".1"))
+                _log_overflow_for(path).unlink(missing_ok=True)
+                state = _open_log_file(key)
+            except OSError as exc:
+                logger.warning("Could not reset partial log for %s: %s", key, exc)
+                state = _open_log_file(key)
+        attach_failures = 0
+        while True:
+            # No resume point -> the container's complete history from the
+            # runtime; otherwise logs since the last persisted timestamp
+            # (second granularity), with the exact nanosecond skip-guard
+            # below dropping the overlap.
+            kwargs: dict[str, object] = {
+                "stream": True, "follow": True, "timestamps": True,
+            }
+            if last_ts:
+                try:
+                    since_dt = datetime.fromisoformat(last_ts[:19] + "+00:00")
+                    kwargs["since"] = int(since_dt.timestamp())
+                except ValueError:
+                    pass  # skip-guard alone still dedupes the overlap
+            stream: object = ()
+            try:
+                stream = container.logs(**kwargs)
+                attach_failures = 0
+            except NotFound:
+                return
+            except Exception as exc:  # pragma: no cover - environment dependent
+                attach_failures += 1
+                logger.warning("Failed to attach to logs for %s: %s", key, exc)
+                if attach_failures >= 5:
+                    return
+            for raw in stream:
+                try:
+                    line = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+                except Exception:
+                    continue
+                raw_ts, rest = _split_docker_ts(line)
+                # RFC3339Nano timestamps are fixed-width -> lexicographic compare.
+                if raw_ts and last_ts and raw_ts <= last_ts:
+                    continue
+                if raw_ts:
+                    last_ts = raw_ts
+                cleaned = _strip_ansi(rest)
+                if not cleaned:
+                    continue
+                phase = _phase_for_line(cleaned)
+                if phase and key in _statuses:
+                    _statuses[key]["phase"] = phase
+                if _is_noise_line(cleaned):
+                    continue
+                _append_log_line(key, _format_log_line(raw_ts, cleaned), raw_ts)
+            # The follow stream ended: the container stopped/restarted or the
+            # runtime closed it. Re-attach while the deployment is still
+            # wanted so restart attempts keep landing in the same run log.
+            if (_statuses.get(key) or {}).get("desired_state") != "running":
+                return
+            if _containers.get(key) is not container:
+                return
+            try:
+                container.reload()
             except Exception:
-                continue
-            raw_ts, rest = _split_docker_ts(line)
-            # RFC3339Nano timestamps are fixed-width -> lexicographic compare.
-            if raw_ts and last_ts and raw_ts <= last_ts:
-                continue
-            if raw_ts:
-                last_ts = raw_ts
-            cleaned = _strip_ansi(rest)
-            if not cleaned:
-                continue
-            phase = _phase_for_line(cleaned)
-            if phase and key in _statuses:
-                _statuses[key]["phase"] = phase
-            if _is_noise_line(cleaned):
-                continue
-            _append_log_line(key, _format_log_line(raw_ts, cleaned), raw_ts)
+                return
+            time.sleep(2)
 
     await asyncio.to_thread(_reader)
 
@@ -2288,6 +2386,29 @@ def stop_container(container_id: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
+def _image_content_key(image) -> str:
+    """Runtime-independent identity for an image.
+
+    Image IDs are NOT comparable across stores: Docker's containerd image
+    store reports the registry manifest(-list) digest while Podman (and
+    classic Docker storage) report the config digest. The RootFS diff-id
+    list (uncompressed layer digests) is identical for the same image no
+    matter how it arrived (docker pull, podman pull, save->load transfer).
+    """
+    try:
+        layers = ((image.attrs.get("RootFS") or {}).get("Layers")) or []
+        if not layers:
+            # images.list() returns summaries without RootFS; inspect fills it.
+            image.reload()
+            layers = ((image.attrs.get("RootFS") or {}).get("Layers")) or []
+        if layers:
+            digest = hashlib.sha256("\n".join(layers).encode()).hexdigest()
+            return f"layers:{digest}"
+    except Exception:  # pragma: no cover - racing image removal
+        pass
+    return "id:" + (image.id or image.short_id).removeprefix("sha256:")
+
+
 @app.get("/images")
 def list_images() -> dict[str, list[dict[str, object]]]:
     """List cached vLLM images (official + locally derived) on this node.
@@ -2320,9 +2441,11 @@ def list_images() -> dict[str, list[dict[str, object]]]:
             # Full hex id: Docker accepts it everywhere, and Podman's compat
             # API rejects the sha256:-prefixed short form on delete.
             image_id = (image.id or image.short_id).removeprefix("sha256:")
-            entry = merged.get(image_id)
+            # Merge by content, not id — the same image carries different ids
+            # across stores (see _image_content_key).
+            entry = merged.get(_image_content_key(image))
             if entry is None:
-                merged[image_id] = {
+                merged[_image_content_key(image)] = {
                     "id": image_id,
                     "tags": relevant,
                     "size_mb": size_mb,
@@ -2562,7 +2685,7 @@ def list_model_cache() -> dict[str, list[dict[str, object]]]:
 _CLEANUP_IMAGE = "alpine:3"
 
 
-def _delete_cache_dirs_via_docker(hub: Path, dir_name: str) -> None:
+def _delete_cache_dirs_via_container(hub: Path, dir_name: str) -> None:
     """Remove a hub cache dir (and its .locks twin) as root via a one-shot container.
 
     vLLM containers download models as root onto the bind-mounted cache, so when
@@ -2604,16 +2727,16 @@ def delete_cached_model(name: str) -> dict[str, str]:
             shutil.rmtree(locks)
     except OSError as exc:
         logger.warning(
-            "Native delete of %s failed (%s); retrying as root via Docker.", target, exc
+            "Native delete of %s failed (%s); retrying as root via a one-shot container.", target, exc
         )
         try:
-            _delete_cache_dirs_via_docker(hub, dir_name)
+            _delete_cache_dirs_via_container(hub, dir_name)
         except Exception as docker_exc:
             raise HTTPException(
                 status_code=500,
                 detail=(
                     f"Could not delete '{name}': {exc}. "
-                    f"Docker fallback also failed: {docker_exc}"
+                    f"Container fallback also failed: {docker_exc}"
                 ),
             ) from docker_exc
     if target.exists():

@@ -320,7 +320,7 @@ export async function fetchNodePackages(nodeId: number): Promise<NodePackage[]> 
 }
 
 // ---------------------------------------------------------------------------
-// Per-node Docker management (containers + image cache)
+// Per-node container runtime management (containers + image cache)
 // ---------------------------------------------------------------------------
 
 export type NodeContainer = {

@@ -1341,7 +1341,7 @@ class TestAppendLogLine:
         sidecar = client_main._log_sidecar_for(path)
         assert sidecar.read_text() == "2026-06-11T08:00:32.000000001Z"
 
-    def test_rotation_at_size_cap(self, logs_dir):
+    def test_size_cap_rolls_into_same_run_overflow_part(self, logs_dir):
         key = "m:1"
         big_line = "first " + "x" * (1024 * 1024 + 100)  # exceeds the 1 MB cap
         with mock.patch.object(client_main.settings, "log_max_mb", 1):
@@ -1349,19 +1349,38 @@ class TestAppendLogLine:
             client_main._append_log_line(key, "second line")
         path = client_main._log_file_for(key)
         client_main._close_log_file(key)
-        rotated = Path(str(path) + ".1")
-        assert rotated.read_text().startswith("first ")
+        overflow = client_main._log_overflow_for(path)
+        assert overflow.read_text().startswith("first ")
         assert path.read_text().splitlines() == ["second line"]
+        # The previous-run slot is untouched by same-run overflow.
+        assert not Path(str(path) + ".1").exists()
+
+    def test_repeated_overflow_appends_to_same_part(self, logs_dir):
+        key = "m:1"
+        big = "x" * (1024 * 1024 + 100)
+        with mock.patch.object(client_main.settings, "log_max_mb", 1):
+            client_main._append_log_line(key, "one " + big)
+            client_main._append_log_line(key, "two " + big)
+            client_main._append_log_line(key, "tail line")
+        path = client_main._log_file_for(key)
+        client_main._close_log_file(key)
+        overflow_lines = client_main._log_overflow_for(path).read_text().splitlines()
+        assert overflow_lines[0].startswith("one ")
+        assert overflow_lines[1].startswith("two ")
+        assert path.read_text().splitlines() == ["tail line"]
 
     def test_rotate_on_fresh_run(self, logs_dir):
         key = "m:1"
         client_main._append_log_line(key, "old run")
+        path = client_main._log_file_for(key)
+        client_main._log_overflow_for(path).write_text("old overflow\n")
         client_main._open_log_file(key, rotate=True)
         client_main._append_log_line(key, "new run")
-        path = client_main._log_file_for(key)
         client_main._close_log_file(key)
         assert path.read_text().splitlines() == ["new run"]
         assert "old run" in Path(str(path) + ".1").read_text()
+        # Same-run overflow belongs to the previous run; a fresh run drops it.
+        assert not client_main._log_overflow_for(path).exists()
 
 
 class TestGcOldLogs:
@@ -1403,6 +1422,72 @@ async def test_stream_resume_skips_persisted_lines(logs_dir):
     # Resume used since= derived from the sidecar.
     assert container.logs.call_args.kwargs.get("since") is not None
     assert container.logs.call_args.kwargs.get("timestamps") is True
+    # No re-attach: the deployment is not desired-running.
+    assert container.logs.call_count == 1
+
+
+@pytest.mark.anyio
+async def test_stream_resume_without_sidecar_backfills_full_history(logs_dir):
+    """No resume point -> fetch the container's complete history (no tail),
+    setting aside any partial file so the fresh one holds the whole run."""
+    key = "org/model:8001"
+    path = client_main._log_file_for(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[2026-06-11 08:00:30] partial 200-line backfill\n")
+
+    container = mock.MagicMock()
+    container.logs.return_value = [
+        b"2026-06-11T07:00:01.000000001Z engine boot line\n",
+        b"2026-06-11T08:00:30.000000001Z partial 200-line backfill\n",
+    ]
+    with mock.patch.dict(client_main._statuses, {key: {}}, clear=True):
+        await client_main._stream_container_logs(key, container, resume=True)
+    client_main._close_log_file(key)
+
+    # Full history requested: neither tail nor since.
+    assert "tail" not in container.logs.call_args.kwargs
+    assert "since" not in container.logs.call_args.kwargs
+    # The fresh file is exactly the streamed history; the partial copy was
+    # set aside as the previous-run file.
+    assert path.read_text().splitlines() == [
+        "[2026-06-11 07:00:01] engine boot line",
+        "[2026-06-11 08:00:30] partial 200-line backfill",
+    ]
+    assert "partial 200-line backfill" in Path(str(path) + ".1").read_text()
+
+
+@pytest.mark.anyio
+async def test_stream_reattaches_while_desired_running(logs_dir):
+    """A follow stream that ends mid-run is re-attached with since= so later
+    lines (e.g. restart attempts) keep landing in the same run log."""
+    key = "org/model:8001"
+    container = mock.MagicMock()
+    container.logs.side_effect = [
+        [b"2026-06-11T08:00:01.000000001Z first attempt line\n"],
+        [
+            b"2026-06-11T08:00:01.000000001Z first attempt line\n",  # overlap
+            b"2026-06-11T08:00:05.000000001Z after restart line\n",
+        ],
+    ]
+    # First stream end: container still there -> re-attach; second: gone.
+    container.reload.side_effect = [None, client_main.NotFound("gone")]
+    with mock.patch.dict(
+        client_main._statuses, {key: {"desired_state": "running"}}, clear=True
+    ), mock.patch.dict(
+        client_main._containers, {key: container}, clear=True
+    ), mock.patch.object(client_main.time, "sleep"):
+        await client_main._stream_container_logs(key, container)
+    client_main._close_log_file(key)
+
+    assert container.logs.call_count == 2
+    # The re-attach resumed from the last seen timestamp...
+    assert container.logs.call_args.kwargs.get("since") is not None
+    # ...and the overlap line was deduped by the skip-guard.
+    path = client_main._log_file_for(key)
+    assert path.read_text().splitlines() == [
+        "[2026-06-11 08:00:01] first attempt line",
+        "[2026-06-11 08:00:05] after restart line",
+    ]
 
 
 class TestLogDownloadEndpoint:
@@ -1421,6 +1506,21 @@ class TestLogDownloadEndpoint:
                 "/deployments/logs/download", params={"key": "missing:1"}
             )
             assert resp.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_download_concatenates_overflow_part(self, logs_dir):
+        """A run that hit the size cap spans <file>.0 + <file>; the download
+        holds both, in order, so the run is complete from the beginning."""
+        key = "org/model:8001"
+        path = client_main._log_file_for(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        client_main._log_overflow_for(path).write_text("[ts] start of run\n")
+        path.write_text("[ts] newest lines\n")
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/deployments/logs/download", params={"key": key})
+        assert resp.status_code == 200
+        assert resp.text == "[ts] start of run\n[ts] newest lines\n"
 
 
 @pytest.mark.anyio

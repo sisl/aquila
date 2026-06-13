@@ -533,7 +533,7 @@ export function Dashboard() {
 
   const logsQuery = useQuery({
     queryKey: ["deployment-logs", logsDeploymentId],
-    queryFn: () => fetchDeploymentLogs(logsDeploymentId ?? 0, 400),
+    queryFn: () => fetchDeploymentLogs(logsDeploymentId ?? 0, 2000),
     enabled: logsDeploymentId !== null,
     refetchInterval: logsDeploymentId !== null ? 2000 : false,
     refetchIntervalInBackground: true,
@@ -676,27 +676,39 @@ export function Dashboard() {
     }
 
     const image = resolveImageTag(deployment.vllm_version);
-    const gpus =
-      deployment.gpu_ids && deployment.gpu_ids.length > 0
-        ? `'"device=${deployment.gpu_ids.join(",")}"'`
-        : "all";
+    const runtime = deployment.container_runtime ?? "docker";
 
-    const dockerParts = [
-      "docker", "run", "-d",
-      "--gpus", gpus,
+    const runParts = [runtime, "run", "-d"];
+    // GPU syntax differs: Podman ignores --gpus and takes CDI device refs.
+    if (runtime === "podman") {
+      const devices =
+        deployment.gpu_ids && deployment.gpu_ids.length > 0
+          ? deployment.gpu_ids.map((id) => `nvidia.com/gpu=${id}`)
+          : ["nvidia.com/gpu=all"];
+      for (const device of devices) {
+        runParts.push("--device", device);
+      }
+    } else {
+      const gpus =
+        deployment.gpu_ids && deployment.gpu_ids.length > 0
+          ? `'"device=${deployment.gpu_ids.join(",")}"'`
+          : "all";
+      runParts.push("--gpus", gpus);
+    }
+    runParts.push(
       "--ipc=host",
       "--network", "host",
       "-v", "~/.cache/huggingface:/root/.cache/huggingface"
-    ];
+    );
     if (deployment.env_vars && deployment.env_vars.length > 0) {
       for (const pair of deployment.env_vars) {
         if (!pair.key) {
           continue;
         }
-        dockerParts.push("-e", `${pair.key}=${shellQuote(String(pair.value ?? ""))}`);
+        runParts.push("-e", `${pair.key}=${shellQuote(String(pair.value ?? ""))}`);
       }
     }
-    dockerParts.push(image);
+    runParts.push(image);
 
     const vllmArgs = [
       "--model",
@@ -723,7 +735,7 @@ export function Dashboard() {
       vllmArgs.push(...deployment.extra_args);
     }
 
-    lines.push([...dockerParts, ...vllmArgs.map(shellQuote)].join(" "));
+    lines.push([...runParts, ...vllmArgs.map(shellQuote)].join(" "));
     return lines.join("\n");
   };
 
@@ -1746,7 +1758,9 @@ export function Dashboard() {
         title="Deployment Settings"
         meta={
           settingsDeployment
-            ? `${settingsDeployment.model_name} (port ${settingsDeployment.port})`
+            ? `${settingsDeployment.model_name} (port ${settingsDeployment.port}) · ${
+                settingsDeployment.container_runtime ?? "docker"
+              }`
             : undefined
         }
         paperClassName="terminal-shell"
