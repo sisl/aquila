@@ -112,6 +112,22 @@ export function checkNodePort(
   return request<{ available: boolean }>(`/nodes/${nodeId}/ports/check?port=${port}`);
 }
 
+export type ServedNameCheck = {
+  available: boolean;
+  conflict_id?: number;
+  conflict_model?: string;
+  suggestion?: string;
+};
+
+export function checkServedName(
+  name: string,
+  excludeId?: number
+): Promise<ServedNameCheck> {
+  const params = new URLSearchParams({ name });
+  if (excludeId !== undefined) params.set("exclude_id", String(excludeId));
+  return request<ServedNameCheck>(`/deployments/served-name/check?${params.toString()}`);
+}
+
 export function fetchDeployments(): Promise<Deployment[]> {
   return request<Deployment[]>("/deployments/");
 }

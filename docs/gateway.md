@@ -32,12 +32,15 @@ The `model` field of the request selects the deployment. Matching precedence:
 2. The deployment's model name (HF id or local path)
 3. A LoRA adapter name served by the deployment
 
-If several running deployments match (replicas of the same model), one is chosen at random — free load balancing.
+The served name is the routing key and is **unique across active deployments** — it defaults to the model name, and a launch that would collide is rejected (the deploy form prompts for a different name and suggests a free one). Routing is therefore deterministic: a request resolves to exactly one deployment, never a guess.
+
+You can still serve the same base model several times — give each replica a distinct `served_model_name` and address it by that name. The bare model name is then shared by several deployments and is reported as ambiguous rather than routed (see `model_ambiguous` below); address one of the served names instead.
 
 Errors come back in OpenAI's error format:
 
 | Status | Meaning |
 | --- | --- |
+| 400 | The model name maps to several deployments (`model_ambiguous`); the message lists the served names to choose from. |
 | 404 | No deployment serves that model; the message lists the available model names. |
 | 503 | A deployment matches but is still starting/loading — retry shortly. |
 | 502 | The deployment's node did not respond. |

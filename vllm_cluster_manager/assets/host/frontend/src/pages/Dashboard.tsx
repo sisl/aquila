@@ -43,6 +43,7 @@ import {
   extendDeployment,
   fetchDeploymentLogs,
   checkNodePort,
+  checkServedName,
   createConfig,
   deleteConfig,
   fetchManifest,
@@ -297,6 +298,19 @@ export function Dashboard() {
     queryKey: ["port-check", nodeId, port],
     queryFn: () => checkNodePort(Number(nodeId), port),
     enabled: nodeId !== "" && !Number.isNaN(Number(nodeId)) && port > 0,
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+    staleTime: 4000,
+    placeholderData: (previous) => previous
+  });
+
+  // The name clients address at the gateway: the explicit served name, or the
+  // model name when left blank. It must be unique across active deployments.
+  const effectiveServedName = servedModelName.trim() || modelName.trim();
+  const servedNameQuery = useQuery({
+    queryKey: ["served-name-check", effectiveServedName],
+    queryFn: () => checkServedName(effectiveServedName),
+    enabled: effectiveServedName.length > 0,
     refetchInterval: 5000,
     refetchIntervalInBackground: true,
     staleTime: 4000,
@@ -990,6 +1004,35 @@ export function Dashboard() {
     return null;
   }, [port, portCheckQuery.data, portCheckQuery.isError, portCheckQuery.isLoading, selectedNode]);
 
+  // Served-name collision: the gateway routes by this name, so it must be
+  // unique. Surface a prompt to rename (with a free suggestion) and block the
+  // deploy until it's resolved.
+  const servedNameConflict = useMemo(() => {
+    const data = servedNameQuery.data;
+    if (!effectiveServedName || !data || data.available !== false) {
+      return null;
+    }
+    const suggestion = data.suggestion ?? `${effectiveServedName}-2`;
+    return {
+      message:
+        `Served name "${effectiveServedName}" is already in use` +
+        (data.conflict_model ? ` by ${data.conflict_model}` : "") +
+        `. Choose a different served model name (e.g. "${suggestion}").`,
+      suggestion
+    };
+  }, [effectiveServedName, servedNameQuery.data]);
+
+  // Reveal the served-name field (under Engine Options) the moment a conflict
+  // first appears, then leave the accordion under the user's control.
+  const hadServedNameConflict = useRef(false);
+  useEffect(() => {
+    const has = servedNameConflict !== null;
+    if (has && !hadServedNameConflict.current) {
+      setExpandedSection("engine");
+    }
+    hadServedNameConflict.current = has;
+  }, [servedNameConflict]);
+
   return (
     <Box className="app">
       <Box className="brand">
@@ -1464,6 +1507,12 @@ export function Dashboard() {
                         placeholder="Name exposed on the OpenAI API"
                         value={servedModelName}
                         onChange={(event) => setServedModelName(event.target.value)}
+                        error={servedNameConflict !== null}
+                        helperText={
+                          servedNameConflict
+                            ? `Already in use — try "${servedNameConflict.suggestion}". Defaults to the model name when blank; must be unique across deployments.`
+                            : "Defaults to the model name. Must be unique — clients address this at the gateway."
+                        }
                       />
                       <Stack direction="row" spacing={2}>
                         <FormControlLabel
@@ -1608,6 +1657,23 @@ export function Dashboard() {
                     {portInUseWarning}
                   </Alert>
                 )}
+                {servedNameConflict && (
+                  <Alert
+                    severity="warning"
+                    sx={{ mb: 1.5 }}
+                    action={
+                      <Button
+                        color="inherit"
+                        size="small"
+                        onClick={() => setServedModelName(servedNameConflict.suggestion)}
+                      >
+                        Use "{servedNameConflict.suggestion}"
+                      </Button>
+                    }
+                  >
+                    {servedNameConflict.message}
+                  </Alert>
+                )}
                 {startMutation.isError && (
                   <Alert severity="error" sx={{ mb: 1.5 }}>
                     {startMutation.error?.message ?? "Failed to deploy. Check backend logs."}
@@ -1617,7 +1683,10 @@ export function Dashboard() {
                   fullWidth
                   variant="contained"
                   disabled={
-                    !canDeploy || startMutation.isPending || gpuAllocationWarning !== null
+                    !canDeploy ||
+                    startMutation.isPending ||
+                    gpuAllocationWarning !== null ||
+                    servedNameConflict !== null
                   }
                   onClick={() =>
                     startMutation.mutate({

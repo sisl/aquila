@@ -7,8 +7,6 @@ unmodified; token accounting comes from the per-deployment vLLM metrics
 scrape, not from the gateway.
 """
 
-import random
-
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -19,7 +17,7 @@ from app.core.config import settings
 from app.db.session import get_session
 from app.models.deployment import Deployment
 from app.models.node import Node
-from app.services import runtime_settings
+from app.services import model_names, runtime_settings
 
 
 def _require_gateway() -> None:
@@ -69,13 +67,7 @@ def _served_name(deployment) -> str | None:
 
 
 def _lora_names(deployment) -> list[str]:
-    # lora_modules lands with the LoRA feature; getattr keeps this forward-compatible.
-    modules = getattr(deployment, "lora_modules", None) or []
-    names = []
-    for module in modules:
-        if isinstance(module, dict) and module.get("name"):
-            names.append(str(module["name"]))
-    return names
+    return model_names.lora_names(deployment)
 
 
 def _model_aliases(deployment) -> list[str]:
@@ -90,12 +82,18 @@ def _model_aliases(deployment) -> list[str]:
     return aliases
 
 
-def _match_deployment(deployments, model: str):
-    """Pick the deployment serving *model*.
+def _choose(deployments, model: str):
+    """Resolve *model* to one deployment.
 
     Precedence: explicit served_model_name, then model_name, then LoRA
-    adapter names. Multiple matches in a tier → random choice (trivial
-    load spreading across replicas).
+    adapter names. Served names and LoRA names are kept unique at deploy
+    time, so those tiers never collide; a tier with more than one match is
+    only reachable through a raw model_name shared by several replicas, in
+    which case the request is ambiguous and the caller must name a specific
+    served model. Returns one of:
+        ("ok", deployment)         exactly one match
+        ("ambiguous", [names...])  several matches — distinct served names
+        ("none", None)             no match
     """
     tiers = (
         [d for d in deployments if _served_name(d) == model],
@@ -103,9 +101,13 @@ def _match_deployment(deployments, model: str):
         [d for d in deployments if model in _lora_names(d)],
     )
     for tier in tiers:
-        if tier:
-            return random.choice(tier)
-    return None
+        if not tier:
+            continue
+        if len(tier) == 1:
+            return "ok", tier[0]
+        names = sorted({model_names.effective_served_name(d) for d in tier})
+        return "ambiguous", names
+    return "none", None
 
 
 def _openai_error(
@@ -124,17 +126,32 @@ async def _resolve(session: AsyncSession, model: str):
     result = await session.execute(select(Deployment))
     deployments = list(result.scalars().all())
 
-    match = _match_deployment(
+    outcome, value = _choose(
         [d for d in deployments if d.status == "running"], model
     )
-    if match is None:
-        pending = _match_deployment(
+    if outcome == "ambiguous":
+        return _openai_error(
+            400,
+            f"Model '{model}' maps to several running deployments; "
+            f"request a specific served model name: {', '.join(value)}.",
+            "invalid_request_error",
+            "model_ambiguous",
+        )
+    if outcome == "none":
+        pending_outcome, pending = _choose(
             [d for d in deployments if d.status in ("starting", "loading")], model
         )
-        if pending is not None:
+        if pending_outcome == "ok":
             return _openai_error(
                 503,
                 f"Model '{model}' is still loading (deployment {pending.id}); retry shortly.",
+                "upstream_error",
+                "model_loading",
+            )
+        if pending_outcome == "ambiguous":
+            return _openai_error(
+                503,
+                f"Model '{model}' is still loading; retry shortly.",
                 "upstream_error",
                 "model_loading",
             )
@@ -154,6 +171,7 @@ async def _resolve(session: AsyncSession, model: str):
             "model_not_found",
         )
 
+    match = value
     node = await session.get(Node, match.node_id)
     if node is None:
         return _openai_error(

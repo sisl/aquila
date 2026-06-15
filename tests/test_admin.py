@@ -34,6 +34,7 @@ for _name in _saved_app_modules:
 import app.api.admin as admin  # noqa: E402
 import app.api.deployments as deployments_api  # noqa: E402
 import app.api.nodes as nodes_api  # noqa: E402
+import app.services.model_names as model_names  # noqa: E402
 import app.services.sync as sync  # noqa: E402
 from app.db.session import get_session  # noqa: E402
 from app.services.node_state import rogue_container_counts  # noqa: E402
@@ -471,3 +472,94 @@ async def test_manifest_includes_container_runtime():
     body = resp.json()
     assert body["container_runtime"] == "podman"
     assert body["model"] == "org/model"
+
+
+# ---------------------------------------------------------------------------
+# Served-name uniqueness
+# ---------------------------------------------------------------------------
+
+
+def _dep(id, model_name, served=None, lora=None):
+    return SimpleNamespace(
+        id=id,
+        model_name=model_name,
+        engine_args={"served_model_name": served} if served else {},
+        lora_modules=[{"name": n, "path": "p"} for n in (lora or [])],
+        status="running",
+    )
+
+
+class _AliasSession:
+    """Returns a fixed set of active deployments from execute().scalars().all()."""
+
+    def __init__(self, deployments):
+        self._deployments = deployments
+
+    async def execute(self, stmt):
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: self._deployments))
+
+
+class TestModelNameHelpers:
+    def test_effective_served_name_prefers_override(self):
+        assert model_names.effective_served_name(_dep(1, "org/m", served="alias")) == "alias"
+
+    def test_effective_served_name_defaults_to_model(self):
+        assert model_names.effective_served_name(_dep(1, "org/m")) == "org/m"
+
+    def test_primary_aliases_includes_served_and_lora(self):
+        d = _dep(1, "org/m", served="alias", lora=["a1", "a2"])
+        assert model_names.primary_aliases(d) == {"alias", "a1", "a2"}
+
+    def test_suggest_served_name(self):
+        assert deployments_api._suggest_served_name("m", set()) == "m"
+        assert deployments_api._suggest_served_name("m", {"m"}) == "m-2"
+        assert deployments_api._suggest_served_name("m", {"m", "m-2"}) == "m-3"
+
+
+@pytest.mark.anyio
+async def test_served_name_conflict_raises_409():
+    session = _AliasSession([_dep(1, "org/m")])  # effective served name "org/m"
+    with pytest.raises(deployments_api.HTTPException) as exc:
+        await deployments_api._check_served_name_conflict(
+            session, model_name="org/m", engine_args=None, lora_modules=None
+        )
+    assert exc.value.status_code == 409
+    assert "org/m" in exc.value.detail
+    assert "different served model name" in exc.value.detail
+
+
+@pytest.mark.anyio
+async def test_same_model_distinct_served_name_allowed():
+    session = _AliasSession([_dep(1, "org/m")])  # already serving "org/m"
+    # Same base model, explicit distinct served name -> no conflict.
+    await deployments_api._check_served_name_conflict(
+        session,
+        model_name="org/m",
+        engine_args={"served_model_name": "org/m-2"},
+        lora_modules=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_lora_name_conflict_raises_409():
+    session = _AliasSession([_dep(1, "base", served="base", lora=["adapter"])])
+    with pytest.raises(deployments_api.HTTPException) as exc:
+        await deployments_api._check_served_name_conflict(
+            session,
+            model_name="other",
+            engine_args={"served_model_name": "adapter"},
+            lora_modules=None,
+        )
+    assert exc.value.status_code == 409
+    assert "adapter" in exc.value.detail
+
+
+@pytest.mark.anyio
+async def test_check_served_name_endpoint_reports_conflict_and_suggestion():
+    session = _AliasSession([_dep(1, "org/m", served="taken")])
+    taken = await deployments_api.check_served_name("taken", None, session)
+    assert taken["available"] is False
+    assert taken["conflict_id"] == 1
+    assert taken["suggestion"] == "taken-2"
+    free = await deployments_api.check_served_name("fresh", None, session)
+    assert free == {"available": True}

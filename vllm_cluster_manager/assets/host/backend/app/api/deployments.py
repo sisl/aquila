@@ -8,6 +8,7 @@ from app.db.session import get_session
 from app.models.deployment import ACTIVE_STATUSES, Deployment
 from app.models.node import Node
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from app.schemas.deployment import (
     DeploymentCreate,
@@ -17,6 +18,7 @@ from app.schemas.deployment import (
     DeploymentStart,
     DeploymentRestart,
 )
+from app.services import model_names
 from app.services import runtime_settings
 from app.services import sync as sync_service
 from app.services.client_api import get_logs, start_model, stream_log_download
@@ -100,6 +102,62 @@ def _port_conflict_409(node: Node, port: int) -> HTTPException:
     )
 
 
+async def _active_alias_owners(
+    session: AsyncSession, exclude_id: int | None = None
+) -> list[Deployment]:
+    """Active deployments whose names occupy the global alias namespace."""
+    query = select(Deployment).where(Deployment.status.in_(ACTIVE_STATUSES))
+    if exclude_id is not None:
+        query = query.where(Deployment.id != exclude_id)
+    result = await session.execute(query)
+    return list(result.scalars().all())
+
+
+def _suggest_served_name(name: str, taken: set[str]) -> str:
+    """First free '<name>-2', '-3', … (or *name* itself when available)."""
+    if name not in taken:
+        return name
+    i = 2
+    while f"{name}-{i}" in taken:
+        i += 1
+    return f"{name}-{i}"
+
+
+async def _check_served_name_conflict(
+    session: AsyncSession,
+    *,
+    model_name: str,
+    engine_args: dict | None,
+    lora_modules: list | None,
+    exclude_id: int | None = None,
+) -> None:
+    """Reject a launch whose served name / LoRA names clash with an active one.
+
+    The served name (explicit ``served_model_name`` or the model name) and any
+    LoRA adapter names are the gateway's routing keys; keeping them unique is
+    what lets the gateway resolve a request to exactly one deployment instead
+    of guessing between replicas.
+    """
+    prospective = SimpleNamespace(
+        model_name=model_name,
+        engine_args=engine_args or {},
+        lora_modules=lora_modules or [],
+    )
+    wanted = model_names.primary_aliases(prospective)
+    for owner in await _active_alias_owners(session, exclude_id):
+        clash = wanted & model_names.primary_aliases(owner)
+        if clash:
+            name = sorted(clash)[0]
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Served name '{name}' is already in use by deployment "
+                    f"{owner.id} ({owner.model_name}). "
+                    "Choose a different served model name."
+                ),
+            )
+
+
 @router.get("/", response_model=list[DeploymentRead])
 async def list_deployments(session: AsyncSession = Depends(get_session)) -> list[DeploymentRead]:
     result = await session.execute(select(Deployment).order_by(Deployment.id.desc()))
@@ -132,6 +190,35 @@ async def list_deployments(session: AsyncSession = Depends(get_session)) -> list
     return reads
 
 
+@router.get("/served-name/check")
+async def check_served_name(
+    name: str,
+    exclude_id: int | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    """Whether a served model name is free, with a suggested alternative.
+
+    Powers the live deploy-form prompt; the launch path re-checks under the
+    real request, so this is advisory (a name can be claimed in the gap).
+    """
+    name = name.strip()
+    if not name:
+        return {"available": True}
+    taken: dict[str, Deployment] = {}
+    for owner in await _active_alias_owners(session, exclude_id):
+        for alias in model_names.primary_aliases(owner):
+            taken.setdefault(alias, owner)
+    conflict = taken.get(name)
+    if conflict is None:
+        return {"available": True}
+    return {
+        "available": False,
+        "conflict_id": conflict.id,
+        "conflict_model": conflict.model_name,
+        "suggestion": _suggest_served_name(name, set(taken)),
+    }
+
+
 @router.post("/", response_model=DeploymentRead)
 async def create_deployment(
     payload: DeploymentCreate, session: AsyncSession = Depends(get_session)
@@ -155,6 +242,12 @@ async def _launch(payload: DeploymentStart, session: AsyncSession) -> Deployment
         )
 
     await _check_port_conflict(session, node, payload.port)
+    await _check_served_name_conflict(
+        session,
+        model_name=payload.model_name,
+        engine_args=payload.engine_args,
+        lora_modules=payload.lora_modules,
+    )
     runtime = _resolve_runtime(node)
 
     # Create the row before the (potentially very long) client call so a
@@ -268,6 +361,13 @@ async def restart_deployment(
         )
 
     await _check_port_conflict(session, node, deployment.port, exclude_id=deployment.id)
+    await _check_served_name_conflict(
+        session,
+        model_name=deployment.model_name,
+        engine_args=deployment.engine_args,
+        lora_modules=deployment.lora_modules,
+        exclude_id=deployment.id,
+    )
     # Keep the original runtime when it is still available; re-resolve when
     # the node's runtimes changed underneath the stopped deployment.
     if deployment.container_runtime in (node.available_runtimes or []):
