@@ -1934,7 +1934,15 @@ async def test_delete_package_not_found():
 
 
 def _fake_container(
-    *, name, short_id, status, labels, image_tags=None, image_id="sha256:img"
+    *,
+    name,
+    short_id,
+    status,
+    labels,
+    image_tags=None,
+    image_id="sha256:img",
+    repo_digests=None,
+    layers=None,
 ):
     c = mock.MagicMock()
     c.name = name
@@ -1944,6 +1952,12 @@ def _fake_container(
     c.image.tags = image_tags or []
     c.image.short_id = image_id
     c.image.id = image_id
+    # Real dict so the recognition path can read RepoDigests / RootFS layers
+    # (a bare MagicMock would mis-iterate).
+    c.image.attrs = {
+        "RepoDigests": repo_digests or [],
+        "RootFS": {"Layers": layers or []},
+    }
     return c
 
 
@@ -1988,6 +2002,106 @@ async def test_list_containers_filters_and_tracks():
     assert by_id["aaa111"]["tracked"] is True
     assert by_id["bbb222"]["tracked"] is False
     assert by_id["bbb222"]["image"] == "vllm/vllm-openai:v0.8.5"
+
+
+@pytest.mark.anyio
+async def test_list_containers_recognizes_untagged_vllm_by_content():
+    """An untagged vLLM image (lost its tag in a transfer/re-pull) is still rogue."""
+    layers = ["sha256:layerA", "sha256:layerB"]
+    # Unmanaged, no tags, no repo-digests: only layer identity gives it away.
+    orphan = _fake_container(
+        name="orphan",
+        short_id="ddd444",
+        status="running",
+        labels={},
+        image_tags=[],
+        image_id="sha256:orphan",
+        layers=layers,
+    )
+    # Unrelated container whose layers do NOT match a vLLM image stays filtered.
+    unrelated = _fake_container(
+        name="postgres",
+        short_id="eee555",
+        status="running",
+        labels={},
+        image_tags=["postgres:16"],
+        image_id="sha256:pg",
+        layers=["sha256:pg1"],
+    )
+    cached_vllm = _fake_image(
+        image_id="sha256:vllm",
+        tags=["vllm/vllm-openai:v0.9.1"],
+        size_mb=2048,
+        layers=layers,
+    )
+    fake = mock.MagicMock()
+    fake.containers.list.return_value = [orphan, unrelated]
+    fake.images.list.return_value = [cached_vllm]
+
+    with mock.patch.object(client_main, "_docker", return_value=fake), mock.patch.dict(
+        client_main._containers, {}, clear=True
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/containers")
+
+    assert resp.status_code == 200
+    by_id = {c["id"]: c for c in resp.json()["containers"]}
+    assert set(by_id) == {"ddd444"}
+    assert by_id["ddd444"]["tracked"] is False
+
+
+@pytest.mark.anyio
+async def test_list_containers_recognizes_vllm_tag_not_first():
+    """A vLLM image carrying another tag first is still recognized."""
+    multi = _fake_container(
+        name="multitag",
+        short_id="fff666",
+        status="running",
+        labels={},
+        image_tags=["myrepo/foo:1", "vllm/vllm-openai:v0.8.5"],
+    )
+    fake = mock.MagicMock()
+    fake.containers.list.return_value = [multi]
+
+    with mock.patch.object(client_main, "_docker", return_value=fake), mock.patch.dict(
+        client_main._containers, {}, clear=True
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/containers")
+
+    assert resp.status_code == 200
+    by_id = {c["id"]: c for c in resp.json()["containers"]}
+    assert set(by_id) == {"fff666"}
+    assert by_id["fff666"]["tracked"] is False
+
+
+@pytest.mark.anyio
+async def test_list_containers_recognizes_digest_pinned_vllm():
+    """A digest-pinned vLLM container (no tag, only RepoDigests) is recognized."""
+    bydigest = _fake_container(
+        name="bydigest",
+        short_id="ggg777",
+        status="running",
+        labels={},
+        image_tags=[],
+        repo_digests=["vllm/vllm-openai@sha256:abc123"],
+    )
+    fake = mock.MagicMock()
+    fake.containers.list.return_value = [bydigest]
+
+    with mock.patch.object(client_main, "_docker", return_value=fake), mock.patch.dict(
+        client_main._containers, {}, clear=True
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/containers")
+
+    assert resp.status_code == 200
+    by_id = {c["id"]: c for c in resp.json()["containers"]}
+    assert set(by_id) == {"ggg777"}
+    assert by_id["ggg777"]["tracked"] is False
 
 
 @pytest.mark.anyio
@@ -2054,12 +2168,17 @@ async def test_stop_container_not_found():
 # ---------------------------------------------------------------------------
 
 
-def _fake_image(*, image_id, tags, size_mb):
+def _fake_image(*, image_id, tags, size_mb, layers=None, repo_digests=None):
     img = mock.MagicMock()
     img.id = image_id
     img.short_id = image_id
     img.tags = tags
-    img.attrs = {"Size": size_mb * 1024 * 1024}
+    attrs = {"Size": size_mb * 1024 * 1024}
+    if layers is not None:
+        attrs["RootFS"] = {"Layers": list(layers)}
+    if repo_digests is not None:
+        attrs["RepoDigests"] = repo_digests
+    img.attrs = attrs
     return img
 
 

@@ -2315,6 +2315,42 @@ def _container_image_ref(container: "docker.models.containers.Container") -> str
         return "<none>"
 
 
+def _container_is_vllm(container, known_keys_provider=None) -> bool:
+    """True if *container* runs a vLLM (official or locally-derived) image.
+
+    Recognition must not hinge on a single tag: an image can be untagged (a
+    re-pull retag leaves the old image ``<none>``, a digest-pinned run, or a
+    save->load transfer between runtimes that dropped the repo tag), carry the
+    vLLM tag in a non-first slot, or be addressable only by repo-digest. So we
+    check *every* tag and repo-digest, then fall back to runtime-independent
+    layer identity (``_image_content_key``) against the images known to be vLLM
+    in this store (*known_keys_provider*, a zero-arg callable returning a set —
+    only invoked when the cheaper tag/digest checks miss).
+    """
+    try:
+        image = container.image
+    except Exception:  # pragma: no cover - image pruned out from under it
+        return False
+    for tag in image.tags or []:
+        if _is_vllm_image(tag):
+            return True
+    try:
+        repo_digests = image.attrs.get("RepoDigests") or []
+    except Exception:  # pragma: no cover - racing image removal
+        repo_digests = []
+    for digest in repo_digests:
+        # RepoDigests look like "vllm/vllm-openai@sha256:..."; the repo part is
+        # all _is_vllm_image needs.
+        if _is_vllm_image(digest.split("@", 1)[0]):
+            return True
+    if known_keys_provider is not None:
+        try:
+            return _image_content_key(image) in known_keys_provider()
+        except Exception:  # pragma: no cover - racing image removal
+            return False
+    return False
+
+
 @app.get("/containers")
 def list_containers() -> dict[str, list[dict[str, object]]]:
     """List vLLM-related containers on this node (managed + anything on a vLLM image).
@@ -2330,18 +2366,53 @@ def list_containers() -> dict[str, list[dict[str, object]]]:
             detail="No container runtime (Docker or Podman) is available on this node.",
         )
     containers: list[dict[str, object]] = []
-    for runtime in available:
+    # Lazily computed per store: content keys of images known to be vLLM, so an
+    # untagged/<none> vLLM image (lost its tag in a transfer or a re-pull) is
+    # still recognized. Only built when a container misses the tag/digest check.
+    vllm_keys_cache: dict[str, set[str]] = {}
+
+    def _vllm_keys(runtime: str, client) -> set[str]:
+        keys = vllm_keys_cache.get(runtime)
+        if keys is None:
+            keys = set()
+            try:
+                for img in client.images.list():
+                    is_vllm = any(_is_vllm_image(t) for t in img.tags or []) or any(
+                        _is_vllm_image(d.split("@", 1)[0])
+                        for d in (img.attrs.get("RepoDigests") or [])
+                    )
+                    if is_vllm:
+                        keys.add(_image_content_key(img))
+            except Exception:  # pragma: no cover - racing image removal
+                pass
+            vllm_keys_cache[runtime] = keys
+        return keys
+
+    # Scan every installed runtime, not just the ping-cached "available" set:
+    # a container under a runtime that failed the 60s-cached probe but is
+    # actually reachable (e.g. a leftover after a runtime switch) is otherwise
+    # invisible. A genuinely-down socket fails the list call and is skipped.
+    for runtime in RUNTIMES:
         try:
-            runtime_containers = _runtime_client(runtime).containers.list(all=True)
+            client = _runtime_client(runtime)
+            runtime_containers = client.containers.list(all=True)
         except Exception as exc:
-            logger.warning("Listing %s containers failed: %s", runtime, exc)
+            # A runtime that simply isn't usable here has nothing to show; only
+            # warn when we expected it to work (it passed the availability ping).
+            log = logger.warning if runtime in available else logger.debug
+            log("Listing %s containers failed: %s", runtime, exc)
             continue
         for container in runtime_containers:
             labels = container.labels or {}
             managed = labels.get(_LABEL_MANAGED) == "true"
             key = labels.get(_LABEL_KEY)
             image = _container_image_ref(container)
-            if not (managed or _is_vllm_image(image)):
+            if not (
+                managed
+                or _container_is_vllm(
+                    container, lambda rt=runtime, cl=client: _vllm_keys(rt, cl)
+                )
+            ):
                 continue
             containers.append({
                 "id": container.short_id,
