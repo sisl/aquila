@@ -122,3 +122,85 @@ async def test_upload_local_model_file_propagates_client_error():
             await upload_local_model_file("10.0.0.1", 9000, "sid", "a", stream())
     assert excinfo.value.status_code == 409
     assert "already exists" in excinfo.value.detail
+
+
+# ---------------------------------------------------------------------------
+# Warm cache RPCs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_start_model_sends_warm_flags():
+    seen = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+        seen.update(_json.loads(request.content))
+        return httpx.Response(200, json={"status": "started"})
+
+    with mock.patch.object(client_api, "get_client", return_value=_mock_transport(handler)):
+        await client_api.start_model(
+            "10.0.0.1", 9000, "org/model", 8000, 0.5,
+            warm_offload=True, pinned=True,
+        )
+    assert seen["warm_offload"] is True
+    assert seen["pinned"] is True
+
+
+@pytest.mark.anyio
+async def test_pause_model_posts_tier():
+    seen = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+        seen["path"] = request.url.path
+        seen["body"] = _json.loads(request.content)
+        return httpx.Response(200, json={"status": "paused", "tier": "ram"})
+
+    with mock.patch.object(client_api, "get_client", return_value=_mock_transport(handler)):
+        result = await client_api.pause_model("10.0.0.1", 9000, "org/model:8000", "ram")
+    assert seen["path"] == "/deployments/pause"
+    assert seen["body"] == {"key": "org/model:8000", "tier": "ram"}
+    assert result["tier"] == "ram"
+
+
+@pytest.mark.anyio
+async def test_resume_model_posts_key():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/deployments/resume"
+        return httpx.Response(200, json={"status": "running", "key": "org/model:8000"})
+
+    with mock.patch.object(client_api, "get_client", return_value=_mock_transport(handler)):
+        result = await client_api.resume_model("10.0.0.1", 9000, "org/model:8000")
+    assert result["status"] == "running"
+
+
+@pytest.mark.anyio
+async def test_push_node_config_sends_policy():
+    seen = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+        seen["path"] = request.url.path
+        seen["body"] = _json.loads(request.content)
+        return httpx.Response(200, json={"status": "ok"})
+
+    with mock.patch.object(client_api, "get_client", return_value=_mock_transport(handler)):
+        await client_api.push_node_config("10.0.0.1", 9000, True, 20480, ["a:8000"])
+    assert seen["path"] == "/config"
+    assert seen["body"] == {
+        "warm_offload_enabled": True,
+        "ram_cache_limit_mb": 20480,
+        "pins": ["a:8000"],
+    }
+
+
+@pytest.mark.anyio
+async def test_list_warm_artifacts_returns_payload():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/warm-artifacts"
+        return httpx.Response(200, json={"ram_sleepers": [{"pid": 1}], "disk_caches": []})
+
+    with mock.patch.object(client_api, "get_client", return_value=_mock_transport(handler)):
+        result = await client_api.list_warm_artifacts("10.0.0.1", 9000)
+    assert result["ram_sleepers"] == [{"pid": 1}]

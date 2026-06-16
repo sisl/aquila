@@ -1,11 +1,13 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Box,
   Chip,
   CircularProgress,
   Divider,
+  FormControlLabel,
   LinearProgress,
   MenuItem,
+  Switch,
   Table,
   TableBody,
   TableCell,
@@ -21,14 +23,18 @@ import {
   deleteNode,
   deleteNodeImage,
   setNodeRuntime,
+  setNodeWarmCache,
   deleteNodeModelCache,
+  deleteNodeWarmCache,
   fetchLocalModels,
   fetchLocalModelTransfers,
   fetchNodeContainers,
   fetchNodeGpuProcesses,
   fetchNodeImages,
   fetchNodeModelCache,
+  fetchNodeWarmArtifacts,
   killNodeGpuProcess,
+  killNodeRamSleeper,
   pruneNodeImages,
   pullLocalModel,
   stopNodeContainer,
@@ -82,6 +88,10 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
   const [pruneResult, setPruneResult] = useState<ImagePruneResult | null>(null);
   const [confirmStopId, setConfirmStopId] = useState<string | null>(null);
   const [confirmKillPid, setConfirmKillPid] = useState<number | null>(null);
+  const [confirmSleeperPid, setConfirmSleeperPid] = useState<number | null>(null);
+  const [confirmCacheName, setConfirmCacheName] = useState<string | null>(null);
+  // RAM-cache limit draft (GB; "" = unlimited), synced from the node.
+  const [ramLimitGb, setRamLimitGb] = useState("");
   const [confirmImageId, setConfirmImageId] = useState<string | null>(null);
   const [confirmPrune, setConfirmPrune] = useState(false);
   const [confirmModelName, setConfirmModelName] = useState<string | null>(null);
@@ -110,6 +120,13 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
     queryFn: () => fetchNodeGpuProcesses(nodeId as number),
     enabled,
     refetchInterval: 5000
+  });
+
+  const warmArtifactsQuery = useQuery({
+    queryKey: ["node-warm-artifacts", nodeId],
+    queryFn: () => fetchNodeWarmArtifacts(nodeId as number),
+    enabled: enabled && Boolean(node?.warm_offload_enabled),
+    refetchInterval: 10000
   });
 
   const imagesQuery = useQuery({
@@ -145,9 +162,17 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
         : 15000
   });
 
+  // Keep the RAM-limit field in sync with the node's persisted value.
+  useEffect(() => {
+    setRamLimitGb(
+      node?.ram_cache_limit_mb ? String(Math.round(node.ram_cache_limit_mb / 1024)) : ""
+    );
+  }, [nodeId, node?.ram_cache_limit_mb]);
+
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["node-containers", nodeId] });
     queryClient.invalidateQueries({ queryKey: ["node-gpu-processes", nodeId] });
+    queryClient.invalidateQueries({ queryKey: ["node-warm-artifacts", nodeId] });
     queryClient.invalidateQueries({ queryKey: ["node-images", nodeId] });
     queryClient.invalidateQueries({ queryKey: ["node-model-cache", nodeId] });
     queryClient.invalidateQueries({ queryKey: ["node-local-models", nodeId] });
@@ -165,6 +190,39 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
 
   const killProcessMutation = useMutation({
     mutationFn: (pid: number) => killNodeGpuProcess(nodeId as number, pid),
+    onSuccess: () => {
+      setActionError("");
+      refresh();
+    },
+    onError: (error) => setActionError(errorMessage(error))
+  });
+
+  const warmCacheMutation = useMutation({
+    mutationFn: (vars: { enabled: boolean; ramCacheLimitMb: number | null }) =>
+      setNodeWarmCache(nodeId as number, vars.enabled, vars.ramCacheLimitMb),
+    onSuccess: (updated) => {
+      queryClient.invalidateQueries({ queryKey: ["nodes"] });
+      setActionError("");
+      toast.success(
+        updated.warm_offload_enabled
+          ? `Warm-cache auto-offload enabled on ${updated.hostname}.`
+          : `Warm-cache auto-offload disabled on ${updated.hostname}.`
+      );
+    },
+    onError: (error) => setActionError(errorMessage(error))
+  });
+
+  const killSleeperMutation = useMutation({
+    mutationFn: (pid: number) => killNodeRamSleeper(nodeId as number, pid),
+    onSuccess: () => {
+      setActionError("");
+      refresh();
+    },
+    onError: (error) => setActionError(errorMessage(error))
+  });
+
+  const deleteWarmCacheMutation = useMutation({
+    mutationFn: (name: string) => deleteNodeWarmCache(nodeId as number, name),
     onSuccess: () => {
       setActionError("");
       refresh();
@@ -304,10 +362,13 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
     pullMutation.isPending ||
     removeNodeMutation.isPending ||
     runtimeMutation.isPending ||
+    warmCacheMutation.isPending ||
     uploadProgress !== null;
 
   const containers = containersQuery.data ?? [];
   const gpuProcesses = gpuProcessesQuery.data ?? [];
+  const ramSleepers = warmArtifactsQuery.data?.ram_sleepers ?? [];
+  const diskCaches = warmArtifactsQuery.data?.disk_caches ?? [];
   const images = imagesQuery.data ?? [];
   const cachedModels = modelCacheQuery.data ?? [];
   const localModels = localModelsQuery.data ?? [];
@@ -410,6 +471,62 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
             </TextField>
           }
         />
+
+        <DialogSection
+          title="Warm Cache"
+          hint={
+            "When enabled, new deployments launch pausable: the agent auto-offloads the least-recently-used unpinned model (GPU → RAM → disk) to fit new or woken models, and a request to a paused model wakes it. Running deployments keep their mode until redeployed."
+          }
+          action={
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={Boolean(node?.warm_offload_enabled)}
+                  disabled={busy}
+                  onChange={(event) =>
+                    warmCacheMutation.mutate({
+                      enabled: event.target.checked,
+                      ramCacheLimitMb: node?.ram_cache_limit_mb ?? null
+                    })
+                  }
+                />
+              }
+              label="Auto-offload"
+            />
+          }
+        >
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <TextField
+              size="small"
+              type="number"
+              label="RAM cache limit (GB)"
+              placeholder="unlimited"
+              value={ramLimitGb}
+              disabled={busy || !node?.warm_offload_enabled}
+              onChange={(event) => setRamLimitGb(event.target.value)}
+              sx={{ width: 200 }}
+            />
+            <AppButton
+              type="button"
+              className="app-button--small"
+              ghost
+              disabled={busy || !node?.warm_offload_enabled}
+              onClick={() => {
+                const gb = ramLimitGb.trim() === "" ? null : Number(ramLimitGb);
+                warmCacheMutation.mutate({
+                  enabled: Boolean(node?.warm_offload_enabled),
+                  ramCacheLimitMb:
+                    gb && Number.isFinite(gb) && gb > 0 ? Math.round(gb * 1024) : null
+                });
+              }}
+            >
+              Apply
+            </AppButton>
+            <Typography variant="body2" className="muted">
+              Past this, RAM-paused models spill to disk. Blank = unlimited.
+            </Typography>
+          </Box>
+        </DialogSection>
 
         <DialogSection
           title="vLLM Containers"
@@ -567,6 +684,90 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
           </Table>
         )}
         </DialogSection>
+
+        {node?.warm_offload_enabled && (
+          <DialogSection
+            title="Orphaned Warm-Cache Artifacts"
+            hint={
+              "RAM sleepers are paused-to-RAM vLLM processes holding CPU memory with no tracked deployment; disk caches are leftover torch.compile directories. Both are safe to reclaim here."
+            }
+          >
+            {warmArtifactsQuery.isLoading ? (
+              <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+                <CircularProgress size={20} />
+              </Box>
+            ) : warmArtifactsQuery.isError ? (
+              <Typography variant="body2" color="error">
+                {errorMessage(warmArtifactsQuery.error)}
+              </Typography>
+            ) : ramSleepers.length === 0 && diskCaches.length === 0 ? (
+              <Typography variant="body2" className="muted" sx={{ py: 1 }}>
+                No orphaned warm-cache artifacts on this node.
+              </Typography>
+            ) : (
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Artifact</TableCell>
+                    <TableCell>Detail</TableCell>
+                    <TableCell>Size</TableCell>
+                    <TableCell align="right">Action</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {ramSleepers.map((sleeper) => (
+                    <TableRow key={`pid-${sleeper.pid}`} hover>
+                      <TableCell>
+                        <Chip label="RAM sleeper" size="small" color="warning" />
+                      </TableCell>
+                      <TableCell>
+                        <Mono>
+                          {sleeper.process_name || "vLLM"} (pid {sleeper.pid})
+                        </Mono>
+                      </TableCell>
+                      <TableCell>{(sleeper.rss_mb / 1024).toFixed(1)} GB RAM</TableCell>
+                      <TableCell align="right">
+                        <AppButton
+                          type="button"
+                          variant="stop"
+                          className="app-button--small"
+                          ghost
+                          disabled={busy}
+                          onClick={() => setConfirmSleeperPid(sleeper.pid)}
+                        >
+                          Kill
+                        </AppButton>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {diskCaches.map((cache) => (
+                    <TableRow key={`cache-${cache.name}`} hover>
+                      <TableCell>
+                        <Chip label="Disk cache" size="small" color="warning" />
+                      </TableCell>
+                      <TableCell>
+                        <Mono>{cache.path}</Mono>
+                      </TableCell>
+                      <TableCell>{(cache.size_mb / 1024).toFixed(1)} GB</TableCell>
+                      <TableCell align="right">
+                        <AppButton
+                          type="button"
+                          variant="stop"
+                          className="app-button--small"
+                          ghost
+                          disabled={busy}
+                          onClick={() => setConfirmCacheName(cache.name)}
+                        >
+                          Delete
+                        </AppButton>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </DialogSection>
+        )}
 
         <DialogSection
           title="vLLM Image Cache"
@@ -992,6 +1193,34 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
           setConfirmKillPid(null);
         }}
         onCancel={() => setConfirmKillPid(null)}
+      />
+      <ConfirmDialog
+        open={confirmSleeperPid !== null}
+        title="Kill this RAM sleeper?"
+        body="The orphaned paused-to-RAM vLLM process will be terminated and its CPU memory freed. This cannot be undone."
+        confirmLabel="Kill"
+        danger
+        onConfirm={() => {
+          if (confirmSleeperPid !== null) {
+            killSleeperMutation.mutate(confirmSleeperPid);
+          }
+          setConfirmSleeperPid(null);
+        }}
+        onCancel={() => setConfirmSleeperPid(null)}
+      />
+      <ConfirmDialog
+        open={confirmCacheName !== null}
+        title="Delete this compile cache?"
+        body="Removes the orphaned torch.compile cache directory. A future deployment with the same config will recompile from scratch."
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => {
+          if (confirmCacheName) {
+            deleteWarmCacheMutation.mutate(confirmCacheName);
+          }
+          setConfirmCacheName(null);
+        }}
+        onCancel={() => setConfirmCacheName(null)}
       />
       <ConfirmDialog
         open={confirmImageId !== null}

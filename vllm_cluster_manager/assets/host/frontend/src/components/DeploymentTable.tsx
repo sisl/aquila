@@ -43,6 +43,11 @@ type DeploymentTableProps = {
   onRestart: (deployment: Deployment) => void;
   onExtend?: (deployment: Deployment, extension: DeploymentExtension) => void;
   onEndpoint?: (deployment: Deployment) => void;
+  // Warm cache (only shown for deployments on a warm-offload-enabled node).
+  onPause?: (deployment: Deployment) => void;
+  onResume?: (deployment: Deployment) => void;
+  onPin?: (deployment: Deployment, pinned: boolean) => void;
+  isWarmNode?: (nodeId: number) => boolean;
   nodeNameById: Record<number, string>;
 };
 
@@ -92,10 +97,11 @@ function formatRemaining(deployment: Deployment, now: number): Remaining {
 
 function statusColor(
   status: string
-): "success" | "warning" | "error" | "default" {
+): "success" | "warning" | "error" | "info" | "default" {
   if (status === "running") return "success";
   if (status === "expired") return "warning";
   if (status === "error" || status === "unreachable") return "error";
+  if (status === "paused_ram" || status === "paused_disk") return "info";
   return "default";
 }
 
@@ -168,6 +174,8 @@ function statusLabel(deployment: Deployment): string {
         : "";
     return `${deployment.status} (${deployment.detail.replace(/_/g, " ")}${pull})`;
   }
+  if (deployment.status === "paused_ram") return "paused (RAM)";
+  if (deployment.status === "paused_disk") return "paused (disk)";
   return deployment.status;
 }
 
@@ -181,6 +189,10 @@ export function DeploymentTable({
   onRestart,
   onExtend,
   onEndpoint,
+  onPause,
+  onResume,
+  onPin,
+  isWarmNode,
   nodeNameById
 }: DeploymentTableProps) {
   const [extendMenu, setExtendMenu] = useState<{
@@ -557,16 +569,58 @@ export function DeploymentTable({
                     >
                       Logs
                     </AppButton>
-                    {onEndpoint && deployment.status === "running" && (
-                      <AppButton
-                        type="button"
-                        className="app-button--small"
-                        ghost
-                        onClick={() => onEndpoint(deployment)}
-                      >
-                        Endpoint
-                      </AppButton>
-                    )}
+                    {onEndpoint &&
+                      ["running", "paused_ram", "paused_disk"].includes(
+                        deployment.status
+                      ) && (
+                        <AppButton
+                          type="button"
+                          className="app-button--small"
+                          ghost
+                          onClick={() => onEndpoint(deployment)}
+                        >
+                          Endpoint
+                        </AppButton>
+                      )}
+                    {onPin &&
+                      (deployment.status === "running" ||
+                        deployment.status === "paused_ram" ||
+                        deployment.status === "paused_disk") &&
+                      (deployment.status !== "running" ||
+                        isWarmNode?.(deployment.node_id)) && (
+                        <AppButton
+                          type="button"
+                          className="app-button--small"
+                          ghost
+                          onClick={() => onPin(deployment, !deployment.pinned)}
+                        >
+                          {deployment.pinned ? "Unpin" : "Pin"}
+                        </AppButton>
+                      )}
+                    {onPause &&
+                      deployment.status === "running" &&
+                      isWarmNode?.(deployment.node_id) && (
+                        <AppButton
+                          type="button"
+                          className="app-button--small"
+                          ghost
+                          onClick={() => onPause(deployment)}
+                        >
+                          Pause
+                        </AppButton>
+                      )}
+                    {onResume &&
+                      (deployment.status === "paused_ram" ||
+                        deployment.status === "paused_disk") && (
+                        <AppButton
+                          type="button"
+                          className="app-button--small"
+                          ghost
+                          onClick={() => onResume(deployment)}
+                        >
+                          Resume
+                        </AppButton>
+                      )}
                     {(deployment.status === "running" || deployment.status === "loading") && (
                       <AppButton
                         type="button"

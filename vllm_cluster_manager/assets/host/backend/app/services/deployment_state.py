@@ -6,7 +6,9 @@ and pairs every status with its failure reason.
 
 from datetime import datetime, timezone
 
-_HEALTHY_STATUSES = ("running", "loading", "starting", "stopped")
+_HEALTHY_STATUSES = (
+    "running", "loading", "starting", "stopped", "paused_ram", "paused_disk"
+)
 
 
 def set_status(deployment, status: str, error: str | None = None) -> None:

@@ -14,6 +14,8 @@ from app.schemas.deployment import (
     DeploymentCreate,
     DeploymentExtend,
     DeploymentFromManifest,
+    DeploymentPause,
+    DeploymentPin,
     DeploymentRead,
     DeploymentStart,
     DeploymentRestart,
@@ -21,7 +23,14 @@ from app.schemas.deployment import (
 from app.services import model_names
 from app.services import runtime_settings
 from app.services import sync as sync_service
-from app.services.client_api import get_logs, start_model, stream_log_download
+from app.services.client_api import (
+    get_logs,
+    pause_model,
+    pin_model,
+    resume_model,
+    start_model,
+    stream_log_download,
+)
 from app.services.deployment_state import set_status
 from app.services.deployment_stop import stop_deployment_internal
 from app.ws.manager import manager
@@ -286,6 +295,8 @@ async def _launch(payload: DeploymentStart, session: AsyncSession) -> Deployment
             duration_seconds=payload.duration_seconds,
             expires_at=_launch_expires_at(payload.duration_seconds),
             container_runtime=runtime,
+            warm_offload=bool(node.warm_offload_enabled),
+            pinned=bool(payload.pinned),
         )
     except HTTPException as exc:
         set_status(deployment, "error", error=str(exc.detail))
@@ -407,6 +418,8 @@ async def restart_deployment(
             duration_seconds=deployment.duration_seconds,
             expires_at=_launch_expires_at(deployment.duration_seconds),
             container_runtime=runtime,
+            warm_offload=bool(node.warm_offload_enabled),
+            pinned=bool(deployment.pinned),
         )
     except HTTPException as exc:
         set_status(deployment, "error", error=str(exc.detail))
@@ -423,6 +436,85 @@ async def restart_deployment(
     if resolved_version:
         deployment.vllm_version = str(resolved_version)
     set_status(deployment, "loading")
+    await session.commit()
+    await session.refresh(deployment)
+    await _broadcast_change(deployment.id)
+    return deployment
+
+
+def _deployment_key(deployment: Deployment) -> str:
+    return f"{deployment.model_name}:{deployment.port}"
+
+
+async def _deployment_and_node(
+    deployment_id: int, session: AsyncSession
+) -> tuple[Deployment, Node]:
+    deployment = await session.get(Deployment, deployment_id)
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    node = await session.get(Node, deployment.node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    return deployment, node
+
+
+@router.post("/{deployment_id}/pin", response_model=DeploymentRead)
+async def pin_deployment(
+    deployment_id: int,
+    payload: DeploymentPin,
+    session: AsyncSession = Depends(get_session),
+) -> DeploymentRead:
+    deployment, node = await _deployment_and_node(deployment_id, session)
+    deployment.pinned = payload.pinned
+    # Best-effort push to the live agent; the sync loop re-pushes pins anyway,
+    # so an unreachable node still converges once it comes back.
+    try:
+        await pin_model(node.ip_address, node.port, _deployment_key(deployment), payload.pinned)
+    except HTTPException:
+        pass
+    await session.commit()
+    await session.refresh(deployment)
+    await _broadcast_change(deployment.id)
+    return deployment
+
+
+@router.post("/{deployment_id}/pause", response_model=DeploymentRead)
+async def pause_deployment(
+    deployment_id: int,
+    payload: DeploymentPause,
+    session: AsyncSession = Depends(get_session),
+) -> DeploymentRead:
+    deployment, node = await _deployment_and_node(deployment_id, session)
+    if deployment.status not in ("running", "paused_ram", "paused_disk"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Deployment is '{deployment.status}'; only a running deployment can be paused.",
+        )
+    result = await pause_model(
+        node.ip_address, node.port, _deployment_key(deployment), payload.tier
+    )
+    tier = (result or {}).get("tier")
+    set_status(deployment, "paused_disk" if tier == "disk" else "paused_ram")
+    await session.commit()
+    await session.refresh(deployment)
+    await _broadcast_change(deployment.id)
+    return deployment
+
+
+@router.post("/{deployment_id}/resume", response_model=DeploymentRead)
+async def resume_deployment(
+    deployment_id: int, session: AsyncSession = Depends(get_session)
+) -> DeploymentRead:
+    deployment, node = await _deployment_and_node(deployment_id, session)
+    if deployment.status == "running":
+        return deployment
+    if deployment.status not in ("paused_ram", "paused_disk"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Deployment is '{deployment.status}'; only a paused deployment can be resumed.",
+        )
+    await resume_model(node.ip_address, node.port, _deployment_key(deployment))
+    set_status(deployment, "running")
     await session.commit()
     await session.refresh(deployment)
     await _broadcast_change(deployment.id)

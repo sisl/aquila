@@ -16,10 +16,17 @@ from app.services.client_api import (
     get_statuses,
     list_containers,
     list_gpu_processes,
+    list_warm_artifacts,
+    push_node_config,
 )
 from app.services.deployment_state import set_status
 from app.services.deployment_stop import stop_deployment_internal
-from app.services.node_state import rogue_container_counts, rogue_process_counts
+from app.services.node_state import (
+    rogue_container_counts,
+    rogue_process_counts,
+    rogue_artifact_counts,
+    ram_cache_used_mb,
+)
 from app.services.notify import _warned_expiring, notify
 from app.ws.manager import manager
 
@@ -420,6 +427,45 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
                     active_ports = {
                         d.port for d in node_deployments if d.status in ACTIVE_STATUSES
                     }
+
+                    # Push the node's warm-cache policy + live pin set so the
+                    # agent's autonomous (direct-call) wakes use current settings,
+                    # and surface RAM-cache usage + orphaned warm artifacts.
+                    if reachable:
+                        pins = [
+                            f"{d.model_name}:{d.port}"
+                            for d in node_deployments
+                            if getattr(d, "pinned", False)
+                        ]
+                        try:
+                            await push_node_config(
+                                node.ip_address,
+                                node.port,
+                                bool(node.warm_offload_enabled),
+                                node.ram_cache_limit_mb,
+                                pins,
+                            )
+                        except Exception as exc:
+                            logger.debug("Config push to %s failed: %s", node.hostname, exc)
+                        ram_cache_used_mb[node_id] = sum(
+                            float(s.get("paused_ram_mb") or 0.0)
+                            for s in statuses
+                            if s.get("pause_tier") == "ram"
+                        )
+                        if node.warm_offload_enabled:
+                            try:
+                                artifacts = await list_warm_artifacts(
+                                    node.ip_address, node.port
+                                )
+                                rogue_artifact_counts[node_id] = len(
+                                    artifacts.get("ram_sleepers") or []
+                                ) + len(artifacts.get("disk_caches") or [])
+                            except Exception as exc:
+                                logger.debug(
+                                    "Warm-artifact list from %s failed: %s",
+                                    node.hostname,
+                                    exc,
+                                )
 
                     for deployment in node_deployments:
                         # 'expired' is a terminal state owned by the expiry task;

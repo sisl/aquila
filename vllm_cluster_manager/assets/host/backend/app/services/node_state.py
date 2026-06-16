@@ -12,3 +12,10 @@ rogue_container_counts: dict[int, int] = {}
 # node_id -> number of rogue (orphaned) vLLM GPU processes — workers that
 # outlived their container and still pin VRAM with no container to find.
 rogue_process_counts: dict[int, int] = {}
+
+# node_id -> number of orphaned warm-cache artifacts (RAM sleepers + disk
+# compile caches) not attributable to any tracked deployment.
+rogue_artifact_counts: dict[int, int] = {}
+
+# node_id -> CPU RAM (MB) currently held by RAM-paused models on the node.
+ram_cache_used_mb: dict[int, float] = {}

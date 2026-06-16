@@ -121,13 +121,18 @@ def _openai_error(
     )
 
 
+# Statuses the gateway will route to. Paused deployments are reachable: the
+# node-side proxy transparently wakes them on the first inference request.
+_ROUTABLE_STATUSES = ("running", "paused_ram", "paused_disk")
+
+
 async def _resolve(session: AsyncSession, model: str):
     """Return (deployment, node) for *model*, or a JSONResponse error."""
     result = await session.execute(select(Deployment))
     deployments = list(result.scalars().all())
 
     outcome, value = _choose(
-        [d for d in deployments if d.status == "running"], model
+        [d for d in deployments if d.status in _ROUTABLE_STATUSES], model
     )
     if outcome == "ambiguous":
         return _openai_error(
@@ -159,7 +164,7 @@ async def _resolve(session: AsyncSession, model: str):
             {
                 alias
                 for d in deployments
-                if d.status == "running"
+                if d.status in _ROUTABLE_STATUSES
                 for alias in _model_aliases(d)
             }
         )
@@ -296,7 +301,7 @@ async def embeddings(
 @router.get("/models")
 async def list_models(session: AsyncSession = Depends(get_session)) -> dict[str, object]:
     result = await session.execute(
-        select(Deployment).where(Deployment.status == "running")
+        select(Deployment).where(Deployment.status.in_(_ROUTABLE_STATUSES))
     )
     data: list[dict[str, object]] = []
     for deployment in result.scalars().all():

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, DateTime, Integer, JSON, String
+from sqlalchemy import Boolean, DateTime, Integer, JSON, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -24,6 +24,13 @@ class Node(Base):
     available_runtimes: Mapped[list[str]] = mapped_column(JSON, default=list)
     # Per-node runtime override; null = auto (preferred, else whichever exists).
     container_runtime: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Warm cache: when enabled, new deployments launch pausable and the agent
+    # auto-offloads the LRU model (GPU -> RAM -> disk) to fit new/woken models.
+    warm_offload_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+    # Cap (MB) on CPU RAM held by RAM-paused models; null = unlimited.
+    ram_cache_limit_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
     default_vllm_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_heartbeat_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())

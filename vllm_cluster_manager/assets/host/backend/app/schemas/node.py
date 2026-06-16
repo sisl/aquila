@@ -17,6 +17,9 @@ class NodeBase(BaseModel):
     available_runtimes: list[str] | None = None
     # Per-node runtime override; null = auto.
     container_runtime: str | None = None
+    # Warm cache: opt-in auto-offload toggle + CPU-RAM cache budget (MB).
+    warm_offload_enabled: bool = False
+    ram_cache_limit_mb: int | None = None
 
 
 class NodeCreate(NodeBase):
@@ -29,10 +32,20 @@ class NodeRead(NodeBase):
     rogue_container_count: int | None = None
     # Derived (not persisted): orphaned vLLM GPU processes (no live container).
     rogue_process_count: int | None = None
+    # Derived (not persisted): orphaned warm-cache artifacts (RAM + disk).
+    rogue_artifact_count: int | None = None
+    # Derived (not persisted): CPU RAM (MB) held by RAM-paused models.
+    ram_cache_used_mb: float | None = None
     last_heartbeat_at: datetime | None = None
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class NodeWarmCacheRequest(BaseModel):
+    enabled: bool
+    # MB; null = unlimited.
+    ram_cache_limit_mb: int | None = None
 
 
 class NodeMaintenanceRequest(BaseModel):

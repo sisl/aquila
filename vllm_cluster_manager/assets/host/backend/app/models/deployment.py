@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, text
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -6,11 +6,15 @@ from app.models.base import Base
 
 # Statuses that occupy a node:port slot. A partial unique index over these
 # makes port reservation atomic: two concurrent starts can both pass the
-# friendly pre-check SELECT, but only one insert wins.
-ACTIVE_STATUSES = ("starting", "loading", "running", "stopping")
+# friendly pre-check SELECT, but only one insert wins. Paused deployments keep
+# their slot: the warm-mode agent proxy holds the public port across pauses.
+ACTIVE_STATUSES = (
+    "starting", "loading", "running", "stopping", "paused_ram", "paused_disk"
+)
 
 _ACTIVE_PREDICATE = text(
-    "status IN ('starting', 'loading', 'running', 'stopping')"
+    "status IN ('starting', 'loading', 'running', 'stopping', "
+    "'paused_ram', 'paused_disk')"
 )
 
 
@@ -51,6 +55,8 @@ class Deployment(Base):
     lora_modules: Mapped[list[dict[str, str]] | None] = mapped_column(JSON, nullable=True)
     # Per-deployment crash-loop threshold; NULL uses the client's default.
     max_failed_restarts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Warm cache: protect this deployment from automatic eviction.
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     status: Mapped[str] = mapped_column(String(32), default="stopped")
     # Last failure reason (client error detail or watchdog timeout); cleared
     # whenever the deployment returns to a healthy status.

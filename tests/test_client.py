@@ -2358,21 +2358,74 @@ async def test_kill_gpu_process_escalates_to_root_container():
     escalate.assert_called_once_with(111)
 
 
-def test_kill_pid_via_container_uses_host_pid_namespace():
-    fake = mock.MagicMock()
+def _clients_by_runtime(**clients):
+    """side_effect for `_runtime_client` returning a distinct mock per runtime."""
+    def _get(runtime):
+        return clients[runtime]
+
+    return _get
+
+
+def _assert_host_kill(client, pid):
+    client.containers.run.assert_called_once()
+    args, kwargs = client.containers.run.call_args
+    assert args[0] == client_main._CLEANUP_IMAGE
+    assert args[1] == ["kill", "-9", str(pid)]
+    assert kwargs["pid_mode"] == "host"  # share the host PID namespace
+    assert kwargs["remove"] is True
+
+
+def test_kill_pid_via_container_prefers_docker():
+    docker_client = mock.MagicMock()
+    podman_client = mock.MagicMock()
+    # Docker listed last to prove it is still tried first (it is the rootful
+    # runtime that produces root-owned orphans).
+    with mock.patch.object(
+        client_main, "_available_runtimes", return_value=["podman", "docker"]
+    ), mock.patch.object(
+        client_main,
+        "_runtime_client",
+        side_effect=_clients_by_runtime(docker=docker_client, podman=podman_client),
+    ), mock.patch.object(client_main.psutil, "pid_exists", return_value=False):
+        assert client_main._kill_pid_via_container(2840605) is True
+    _assert_host_kill(docker_client, 2840605)
+    podman_client.containers.run.assert_not_called()  # Docker cleared it first
+
+
+def test_kill_pid_via_container_podman_only():
+    podman_client = mock.MagicMock()
+    with mock.patch.object(
+        client_main, "_available_runtimes", return_value=["podman"]
+    ), mock.patch.object(
+        client_main,
+        "_runtime_client",
+        side_effect=_clients_by_runtime(podman=podman_client),
+    ), mock.patch.object(client_main.psutil, "pid_exists", return_value=False):
+        assert client_main._kill_pid_via_container(777) is True
+    # On a Podman-only host the escalation still runs, via Podman.
+    _assert_host_kill(podman_client, 777)
+
+
+def test_kill_pid_via_container_falls_back_from_docker_to_podman():
+    docker_client = mock.MagicMock()
+    # Docker can't do it (e.g. daemon refuses the request); the loop moves on.
+    docker_client.containers.run.side_effect = RuntimeError("docker kill failed")
+    podman_client = mock.MagicMock()
     with mock.patch.object(
         client_main, "_available_runtimes", return_value=["docker", "podman"]
     ), mock.patch.object(
-        client_main, "_runtime_client", return_value=fake
-    ), mock.patch.object(client_main.psutil, "pid_exists", return_value=False):
+        client_main,
+        "_runtime_client",
+        side_effect=_clients_by_runtime(docker=docker_client, podman=podman_client),
+    ), mock.patch.object(
+        # Still alive after the Docker attempt, gone after the Podman one.
+        client_main.psutil,
+        "pid_exists",
+        side_effect=[True, False],
+    ):
         assert client_main._kill_pid_via_container(2840605) is True
-    # Prefers Docker (the rootful runtime), runs kill -9 in the host PID namespace.
-    fake.containers.run.assert_called_once()
-    args, kwargs = fake.containers.run.call_args
-    assert args[0] == client_main._CLEANUP_IMAGE
-    assert args[1] == ["kill", "-9", "2840605"]
-    assert kwargs["pid_mode"] == "host"
-    assert kwargs["remove"] is True
+    docker_client.containers.run.assert_called_once()
+    _assert_host_kill(podman_client, 2840605)
 
 
 @pytest.mark.anyio
@@ -2647,3 +2700,312 @@ class TestDeleteCachedModel:
 
         assert resp.status_code == 500
         assert target.exists()
+
+
+# ---------------------------------------------------------------------------
+# Warm cache: pause/resume, eviction, rogue artifacts
+# ---------------------------------------------------------------------------
+
+
+def _meta(**over):
+    base = dict(
+        model_name="m",
+        port=8000,
+        internal_port=41000,
+        gpu_memory_fraction=0.5,
+        gpu_ids=[0],
+        status="running",
+        pause_tier=None,
+        pinned=False,
+        paused_ram_mb=0,
+        last_active_at=0.0,
+        requests_running=0,
+        engine_args={},
+        warm=True,
+    )
+    base.update(over)
+    return base
+
+
+class TestWarmFor:
+    def test_node_enabled(self):
+        with mock.patch.dict(client_main._node_policy, {"warm_offload_enabled": True}):
+            assert client_main._warm_for(StartRequest(model_name="m", port=8000, gpu_memory_fraction=0.5))
+
+    def test_payload_flag(self):
+        with mock.patch.dict(client_main._node_policy, {"warm_offload_enabled": False}):
+            req = StartRequest(model_name="m", port=8000, gpu_memory_fraction=0.5, warm_offload=True)
+            assert client_main._warm_for(req)
+
+    def test_disabled_everywhere(self):
+        with mock.patch.dict(client_main._node_policy, {"warm_offload_enabled": False}):
+            assert not client_main._warm_for(StartRequest(model_name="m", port=8000, gpu_memory_fraction=0.5))
+
+    def test_opt_out_overrides(self):
+        with mock.patch.dict(client_main._node_policy, {"warm_offload_enabled": True}):
+            req = StartRequest(
+                model_name="m", port=8000, gpu_memory_fraction=0.5,
+                engine_args={"disable_sleep_mode": True},
+            )
+            assert not client_main._warm_for(req)
+
+
+def test_allocate_internal_port_skips_used():
+    with mock.patch.dict(
+        client_main._statuses, {"a:1": {"internal_port": 41000}}, clear=True
+    ):
+        port = client_main._allocate_internal_port({41001})
+    assert port in client_main._INTERNAL_PORT_RANGE
+    assert port not in (41000, 41001)
+
+
+class TestIsBusy:
+    def test_in_flight_requests(self):
+        assert client_main._is_busy(_meta(requests_running=2)) is True
+
+    def test_recent_activity(self):
+        assert client_main._is_busy(_meta(last_active_at=client_main.time.monotonic())) is True
+
+    def test_idle(self):
+        assert client_main._is_busy(_meta(last_active_at=0.0, requests_running=0)) is False
+
+
+def test_pick_victim_skips_pinned_and_busy_picks_lru():
+    statuses = {
+        "lru:8000": _meta(last_active_at=100.0),
+        "fresh:8001": _meta(port=8001, last_active_at=200.0),
+        "pinned:8002": _meta(port=8002, pinned=True, last_active_at=1.0),
+        "busy:8003": _meta(port=8003, requests_running=3, last_active_at=1.0),
+    }
+    containers = {k: object() for k in statuses}
+    with mock.patch.dict(client_main._statuses, statuses, clear=True), mock.patch.dict(
+        client_main._containers, containers, clear=True
+    ):
+        victim = client_main._pick_victim([0], requester_key="new:9000")
+    assert victim == "lru:8000"
+
+
+def test_pick_victim_none_when_all_protected():
+    statuses = {"pinned:8002": _meta(port=8002, pinned=True)}
+    with mock.patch.dict(client_main._statuses, statuses, clear=True), mock.patch.dict(
+        client_main._containers, {"pinned:8002": object()}, clear=True
+    ):
+        assert client_main._pick_victim([0], requester_key="new:9000") is None
+
+
+class TestEnsureFit:
+    @pytest.mark.anyio
+    async def test_warm_disabled_returns_none(self):
+        with mock.patch.dict(client_main._node_policy, {"warm_offload_enabled": False}):
+            assert await client_main._ensure_fit([0], 0.5, "new:9000") is None
+
+    @pytest.mark.anyio
+    async def test_fits_without_eviction(self):
+        statuses = {"small:8000": _meta(gpu_memory_fraction=0.2)}
+        with mock.patch.dict(client_main._node_policy, {"warm_offload_enabled": True}), \
+            mock.patch.dict(client_main._statuses, statuses, clear=True), \
+            mock.patch.dict(client_main._containers, {"small:8000": object()}, clear=True):
+            assert await client_main._ensure_fit([0], 0.5, "new:9000") is True
+
+    @pytest.mark.anyio
+    async def test_evicts_lru_then_fits(self):
+        statuses = {"old:8000": _meta(gpu_memory_fraction=0.9, last_active_at=1.0)}
+
+        async def fake_pause(key, tier=None):
+            client_main._statuses[key]["pause_tier"] = "ram"
+
+        with mock.patch.dict(client_main._node_policy, {"warm_offload_enabled": True}), \
+            mock.patch.dict(client_main._statuses, statuses, clear=True), \
+            mock.patch.dict(client_main._containers, {"old:8000": object()}, clear=True), \
+            mock.patch.object(client_main, "_pause", side_effect=fake_pause) as paused:
+            result = await client_main._ensure_fit([0], 0.5, "new:9000")
+        assert result is True
+        paused.assert_awaited_once_with("old:8000")
+
+    @pytest.mark.anyio
+    async def test_no_eligible_victim_returns_false(self):
+        statuses = {"pinned:8000": _meta(gpu_memory_fraction=0.9, pinned=True)}
+        with mock.patch.dict(client_main._node_policy, {"warm_offload_enabled": True}), \
+            mock.patch.dict(client_main._statuses, statuses, clear=True), \
+            mock.patch.dict(client_main._containers, {"pinned:8000": object()}, clear=True):
+            assert await client_main._ensure_fit([0], 0.5, "new:9000") is False
+
+
+class TestTierSelection:
+    def test_ram_unlimited(self):
+        with mock.patch.dict(client_main._node_policy, {"ram_cache_limit_mb": None}):
+            assert client_main._ram_limit_mb() is None
+
+    @pytest.mark.anyio
+    async def test_auto_tier_disk_when_over_budget(self):
+        # Limit smaller than the model estimate -> can't fit RAM -> disk.
+        with mock.patch.dict(
+            client_main._node_policy, {"ram_cache_limit_mb": 100}, clear=False
+        ), mock.patch.object(client_main, "_ram_estimate", return_value=5000.0), \
+            mock.patch.dict(client_main._statuses, {}, clear=True):
+            tier = await client_main._auto_tier(_meta())
+        assert tier == "disk"
+
+    @pytest.mark.anyio
+    async def test_auto_tier_ram_when_fits(self):
+        with mock.patch.dict(
+            client_main._node_policy, {"ram_cache_limit_mb": 100000}, clear=False
+        ), mock.patch.object(client_main, "_ram_estimate", return_value=5000.0), \
+            mock.patch.dict(client_main._statuses, {}, clear=True):
+            tier = await client_main._auto_tier(_meta())
+        assert tier == "ram"
+
+    @pytest.mark.anyio
+    async def test_enforce_ram_budget_demotes_lru(self):
+        statuses = {
+            "a:8000": _meta(pause_tier="ram", paused_ram_mb=8000.0, last_active_at=1.0),
+            "b:8001": _meta(port=8001, pause_tier="ram", paused_ram_mb=8000.0, last_active_at=2.0),
+        }
+        demoted = []
+
+        async def fake_disk(meta, key):
+            meta["pause_tier"] = "disk"
+            meta["paused_ram_mb"] = 0
+            demoted.append(key)
+
+        with mock.patch.dict(
+            client_main._node_policy, {"ram_cache_limit_mb": 20000}, clear=False
+        ), mock.patch.dict(client_main._statuses, statuses, clear=True), \
+            mock.patch.object(client_main, "_pause_to_disk", side_effect=fake_disk):
+            await client_main._enforce_ram_budget(5000.0)
+        # Used was 16 GB; adding 5 GB (21 GB) exceeds the 20 GB limit, so demote
+        # just the LRU sleeper (a); afterwards 8+5 GB fits.
+        assert demoted == ["a:8000"]
+
+
+class TestPause:
+    @pytest.mark.anyio
+    async def test_pause_to_ram_sleeps_and_marks(self):
+        meta = _meta()
+        with mock.patch.object(client_main, "_vllm_sleep") as sleep, \
+            mock.patch.object(client_main, "_ram_estimate", return_value=4096.0):
+            await client_main._pause_to_ram(meta, "m:8000")
+        sleep.assert_awaited_once()
+        assert meta["pause_tier"] == "ram"
+        assert meta["status"] == "paused_ram"
+        assert meta["paused_ram_mb"] == 4096.0
+
+    @pytest.mark.anyio
+    async def test_pause_to_disk_removes_container(self):
+        meta = _meta()
+        container = object()
+        with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
+            mock.patch.dict(client_main._containers, {"m:8000": container}, clear=True), \
+            mock.patch.object(client_main, "_remove_container") as remove:
+            await client_main._pause_to_disk(meta, "m:8000")
+        remove.assert_called_once_with(container)
+        assert meta["pause_tier"] == "disk"
+        assert meta["status"] == "paused_disk"
+        assert "m:8000" not in client_main._containers
+
+
+class TestEnsureActive:
+    @pytest.mark.anyio
+    async def test_ram_resume_wakes_and_runs(self):
+        meta = _meta(pause_tier="ram", status="paused_ram")
+        with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
+            mock.patch.object(client_main, "_ensure_fit", return_value=True), \
+            mock.patch.object(client_main, "_vllm_wake") as wake, \
+            mock.patch.object(client_main, "_wait_awake", return_value=True):
+            ok = await client_main._ensure_active("m:8000")
+        assert ok is True
+        wake.assert_awaited_once()
+        assert meta["pause_tier"] is None
+        assert meta["status"] == "running"
+
+    @pytest.mark.anyio
+    async def test_already_active_is_noop(self):
+        meta = _meta(pause_tier=None, status="running")
+        with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True):
+            assert await client_main._ensure_active("m:8000") is True
+
+    @pytest.mark.anyio
+    async def test_returns_false_when_cannot_fit(self):
+        meta = _meta(pause_tier="ram", status="paused_ram")
+        with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
+            mock.patch.object(client_main, "_ensure_fit", return_value=False):
+            assert await client_main._ensure_active("m:8000") is False
+        assert meta["pause_tier"] == "ram"  # stays paused
+
+
+def test_orphan_compile_caches(tmp_path):
+    tracked_key = "m:8000"
+    sub = client_main._cache_subdir(tracked_key)
+    (tmp_path / sub).mkdir()
+    (tmp_path / "orphan123").mkdir()
+    (tmp_path / "orphan123" / "f").write_bytes(b"x" * 2048)
+    with mock.patch.object(client_main, "_COMPILE_CACHE_DIR", tmp_path), \
+        mock.patch.dict(client_main._statuses, {tracked_key: _meta()}, clear=True):
+        orphans = client_main._orphan_compile_caches()
+    names = {o["name"] for o in orphans}
+    assert names == {"orphan123"}
+    assert sub not in names
+
+
+def test_ram_sleeper_candidates_flags_untracked(tmp_path):
+    class P:
+        def __init__(self, pid, name, rss):
+            self.info = {"pid": pid, "name": name, "memory_info": mock.MagicMock(rss=rss)}
+
+    procs = [
+        P(111, "VLLM::EngineCore", 4 * 1024**3),   # rogue sleeper
+        P(222, "postgres", 4 * 1024**3),           # not vLLM
+        P(333, "VLLM::EngineCore", 10 * 1024**2),  # below RSS floor
+    ]
+    with mock.patch.object(client_main.psutil, "process_iter", return_value=procs), \
+        mock.patch.object(client_main, "_tracked_gpu_pids", return_value={}), \
+        mock.patch.object(client_main, "_looks_like_vllm", side_effect=lambda n, pid=None: "VLLM" in n):
+        sleepers = client_main._ram_sleeper_candidates()
+    assert [s["pid"] for s in sleepers] == [111]
+
+
+@pytest.mark.anyio
+async def test_config_endpoint_updates_policy_and_pins():
+    statuses = {"a:8000": _meta(pinned=False), "b:8001": _meta(port=8001, pinned=True)}
+    with mock.patch.dict(client_main._node_policy, {}, clear=False), \
+        mock.patch.dict(client_main._statuses, statuses, clear=True):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/config",
+                json={"warm_offload_enabled": True, "ram_cache_limit_mb": 20480, "pins": ["a:8000"]},
+            )
+        assert resp.status_code == 200
+        assert client_main._node_policy["warm_offload_enabled"] is True
+        assert client_main._node_policy["ram_cache_limit_mb"] == 20480
+        assert client_main._statuses["a:8000"]["pinned"] is True
+        assert client_main._statuses["b:8001"]["pinned"] is False
+
+
+@pytest.mark.anyio
+async def test_pause_endpoint_requires_warm(logs_dir):
+    with mock.patch.dict(
+        client_main._statuses, {"m:8000": _meta(warm=False)}, clear=True
+    ), mock.patch.dict(client_main._containers, {"m:8000": object()}, clear=True):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/deployments/pause", json={"key": "m:8000"})
+    assert resp.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_stop_deletes_compile_cache_and_proxy(logs_dir):
+    container = mock.MagicMock()
+    container.id = "cid"
+    with mock.patch.dict(
+        client_main._statuses, {"m:8000": _meta()}, clear=True
+    ), mock.patch.dict(client_main._containers, {"m:8000": container}, clear=True), \
+        mock.patch.object(client_main, "_remove_container"), \
+        mock.patch.object(client_main, "_stop_proxy") as stop_proxy, \
+        mock.patch.object(client_main, "_delete_compile_cache") as del_cache:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/deployments/stop", json={"key": "m:8000"})
+    assert resp.status_code == 200
+    del_cache.assert_called_once_with("m:8000")
+    stop_proxy.assert_awaited_once_with("m:8000")

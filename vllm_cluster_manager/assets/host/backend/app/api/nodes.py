@@ -15,11 +15,17 @@ from app.schemas.node import (
     NodeMaintenanceRequest,
     NodeRead,
     NodeSetRuntimeRequest,
+    NodeWarmCacheRequest,
 )
 from app.services import sync as sync_service
 from app.services.consul import consul_service
 from app.services.deployment_stop import stop_deployment_internal
-from app.services.node_state import rogue_container_counts, rogue_process_counts
+from app.services.node_state import (
+    rogue_container_counts,
+    rogue_process_counts,
+    rogue_artifact_counts,
+    ram_cache_used_mb,
+)
 from app.services.notify import _warned_expiring
 from app.services.client_api import (
     check_port,
@@ -29,6 +35,10 @@ from app.services.client_api import (
     stop_container,
     list_gpu_processes,
     kill_gpu_process,
+    push_node_config,
+    list_warm_artifacts,
+    kill_ram_sleeper,
+    delete_warm_cache,
     list_images,
     delete_image,
     prune_images,
@@ -50,14 +60,20 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _attach_derived(node: Node) -> None:
+    """Merge transient, sync-loop-derived values onto a node (not DB columns)."""
+    node.rogue_container_count = rogue_container_counts.get(node.id)
+    node.rogue_process_count = rogue_process_counts.get(node.id)
+    node.rogue_artifact_count = rogue_artifact_counts.get(node.id)
+    node.ram_cache_used_mb = ram_cache_used_mb.get(node.id)
+
+
 @router.get("/", response_model=list[NodeRead])
 async def list_nodes(session: AsyncSession = Depends(get_session)) -> list[NodeRead]:
     result = await session.execute(select(Node).order_by(Node.hostname))
     nodes = list(result.scalars().all())
-    # Attach the transient, sync-loop-derived rogue counts (not DB columns).
     for node in nodes:
-        node.rogue_container_count = rogue_container_counts.get(node.id)
-        node.rogue_process_count = rogue_process_counts.get(node.id)
+        _attach_derived(node)
     return nodes
 
 
@@ -106,6 +122,8 @@ async def delete_node(
     # Drop in-memory state keyed by the deleted ids.
     rogue_container_counts.pop(node_id, None)
     rogue_process_counts.pop(node_id, None)
+    rogue_artifact_counts.pop(node_id, None)
+    ram_cache_used_mb.pop(node_id, None)
     sync_service._node_fail_counts.pop(hostname, None)
     for dep_id in deployment_ids:
         sync_service.live_usage.pop(dep_id, None)
@@ -144,6 +162,43 @@ async def set_node_runtime(
     node.container_runtime = payload.runtime
     await session.commit()
     await session.refresh(node)
+    _attach_derived(node)
+    await manager.broadcast({"type": "nodes_changed"})
+    return node
+
+
+@router.post("/{node_id}/warm-cache", response_model=NodeRead)
+async def set_node_warm_cache(
+    node_id: int,
+    payload: NodeWarmCacheRequest,
+    session: AsyncSession = Depends(get_session),
+) -> NodeRead:
+    """Enable/disable warm-cache auto-offload and set the RAM-cache budget.
+
+    The toggle gates new deployments into warm mode; already-running ones keep
+    their mode until redeployed. The policy is also pushed to the live agent so
+    request-triggered wakes use the current limit immediately.
+    """
+    if payload.ram_cache_limit_mb is not None and payload.ram_cache_limit_mb <= 0:
+        raise HTTPException(
+            status_code=400, detail="ram_cache_limit_mb must be positive or null (unlimited)."
+        )
+    node = await session.get(Node, node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    node.warm_offload_enabled = payload.enabled
+    node.ram_cache_limit_mb = payload.ram_cache_limit_mb
+    await session.commit()
+    await session.refresh(node)
+    # Best-effort push; the sync loop re-pushes each tick, so an unreachable
+    # node still converges.
+    try:
+        await push_node_config(
+            node.ip_address, node.port, node.warm_offload_enabled, node.ram_cache_limit_mb
+        )
+    except Exception as exc:
+        logger.warning("Pushing warm-cache config to %s failed: %s", node.hostname, exc)
+    _attach_derived(node)
     await manager.broadcast({"type": "nodes_changed"})
     return node
 
@@ -176,8 +231,7 @@ async def set_node_maintenance(
 
     await session.commit()
     await session.refresh(node)
-    node.rogue_container_count = rogue_container_counts.get(node.id)
-    node.rogue_process_count = rogue_process_counts.get(node.id)
+    _attach_derived(node)
     await manager.broadcast({"type": "nodes_changed"})
     if drained_ids:
         await manager.broadcast({"type": "deployments_changed", "ids": drained_ids})
@@ -449,6 +503,41 @@ async def kill_node_gpu_process(
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     return await kill_gpu_process(node.ip_address, node.port, pid)
+
+
+@router.get("/{node_id}/warm-artifacts")
+async def list_node_warm_artifacts(
+    node_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    node = await session.get(Node, node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    return await list_warm_artifacts(node.ip_address, node.port)
+
+
+@router.post("/{node_id}/warm-artifacts/sleepers/{pid}/kill")
+async def kill_node_ram_sleeper(
+    node_id: int,
+    pid: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    node = await session.get(Node, node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    return await kill_ram_sleeper(node.ip_address, node.port, pid)
+
+
+@router.delete("/{node_id}/warm-artifacts/caches/{name}")
+async def delete_node_warm_cache(
+    node_id: int,
+    name: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    node = await session.get(Node, node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    return await delete_warm_cache(node.ip_address, node.port, name)
 
 
 @router.get("/{node_id}/images")

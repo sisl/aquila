@@ -315,6 +315,33 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
                           title="Orphaned vLLM GPU process(es) holding VRAM with no container — click to manage"
                         />
                       )}
+                      {node.rogue_artifact_count != null && node.rogue_artifact_count > 0 && (
+                        <Chip
+                          icon={<WarningAmberRounded sx={{ fontSize: 13 }} />}
+                          label={`${node.rogue_artifact_count} orphan cache`}
+                          size="small"
+                          color="warning"
+                          onClick={onManage ? () => onManage(node) : undefined}
+                          clickable={Boolean(onManage)}
+                          title="Orphaned warm-cache artifacts (RAM sleepers / disk compile caches) — click to manage"
+                        />
+                      )}
+                      {node.warm_offload_enabled &&
+                        node.ram_cache_used_mb != null &&
+                        node.ram_cache_used_mb > 0 && (
+                          <Chip
+                            label={`RAM cache ${(node.ram_cache_used_mb / 1024).toFixed(1)}${
+                              node.ram_cache_limit_mb
+                                ? `/${(node.ram_cache_limit_mb / 1024).toFixed(0)}`
+                                : ""
+                            } GB`}
+                            size="small"
+                            color="info"
+                            onClick={onManage ? () => onManage(node) : undefined}
+                            clickable={Boolean(onManage)}
+                            title="CPU RAM held by paused (RAM) models — click to manage warm cache"
+                          />
+                        )}
                       {lowDisk && (
                         <Chip
                           icon={<WarningAmberRounded sx={{ fontSize: 13 }} />}

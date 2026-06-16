@@ -53,6 +53,9 @@ import {
   fetchSettings,
   restartDeployment,
   uploadPackage,
+  pauseDeployment,
+  resumeDeployment,
+  pinDeployment,
   type RuntimeSettings
 } from "../services/api";
 import { connectWebSocket } from "../services/ws";
@@ -385,6 +388,45 @@ export function Dashboard() {
     }
   });
 
+  const pauseMutation = useMutation({
+    mutationFn: (id: number) => pauseDeployment(id),
+    onSuccess: (deployment) => {
+      queryClient.invalidateQueries({ queryKey: ["deployments"] });
+      const where = deployment.status === "paused_disk" ? "disk" : "RAM";
+      toast.success(`Paused ${deployment.model_name} to ${where}.`);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to pause deployment.");
+    }
+  });
+
+  const resumeMutation = useMutation({
+    mutationFn: (id: number) => resumeDeployment(id),
+    onSuccess: (deployment) => {
+      queryClient.invalidateQueries({ queryKey: ["deployments"] });
+      toast.success(`Resumed ${deployment.model_name}.`);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to resume deployment.");
+    }
+  });
+
+  const pinMutation = useMutation({
+    mutationFn: ({ id, pinned }: { id: number; pinned: boolean }) =>
+      pinDeployment(id, pinned),
+    onSuccess: (deployment) => {
+      queryClient.invalidateQueries({ queryKey: ["deployments"] });
+      toast.success(
+        deployment.pinned
+          ? `Pinned ${deployment.model_name} (won't auto-pause).`
+          : `Unpinned ${deployment.model_name}.`
+      );
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to update pin.");
+    }
+  });
+
   const extendMutation = useMutation({
     mutationFn: ({ id, extension }: { id: number; extension: DeploymentExtension }) =>
       extendDeployment(id, extension),
@@ -610,6 +652,14 @@ export function Dashboard() {
       mapping[node.id] = node.hostname;
     }
     return mapping;
+  }, [nodesQuery.data]);
+
+  const warmNodeIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const node of nodesQuery.data ?? []) {
+      if (node.warm_offload_enabled) ids.add(node.id);
+    }
+    return ids;
   }, [nodesQuery.data]);
 
   const selectedNode = useMemo(() => {
@@ -1759,6 +1809,12 @@ export function Dashboard() {
                 extendMutation.mutate({ id: deployment.id, extension })
               }
               onEndpoint={setEndpointDeployment}
+              onPause={(deployment) => pauseMutation.mutate(deployment.id)}
+              onResume={(deployment) => resumeMutation.mutate(deployment.id)}
+              onPin={(deployment, pinned) =>
+                pinMutation.mutate({ id: deployment.id, pinned })
+              }
+              isWarmNode={(id) => warmNodeIds.has(id)}
               nodeNameById={nodeNameById}
             />
           </Paper>

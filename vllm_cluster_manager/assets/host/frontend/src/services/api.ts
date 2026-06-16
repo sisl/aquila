@@ -25,6 +25,12 @@ export type Node = {
   rogue_container_count?: number | null;
   // Orphaned vLLM GPU processes (workers that outlived their container).
   rogue_process_count?: number | null;
+  // Orphaned warm-cache artifacts (RAM sleepers + disk compile caches).
+  rogue_artifact_count?: number | null;
+  // Warm cache: opt-in auto-offload toggle + RAM-cache budget/usage (MB).
+  warm_offload_enabled?: boolean;
+  ram_cache_limit_mb?: number | null;
+  ram_cache_used_mb?: number | null;
   // Detected container runtimes ("docker"/"podman"); empty = node unusable.
   available_runtimes?: string[];
   // Per-node runtime override; null = auto (preferred runtime).
@@ -52,6 +58,8 @@ export type Deployment = {
   owner?: string | null;
   duration_seconds?: number | null;
   expires_at?: string | null;
+  // Warm cache: protect this deployment from automatic eviction.
+  pinned?: boolean;
   status: string;
   // Cumulative usage from the vLLM instance's Prometheus counters.
   total_prompt_tokens?: number;
@@ -155,6 +163,8 @@ export type DeploymentStart = {
   skip_resource_check?: boolean;
   owner: string;
   duration_seconds?: number | null;
+  // Warm cache: launch protected from automatic eviction.
+  pinned?: boolean;
 };
 
 export async function startDeployment(payload: DeploymentStart): Promise<Deployment> {
@@ -426,6 +436,79 @@ export function killNodeGpuProcess(
   pid: number
 ): Promise<{ status: string; pid: number }> {
   return requestWithDetail(`/nodes/${nodeId}/gpu-processes/${pid}/kill`, "POST");
+}
+
+// --- Warm cache (pause/resume) ---------------------------------------------
+
+export type RamSleeper = {
+  pid: number;
+  process_name: string;
+  rss_mb: number;
+};
+
+export type DiskCache = {
+  name: string;
+  path: string;
+  size_mb: number;
+};
+
+export type WarmArtifacts = {
+  ram_sleepers: RamSleeper[];
+  disk_caches: DiskCache[];
+};
+
+// Enable/disable warm-cache auto-offload and set the RAM-cache budget (MB; null
+// = unlimited). Applies to new deployments; running ones keep their mode.
+export function setNodeWarmCache(
+  nodeId: number,
+  enabled: boolean,
+  ramCacheLimitMb: number | null
+): Promise<Node> {
+  return requestWithDetail(`/nodes/${nodeId}/warm-cache`, "POST", {
+    enabled,
+    ram_cache_limit_mb: ramCacheLimitMb
+  });
+}
+
+export function pinDeployment(
+  deploymentId: number,
+  pinned: boolean
+): Promise<Deployment> {
+  return requestWithDetail(`/deployments/${deploymentId}/pin`, "POST", { pinned });
+}
+
+export function pauseDeployment(
+  deploymentId: number,
+  tier?: "ram" | "disk"
+): Promise<Deployment> {
+  return requestWithDetail(`/deployments/${deploymentId}/pause`, "POST", {
+    tier: tier ?? null
+  });
+}
+
+export function resumeDeployment(deploymentId: number): Promise<Deployment> {
+  return requestWithDetail(`/deployments/${deploymentId}/resume`, "POST");
+}
+
+export function fetchNodeWarmArtifacts(nodeId: number): Promise<WarmArtifacts> {
+  return requestWithDetail<WarmArtifacts>(`/nodes/${nodeId}/warm-artifacts`);
+}
+
+export function killNodeRamSleeper(
+  nodeId: number,
+  pid: number
+): Promise<{ status: string; pid: number }> {
+  return requestWithDetail(
+    `/nodes/${nodeId}/warm-artifacts/sleepers/${pid}/kill`,
+    "POST"
+  );
+}
+
+export function deleteNodeWarmCache(
+  nodeId: number,
+  name: string
+): Promise<{ status: string; name: string }> {
+  return requestWithDetail(`/nodes/${nodeId}/warm-artifacts/caches/${name}`, "DELETE");
 }
 
 export function fetchNodeImages(nodeId: number): Promise<NodeImage[]> {

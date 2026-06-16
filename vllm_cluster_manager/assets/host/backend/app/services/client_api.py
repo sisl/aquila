@@ -72,6 +72,8 @@ async def start_model(
     duration_seconds: int | None = None,
     expires_at: str | None = None,
     container_runtime: str | None = None,
+    warm_offload: bool = False,
+    pinned: bool = False,
 ) -> dict[str, object]:
     url = _satellite_url(node_ip, node_port, "/deployments/start")
     try:
@@ -99,6 +101,9 @@ async def start_model(
                 "duration_seconds": duration_seconds,
                 "expires_at": expires_at,
                 "container_runtime": container_runtime,
+                # Warm-cache: launch in pausable mode + initial pin state.
+                "warm_offload": warm_offload,
+                "pinned": pinned,
             },
         )
     except httpx.RequestError as exc:
@@ -239,6 +244,108 @@ async def kill_gpu_process(
     url = _satellite_url(node_ip, node_port, f"/gpu-processes/{pid}/kill")
     try:
         response = await get_client().post(url, timeout=30.0)
+    except httpx.RequestError as exc:
+        raise _unreachable(url, exc) from exc
+    if response.is_success:
+        return response.json()
+    _raise_for_client_error(response)
+
+
+async def pause_model(
+    node_ip: str, node_port: int | None, key: str, tier: str | None = None
+) -> dict[str, object]:
+    url = _satellite_url(node_ip, node_port, "/deployments/pause")
+    try:
+        response = await get_client().post(
+            url, json={"key": key, "tier": tier}, timeout=120.0
+        )
+    except httpx.RequestError as exc:
+        raise _unreachable(url, exc) from exc
+    if response.is_success:
+        return response.json()
+    _raise_for_client_error(response)
+
+
+async def resume_model(
+    node_ip: str, node_port: int | None, key: str
+) -> dict[str, object]:
+    url = _satellite_url(node_ip, node_port, "/deployments/resume")
+    try:
+        # Disk resume re-launches the container (warm cache); give it room.
+        response = await get_client().post(url, json={"key": key}, timeout=180.0)
+    except httpx.RequestError as exc:
+        raise _unreachable(url, exc) from exc
+    if response.is_success:
+        return response.json()
+    _raise_for_client_error(response)
+
+
+async def pin_model(
+    node_ip: str, node_port: int | None, key: str, pinned: bool
+) -> dict[str, object]:
+    url = _satellite_url(node_ip, node_port, "/deployments/pin")
+    try:
+        response = await get_client().post(
+            url, json={"key": key, "pinned": pinned}, timeout=10.0
+        )
+    except httpx.RequestError as exc:
+        raise _unreachable(url, exc) from exc
+    if response.is_success:
+        return response.json()
+    _raise_for_client_error(response)
+
+
+async def push_node_config(
+    node_ip: str,
+    node_port: int | None,
+    warm_offload_enabled: bool,
+    ram_cache_limit_mb: int | None,
+    pins: list[str] | None = None,
+) -> dict[str, object]:
+    url = _satellite_url(node_ip, node_port, "/config")
+    response = await get_client().post(
+        url,
+        json={
+            "warm_offload_enabled": warm_offload_enabled,
+            "ram_cache_limit_mb": ram_cache_limit_mb,
+            "pins": pins,
+        },
+        timeout=10.0,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+async def list_warm_artifacts(node_ip: str, node_port: int | None) -> dict[str, object]:
+    url = _satellite_url(node_ip, node_port, "/warm-artifacts")
+    try:
+        response = await get_client().get(url, timeout=15.0)
+    except httpx.RequestError as exc:
+        raise _unreachable(url, exc) from exc
+    if response.is_success:
+        return response.json()
+    _raise_for_client_error(response)
+
+
+async def kill_ram_sleeper(
+    node_ip: str, node_port: int | None, pid: int
+) -> dict[str, object]:
+    url = _satellite_url(node_ip, node_port, f"/warm-artifacts/sleepers/{pid}/kill")
+    try:
+        response = await get_client().post(url, timeout=30.0)
+    except httpx.RequestError as exc:
+        raise _unreachable(url, exc) from exc
+    if response.is_success:
+        return response.json()
+    _raise_for_client_error(response)
+
+
+async def delete_warm_cache(
+    node_ip: str, node_port: int | None, name: str
+) -> dict[str, object]:
+    url = _satellite_url(node_ip, node_port, f"/warm-artifacts/caches/{name}")
+    try:
+        response = await get_client().delete(url, timeout=120.0)
     except httpx.RequestError as exc:
         raise _unreachable(url, exc) from exc
     if response.is_success:

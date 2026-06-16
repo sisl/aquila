@@ -122,3 +122,57 @@ class TestResolveAmbiguous:
         assert "beta" in payload["error"]["message"]
 
 
+
+class _FakeSessionWithNode(_FakeSession):
+    def __init__(self, deployments, node):
+        super().__init__(deployments)
+        self._node = node
+
+    async def get(self, _model, _id):
+        return self._node
+
+
+class TestPausedRouting:
+    def test_routable_statuses_include_paused_tiers(self):
+        from app.api.gateway import _ROUTABLE_STATUSES
+
+        assert "running" in _ROUTABLE_STATUSES
+        assert "paused_ram" in _ROUTABLE_STATUSES
+        assert "paused_disk" in _ROUTABLE_STATUSES
+
+    def test_resolve_routes_a_paused_deployment(self):
+        import asyncio
+
+        from app.api.gateway import _resolve
+
+        dep = _dep("org/model", id=7, node_id=3, status="paused_ram", port=8000)
+        node = SimpleNamespace(id=3, ip_address="10.0.0.9", hostname="n3")
+        result = asyncio.run(_resolve(_FakeSessionWithNode([dep], node), "org/model"))
+        # A paused deployment resolves to (deployment, node); the node-side proxy
+        # wakes it on the first request rather than the gateway 404ing.
+        assert not hasattr(result, "status_code")
+        matched, matched_node = result
+        assert matched.id == 7 and matched_node.ip_address == "10.0.0.9"
+
+    def test_resolve_404_for_truly_stopped(self):
+        import asyncio
+
+        from app.api.gateway import _resolve
+
+        dep = _dep("org/model", id=7, node_id=3, status="stopped")
+        result = asyncio.run(_resolve(_FakeSession([dep]), "org/model"))
+        assert result.status_code == 404
+
+
+class TestStatusConstants:
+    def test_active_statuses_include_paused(self):
+        from app.models.deployment import ACTIVE_STATUSES
+
+        assert "paused_ram" in ACTIVE_STATUSES
+        assert "paused_disk" in ACTIVE_STATUSES
+
+    def test_healthy_statuses_include_paused(self):
+        from app.services.deployment_state import _HEALTHY_STATUSES
+
+        assert "paused_ram" in _HEALTHY_STATUSES
+        assert "paused_disk" in _HEALTHY_STATUSES

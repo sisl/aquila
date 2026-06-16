@@ -25,7 +25,7 @@ import httpx
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 import psutil
 from urllib.request import Request as UrllibRequest, urlopen
@@ -83,6 +83,37 @@ _containers: dict[str, "docker.models.containers.Container"] = {}
 _statuses: dict[str, dict[str, object]] = {}
 _logs: dict[str, deque[str]] = {}
 
+# ---------------------------------------------------------------------------
+# Warm cache (pause/resume) state
+# ---------------------------------------------------------------------------
+# Everything here is inert unless the host has enabled warm-offload for this
+# node (POST /config). When disabled, deployments launch and behave exactly as
+# before: vLLM binds the public port directly, no proxy, nothing is paused.
+_node_policy: dict[str, object] = {
+    "warm_offload_enabled": False,
+    "ram_cache_limit_mb": None,
+}
+# Single-flight wake: concurrent callers for one key share one resume.
+_resume_locks: dict[str, asyncio.Lock] = {}
+# Serialise fit/evict per GPU so two models never race the same VRAM.
+_gpu_locks: dict[int, asyncio.Lock] = {}
+# key -> running uvicorn proxy Server fronting that deployment's public port.
+_proxy_servers: dict[str, object] = {}
+
+# Loopback ports vLLM binds in warm mode (the agent owns the public port).
+_INTERNAL_PORT_RANGE = range(41000, 42000)
+# Inside the container, vLLM's torch.compile cache is mounted here; the host
+# side is a per-deployment subdir so a stop can delete exactly one model's
+# compiled artifacts and orphans are attributable.
+_VLLM_CACHE_MOUNT = "/root/.cache/vllm"
+# Don't auto-evict a model with in-flight requests or used within this window.
+_BUSY_GUARD_SECONDS = 30.0
+# How long the proxy holds a request while resuming before returning 503.
+_RESUME_WAIT_CAP_SECONDS = 120.0
+# A vLLM process holding at least this much RSS with no/low VRAM is treated as
+# a candidate RAM sleeper when scanning for orphaned warm artifacts.
+_SLEEPER_RSS_MIN_MB = 1024
+
 _CLIENT_ROOT = Path(os.environ.get("VLLM_CLIENT_ROOT", Path.home() / ".vllm-client"))
 _PACKAGES_DIR = _CLIENT_ROOT / ".packages"
 # Managed local models (uploaded through the host or pulled from a URL).
@@ -102,6 +133,11 @@ _UPLOAD_SESSION_TTL = 6 * 3600.0
 _LOGS_DIR = _CLIENT_ROOT / ".logs"
 # key -> {"fh": TextIO, "path": Path, "size": int, "raw_ts": str}
 _log_state: dict[str, dict[str, object]] = {}
+
+# Persistent vLLM torch.compile caches for warm-start (one subdir per
+# deployment). Kept across pause/resume so a disk-paused model resumes without
+# recompiling; deleted on stop and reclaimable as orphans.
+_COMPILE_CACHE_DIR = _CLIENT_ROOT / ".vllm_compile"
 
 # Folder-upload sessions (id -> staging state). In-memory only: anything left
 # in _MODELS_TMP after an agent restart is stale by definition and GC'd.
@@ -502,6 +538,12 @@ class StartRequest(BaseModel):
     # Which container runtime to use ("docker"/"podman"); None = first
     # available (also keeps old hosts working).
     container_runtime: str | None = None
+    # Launch in warm mode (sleep-mode flags + agent-fronted port) so the model
+    # can later be paused to RAM/disk. The host sets this from the node's
+    # warm-offload toggle; old hosts omit it and deployments stay non-warm.
+    warm_offload: bool = False
+    # Protect this deployment from automatic eviction (never auto-paused).
+    pinned: bool = False
 
 
 # Allowlisted structured engine args -> vLLM CLI flags. Booleans emit a bare
@@ -538,6 +580,117 @@ def _engine_args_to_cli(engine_args: dict[str, object] | None) -> list[str]:
         else:
             tokens.extend([flag, str(value)])
     return tokens
+
+
+# ---------------------------------------------------------------------------
+# Warm cache helpers
+# ---------------------------------------------------------------------------
+
+
+def _warm_enabled() -> bool:
+    """True if the host has turned on warm-offload for this node."""
+    return bool(_node_policy.get("warm_offload_enabled"))
+
+
+def _warm_for(payload: "StartRequest | None", meta: dict | None = None) -> bool:
+    """Whether a specific deployment runs in warm mode.
+
+    A deployment is warm when the node has warm-offload enabled and the model
+    did not opt out via ``engine_args.disable_sleep_mode`` (some models don't
+    tolerate vLLM's CuMemAllocator).
+    """
+    engine_args = {}
+    if payload is not None:
+        engine_args = payload.engine_args or {}
+        node_on = payload.warm_offload or _warm_enabled()
+    else:
+        engine_args = (meta or {}).get("engine_args") or {}
+        node_on = bool((meta or {}).get("warm")) or _warm_enabled()
+    return node_on and engine_args.get("disable_sleep_mode") is not True
+
+
+def _cache_subdir(key: str) -> str:
+    """Stable short id for a deployment's compile-cache directory."""
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def _compile_cache_host_dir(key: str) -> Path:
+    return _COMPILE_CACHE_DIR / _cache_subdir(key)
+
+
+def _delete_compile_subdir(name: str) -> None:
+    """Delete one compile-cache subdir by name (native, then root-container).
+
+    Container-written files are root-owned under rootful Docker, so fall back to
+    a one-shot root container over the cache root when the native rmtree can't.
+    """
+    path = _COMPILE_CACHE_DIR / name
+    if not path.exists():
+        return
+    try:
+        shutil.rmtree(path)
+        return
+    except OSError as exc:
+        logger.warning("Native compile-cache rmtree failed for %s: %s", name, exc)
+    try:
+        available = _available_runtimes()
+        client = _runtime_client(available[0]) if available else _docker()
+        client.containers.run(
+            _CLEANUP_IMAGE,
+            ["rm", "-rf", f"/cache/{name}"],
+            volumes={str(_COMPILE_CACHE_DIR): {"bind": "/cache", "mode": "rw"}},
+            remove=True,
+        )
+    except Exception as exc:
+        logger.warning("Container compile-cache cleanup failed for %s: %s", name, exc)
+
+
+def _delete_compile_cache(key: str) -> None:
+    """Delete a deployment's torch.compile artifacts (cleaned up on stop)."""
+    _delete_compile_subdir(_cache_subdir(key))
+
+
+def _allocate_internal_port(exclude: "set[int]") -> int:
+    """A free loopback port for vLLM, distinct from any tracked internal port."""
+    used = set(exclude)
+    for meta in _statuses.values():
+        existing = meta.get("internal_port")
+        if isinstance(existing, int):
+            used.add(existing)
+    for port in _INTERNAL_PORT_RANGE:
+        if port in used:
+            continue
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+        return port
+    raise RuntimeError("No free internal port available for warm-mode launch.")
+
+
+def _gpu_lock(gpu_id: int) -> asyncio.Lock:
+    lock = _gpu_locks.get(gpu_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _gpu_locks[gpu_id] = lock
+    return lock
+
+
+def _resume_lock(key: str) -> asyncio.Lock:
+    lock = _resume_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _resume_locks[key] = lock
+    return lock
+
+
+def _serve_port(key: str) -> int | None:
+    """The port to reach this deployment's vLLM directly (internal in warm mode)."""
+    meta = _statuses.get(key) or {}
+    port = meta.get("internal_port") or meta.get("port")
+    return port if isinstance(port, int) else None
 
 
 def _models_dir() -> Path:
@@ -1294,9 +1447,9 @@ def _launch_manifest(
     }
 
 
-def _build_environment(payload: "StartRequest") -> dict[str, str]:
+def _env_from_pairs(pairs: "list[dict[str, str]] | None") -> dict[str, str]:
     env: dict[str, str] = {}
-    for pair in payload.env_vars or []:
+    for pair in pairs or []:
         env_key = pair.get("key")
         if not env_key:
             continue
@@ -1311,6 +1464,10 @@ def _build_environment(payload: "StartRequest") -> dict[str, str]:
         else:
             env[env_key] = raw_value
     return env
+
+
+def _build_environment(payload: "StartRequest") -> dict[str, str]:
+    return _env_from_pairs(payload.env_vars)
 
 
 def _mask_env_value(key_name: str, value: str) -> str:
@@ -1411,7 +1568,7 @@ def _podman_gpu_error() -> str | None:
     return None
 
 
-def _volumes() -> dict[str, dict[str, str]]:
+def _volumes(compile_cache_dir: Path | None = None) -> dict[str, dict[str, str]]:
     volumes: dict[str, dict[str, str]] = {}
     hf_cache = Path(os.path.expanduser(settings.hf_cache_dir)).resolve()
     hf_cache.mkdir(parents=True, exist_ok=True)
@@ -1422,6 +1579,11 @@ def _volumes() -> dict[str, dict[str, str]]:
     # container, so local model / LoRA paths need no rewriting.
     for model_dir in _allowed_model_dirs():
         volumes[str(model_dir)] = {"bind": str(model_dir), "mode": "ro"}
+    # Warm mode: persist vLLM's torch.compile cache so a paused/restarted model
+    # resumes without recompiling.
+    if compile_cache_dir is not None:
+        compile_cache_dir.mkdir(parents=True, exist_ok=True)
+        volumes[str(compile_cache_dir)] = {"bind": _VLLM_CACHE_MOUNT, "mode": "rw"}
     return volumes
 
 
@@ -1539,11 +1701,25 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
                 )
 
     # Reject launches that demonstrably can't fit before burning crash-loop
-    # restarts on them.
+    # restarts on them. In warm mode the agent first tries to make room by
+    # offloading the least-recently-used unpinned model instead of hard-failing.
+    warm = _warm_for(payload)
     if not payload.skip_resource_check:
-        reason = _check_gpu_resources(payload)
-        if reason:
-            raise HTTPException(status_code=409, detail=reason)
+        if warm and _warm_enabled():
+            fit = await _ensure_fit(payload.gpu_ids or [], payload.gpu_memory_fraction, key)
+            if fit is False:
+                raise HTTPException(
+                    status_code=507,
+                    detail=(
+                        "GPU is full and no model is eligible for automatic offload "
+                        "(all candidates are pinned or actively serving). Pin fewer "
+                        "models, stop one, or lower the GPU memory fraction."
+                    ),
+                )
+        else:
+            reason = _check_gpu_resources(payload)
+            if reason:
+                raise HTTPException(status_code=409, detail=reason)
 
     _logs[key] = deque(maxlen=2000)
     # Fresh run, fresh file (the previous run is kept as "<file>.1").
@@ -1627,12 +1803,22 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
     _statuses[key].pop("pull_progress", None)
     _statuses[key]["phase"] = "starting container"
 
+    # Warm mode: vLLM binds a loopback-only internal port and the agent fronts
+    # the public port (so it can wake the model on demand); non-warm keeps the
+    # historical behaviour of vLLM owning the public port directly.
+    internal_port = _allocate_internal_port({payload.port}) if warm else payload.port
+    compile_cache_dir = _compile_cache_host_dir(key) if warm else None
+
     try:
         command = [
             "--model", payload.model_name,
-            "--port", str(payload.port),
+            "--port", str(internal_port),
             "--gpu-memory-utilization", str(payload.gpu_memory_fraction),
         ]
+        if warm:
+            # Loopback-only so the dev-mode /sleep,/wake_up endpoints are never
+            # reachable off-box; the agent proxy is the only public entry.
+            command.extend(["--host", "127.0.0.1", "--enable-sleep-mode"])
         if payload.tensor_parallel_size:
             command.extend(["--tensor-parallel-size", str(payload.tensor_parallel_size)])
         command.extend(_engine_args_to_cli(payload.engine_args))
@@ -1641,6 +1827,13 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
             command.extend(_rewrite_paths_for_container(payload.extra_args))
 
         environment = _build_environment(payload)
+        if warm:
+            environment.setdefault("VLLM_SERVER_DEV_MODE", "1")
+            environment.setdefault("VLLM_CACHE_ROOT", _VLLM_CACHE_MOUNT)
+        manifest["warm"] = warm
+        manifest["pinned"] = payload.pinned
+        if warm:
+            manifest["internal_port"] = internal_port
         name = _container_name(key)
         labels = {
             _LABEL_MANAGED: "true",
@@ -1651,7 +1844,7 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
             _LABEL_LAUNCH: json.dumps(manifest, separators=(",", ":")),
         }
 
-        logger.info("Starting deployment %s via %s", key, runtime)
+        logger.info("Starting deployment %s via %s (warm=%s)", key, runtime, warm)
         logger.info("Image: %s  Command: %s", run_image, " ".join(command))
         logger.info("Env overrides: %s", _mask_env_for_log(environment))
         container = await asyncio.to_thread(
@@ -1663,6 +1856,7 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
             _device_requests(payload.gpu_ids, runtime),
             labels,
             runtime,
+            compile_cache_dir,
         )
     except RuntimeError as exc:
         _statuses.pop(key, None)
@@ -1677,6 +1871,7 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
     _statuses[key] = {
         "model_name": payload.model_name,
         "port": payload.port,
+        "internal_port": internal_port,
         "gpu_memory_fraction": payload.gpu_memory_fraction,
         "gpu_ids": payload.gpu_ids or [],
         "tensor_parallel_size": payload.tensor_parallel_size,
@@ -1692,8 +1887,16 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
         "desired_state": "running",
         "launch_manifest": manifest,
         "container_runtime": runtime,
+        # Warm-cache bookkeeping (inert when warm is False).
+        "warm": warm,
+        "pinned": payload.pinned,
+        "pause_tier": None,
+        "paused_ram_mb": 0,
+        "last_active_at": time.monotonic(),
     }
     _log(f"[docker] Started container {name}")
+    if warm:
+        await _start_proxy(key, payload.port)
     asyncio.create_task(_stream_container_logs(key, container))
     asyncio.create_task(_monitor_container(key, container))
     return {"status": "started", "key": key, "vllm_version": resolved_version}
@@ -1707,6 +1910,7 @@ def _run_container(
     device_requests: list[DeviceRequest],
     labels: dict[str, str],
     runtime: str = "docker",
+    compile_cache_dir: Path | None = None,
 ) -> "docker.models.containers.Container":
     client = _runtime_client(runtime)
     # Remove any stale container left over from a previous run with this name.
@@ -1726,7 +1930,7 @@ def _run_container(
             ipc_mode="host",
             device_requests=device_requests,
             environment=environment,
-            volumes=_volumes(),
+            volumes=_volumes(compile_cache_dir),
             labels=labels,
             restart_policy={"Name": "unless-stopped"},
         )
@@ -1741,21 +1945,114 @@ class StopRequest(BaseModel):
 @app.post("/deployments/stop")
 async def stop_deployment(payload: StopRequest) -> dict[str, str]:
     key = payload.key
+    meta = _statuses.get(key)
     container = _containers.get(key)
-    if not container:
+    # A disk-paused deployment has no live container but is still stoppable.
+    if container is None and meta is None:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
-    if key in _statuses:
-        _statuses[key]["status"] = "stopping"
-        _statuses[key]["desired_state"] = "stopped"
+    if meta is not None:
+        meta["status"] = "stopping"
+        meta["desired_state"] = "stopped"
+        meta["pause_tier"] = None
 
-    await asyncio.to_thread(_remove_container, container)
-    _containers.pop(key, None)
-    if key in _statuses:
-        _statuses[key]["status"] = "stopped"
+    if container is not None:
+        await asyncio.to_thread(_remove_container, container)
+        _containers.pop(key, None)
+    # Tear down the warm-mode public-port proxy, if any.
+    await _stop_proxy(key)
+    # Delete this deployment's compiled artifacts; HF weights + image stay
+    # cached for a fast redeploy (the pause path keeps the compile cache).
+    _delete_compile_cache(key)
+    if meta is not None:
+        meta["status"] = "stopped"
+        meta["paused_ram_mb"] = 0
     # The log file stays on disk (age-based GC); just release the handle.
     _close_log_file(key)
     return {"status": "stopped", "key": key}
+
+
+class PauseRequest(BaseModel):
+    key: str
+    # "ram" | "disk"; omit for auto (RAM if it fits the budget, else disk).
+    tier: str | None = None
+
+
+@app.post("/deployments/pause")
+async def pause_deployment(payload: PauseRequest) -> dict[str, object]:
+    meta = _statuses.get(payload.key)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    if meta.get("pause_tier"):
+        return {"status": "paused", "key": payload.key, "tier": meta.get("pause_tier")}
+    if not meta.get("warm"):
+        raise HTTPException(
+            status_code=409,
+            detail="Deployment is not warm — redeploy on a warm-cache-enabled node first.",
+        )
+    if meta.get("status") != "running":
+        raise HTTPException(status_code=409, detail="Only a running deployment can be paused.")
+    tier = payload.tier if payload.tier in ("ram", "disk") else None
+    await _pause(payload.key, tier)
+    return {"status": "paused", "key": payload.key, "tier": meta.get("pause_tier")}
+
+
+class ResumeRequest(BaseModel):
+    key: str
+
+
+@app.post("/deployments/resume")
+async def resume_deployment(payload: ResumeRequest) -> dict[str, str]:
+    meta = _statuses.get(payload.key)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    if not meta.get("pause_tier"):
+        return {"status": "running", "key": payload.key}
+    ok = await _ensure_active(payload.key)
+    if not ok:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not resume: the GPU is full and nothing is eligible to "
+                "offload, or the wake timed out. Try again or free a GPU."
+            ),
+        )
+    return {"status": "running", "key": payload.key}
+
+
+class PinRequest(BaseModel):
+    key: str
+    pinned: bool
+
+
+@app.post("/deployments/pin")
+def pin_deployment(payload: PinRequest) -> dict[str, object]:
+    meta = _statuses.get(payload.key)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    meta["pinned"] = payload.pinned
+    return {"status": "ok", "key": payload.key, "pinned": payload.pinned}
+
+
+class ConfigRequest(BaseModel):
+    warm_offload_enabled: bool | None = None
+    # None = unlimited RAM cache.
+    ram_cache_limit_mb: int | None = None
+    # Authoritative set of pinned deployment keys (when provided).
+    pins: list[str] | None = None
+
+
+@app.post("/config")
+def set_config(payload: ConfigRequest) -> dict[str, object]:
+    """Push the node's warm-cache policy (host is the source of truth)."""
+    if payload.warm_offload_enabled is not None:
+        _node_policy["warm_offload_enabled"] = bool(payload.warm_offload_enabled)
+    _node_policy["ram_cache_limit_mb"] = payload.ram_cache_limit_mb
+    if payload.pins is not None:
+        pinned = set(payload.pins)
+        for key, meta in _statuses.items():
+            meta["pinned"] = key in pinned
+    return {"status": "ok", "policy": dict(_node_policy)}
 
 
 def _process_tree_pids(pid: int) -> dict[int, float]:
@@ -1848,6 +2145,493 @@ def _remove_container(container: "docker.models.containers.Container") -> None:
         _kill_pids(tree, context=f"container {container.id[:12]}")
 
 
+# ---------------------------------------------------------------------------
+# Warm cache: node-side wake proxy
+# ---------------------------------------------------------------------------
+# In warm mode vLLM binds a loopback-only internal port and the agent fronts
+# the public port with a thin reverse proxy. Any inference request (from the
+# gateway OR a direct caller) transparently wakes a paused model; every request
+# also stamps last-active for LRU eviction.
+
+_proxy_client: "httpx.AsyncClient | None" = None
+
+_GENERATION_PATHS = {"v1/chat/completions", "v1/completions", "v1/embeddings"}
+
+
+def _get_proxy_client() -> "httpx.AsyncClient":
+    global _proxy_client
+    if _proxy_client is None or _proxy_client.is_closed:
+        _proxy_client = httpx.AsyncClient(
+            limits=httpx.Limits(max_connections=200, max_keepalive_connections=40),
+            timeout=httpx.Timeout(connect=10.0, read=None, write=30.0, pool=10.0),
+        )
+    return _proxy_client
+
+
+def _agent_openai_error(status: int, message: str, code: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status,
+        content={
+            "error": {
+                "message": message,
+                "type": "upstream_error" if status >= 500 else "invalid_request_error",
+                "param": None,
+                "code": code,
+            }
+        },
+    )
+
+
+async def _relay_to_internal(request: Request, path: str, internal: object) -> Response:
+    """Forward *request* to vLLM on the loopback internal port, streaming if asked."""
+    if not isinstance(internal, int):
+        return _agent_openai_error(502, "Deployment has no internal port.", "upstream_error")
+    url = f"http://127.0.0.1:{internal}/{path}"
+    body = await request.body()
+    headers = {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() not in ("host", "content-length")
+    }
+    params = dict(request.query_params)
+    client = _get_proxy_client()
+    stream = False
+    if body:
+        try:
+            stream = bool(json.loads(body).get("stream"))
+        except Exception:
+            stream = False
+
+    if not stream:
+        try:
+            upstream = await client.request(
+                request.method, url, content=body, headers=headers, params=params
+            )
+        except httpx.RequestError as exc:
+            return _agent_openai_error(
+                502, f"vLLM on 127.0.0.1:{internal} is unreachable: {exc}",
+                "deployment_unreachable",
+            )
+        return Response(
+            content=upstream.content,
+            status_code=upstream.status_code,
+            media_type=upstream.headers.get("content-type", "application/json"),
+        )
+
+    req = client.build_request(
+        request.method, url, content=body, headers=headers, params=params
+    )
+    try:
+        upstream = await client.send(req, stream=True)
+    except httpx.RequestError as exc:
+        return _agent_openai_error(
+            502, f"vLLM on 127.0.0.1:{internal} is unreachable: {exc}",
+            "deployment_unreachable",
+        )
+    if upstream.status_code >= 400:
+        await upstream.aread()
+        content = upstream.content
+        media_type = upstream.headers.get("content-type", "application/json")
+        await upstream.aclose()
+        return Response(content=content, status_code=upstream.status_code, media_type=media_type)
+
+    async def _relay():
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+
+    return StreamingResponse(
+        _relay(),
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "text/event-stream"),
+    )
+
+
+async def _proxy_request(key: str, path: str, request: Request) -> Response:
+    meta = _statuses.get(key)
+    if meta is None:
+        return _agent_openai_error(404, "Deployment is no longer registered.", "model_not_found")
+    is_generation = request.method == "POST" and path in _GENERATION_PATHS
+    tier = meta.get("pause_tier")
+    if tier and is_generation:
+        ok = await _ensure_active(key)
+        if not ok:
+            return _agent_openai_error(
+                503, "Model is resuming; retry shortly.", "model_resuming"
+            )
+        meta = _statuses.get(key) or meta
+    elif tier == "disk":
+        # Paused with the backend torn down: only an inference call resumes it.
+        return _agent_openai_error(
+            503, "Model is paused; send a completion request to resume it.", "model_paused"
+        )
+    if is_generation:
+        meta["last_active_at"] = time.monotonic()
+    return await _relay_to_internal(request, path, meta.get("internal_port"))
+
+
+def _make_proxy_app(key: str) -> FastAPI:
+    proxy = FastAPI()
+
+    @proxy.api_route(
+        "/{path:path}",
+        methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
+    )
+    async def _forward(path: str, request: Request) -> Response:  # noqa: ANN001
+        return await _proxy_request(key, path, request)
+
+    return proxy
+
+
+async def _start_proxy(key: str, public_port: int) -> None:
+    import uvicorn
+
+    if key in _proxy_servers:
+        return
+    config = uvicorn.Config(
+        _make_proxy_app(key),
+        host="0.0.0.0",
+        port=public_port,
+        log_level="warning",
+        access_log=False,
+    )
+    server = uvicorn.Server(config)
+    # These child servers must not steal the agent's SIGINT/SIGTERM handlers.
+    server.install_signal_handlers = lambda: None  # type: ignore[assignment]
+    _proxy_servers[key] = server
+    asyncio.create_task(server.serve())
+    for _ in range(100):  # wait up to ~5s for the listener to bind
+        if getattr(server, "started", False):
+            break
+        await asyncio.sleep(0.05)
+
+
+async def _stop_proxy(key: str) -> None:
+    server = _proxy_servers.pop(key, None)
+    if server is not None:
+        server.should_exit = True
+
+
+# ---------------------------------------------------------------------------
+# Warm cache: offload / eviction controller
+# ---------------------------------------------------------------------------
+
+
+def _all_gpu_indices() -> list[int]:
+    out: list[int] = []
+    for gpu in _gpu_metrics():
+        if gpu.get("source") == "unified":
+            continue
+        idx = gpu.get("index")
+        if isinstance(idx, int):
+            out.append(idx)
+    return out
+
+
+def _reserved_by_gpu() -> dict[int, float]:
+    """Sum of gpu_memory_fraction across models currently occupying each GPU.
+
+    Paused models (RAM or disk) have released their VRAM and don't count.
+    """
+    reserved: dict[int, float] = {}
+    for key, meta in _statuses.items():
+        if meta.get("pause_tier"):
+            continue
+        if key not in _containers:
+            continue
+        if meta.get("status") not in ("starting", "loading", "running"):
+            continue
+        frac = float(meta.get("gpu_memory_fraction") or 0.0)
+        ids = meta.get("gpu_ids") or _all_gpu_indices()
+        for gid in ids:
+            reserved[gid] = reserved.get(gid, 0.0) + frac
+    return reserved
+
+
+def _is_busy(meta: dict) -> bool:
+    """Traffic guard: a model is busy if it has in-flight or very recent work."""
+    running = meta.get("requests_running")
+    if isinstance(running, (int, float)) and running > 0:
+        return True
+    last = meta.get("last_active_at")
+    if isinstance(last, (int, float)) and (time.monotonic() - last) < _BUSY_GUARD_SECONDS:
+        return True
+    return False
+
+
+def _pick_victim(gpus: "set[int] | list[int]", requester_key: str) -> str | None:
+    """LRU running, unpinned, not-busy deployment sharing one of *gpus*."""
+    gpuset = set(gpus)
+    candidates: list[tuple[float, str]] = []
+    for key, meta in _statuses.items():
+        if key == requester_key:
+            continue
+        if meta.get("pause_tier") or meta.get("pinned"):
+            continue
+        if key not in _containers or meta.get("status") != "running":
+            continue
+        ids = set(meta.get("gpu_ids") or _all_gpu_indices())
+        if not (ids & gpuset):
+            continue
+        if _is_busy(meta):
+            continue
+        candidates.append((float(meta.get("last_active_at") or 0.0), key))
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[0][1]
+
+
+def _ram_limit_mb() -> float | None:
+    value = _node_policy.get("ram_cache_limit_mb")
+    return float(value) if isinstance(value, (int, float)) and value > 0 else None
+
+
+def _ram_used_mb() -> float:
+    return sum(
+        float(meta.get("paused_ram_mb") or 0.0)
+        for meta in _statuses.values()
+        if meta.get("pause_tier") == "ram"
+    )
+
+
+def _ram_estimate(meta: dict) -> float:
+    """Rough CPU-RAM footprint of sleeping this model (weights upper bound)."""
+    frac = float(meta.get("gpu_memory_fraction") or 0.0)
+    by_index = {g.get("index"): g for g in _gpu_metrics()}
+    total = 0.0
+    for gid in meta.get("gpu_ids") or []:
+        gpu = by_index.get(gid)
+        if gpu and gpu.get("source") != "unified":
+            total = max(total, float(gpu.get("memory_total_mb") or 0.0))
+    return frac * total if total > 0 else 8192.0
+
+
+def _lru_paused_ram() -> str | None:
+    ram = [
+        (float(meta.get("last_active_at") or 0.0), key)
+        for key, meta in _statuses.items()
+        if meta.get("pause_tier") == "ram"
+    ]
+    if not ram:
+        return None
+    ram.sort()
+    return ram[0][1]
+
+
+async def _enforce_ram_budget(incoming_mb: float) -> None:
+    """Demote LRU RAM-paused models to disk until *incoming_mb* fits the limit."""
+    limit = _ram_limit_mb()
+    if limit is None:
+        return
+    while _ram_used_mb() + incoming_mb > limit:
+        victim = _lru_paused_ram()
+        if victim is None:
+            break
+        await _pause_to_disk(_statuses[victim], victim)
+
+
+async def _auto_tier(meta: dict) -> str:
+    """Pause to RAM when it fits the node's RAM-cache budget, else to disk."""
+    limit = _ram_limit_mb()
+    if limit is None:
+        return "ram"
+    estimate = _ram_estimate(meta)
+    await _enforce_ram_budget(estimate)
+    return "ram" if _ram_used_mb() + estimate <= limit else "disk"
+
+
+async def _ensure_fit(
+    target_gpu_ids: "list[int]", fraction: float, requester_key: str
+) -> bool | None:
+    """Make room on the target GPUs by offloading LRU models.
+
+    Returns True when the request fits (possibly after evictions), False when
+    nothing is eligible to evict, and None when warm-offload is disabled (the
+    caller should fall back to the plain resource pre-check).
+    """
+    if not _warm_enabled():
+        return None
+    gpus = list(target_gpu_ids) or _all_gpu_indices()
+    if not gpus:
+        return True  # only unified-memory metrics — can't reason, allow
+    locks = [_gpu_lock(g) for g in sorted(set(gpus))]
+    for lock in locks:
+        await lock.acquire()
+    try:
+        for _ in range(64):  # bounded; one eviction per turn
+            reserved = _reserved_by_gpu()
+            over = [g for g in gpus if reserved.get(g, 0.0) + fraction > 1.0 + 1e-6]
+            if not over:
+                return True
+            victim = _pick_victim(over, requester_key)
+            if victim is None:
+                return False
+            await _pause(victim)
+        return False
+    finally:
+        for lock in locks:
+            lock.release()
+
+
+# ---------------------------------------------------------------------------
+# Warm cache: pause / resume
+# ---------------------------------------------------------------------------
+
+
+async def _vllm_sleep(internal: object, level: int = 1) -> None:
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        await client.post(
+            f"http://127.0.0.1:{internal}/sleep", params={"level": str(level)}
+        )
+
+
+async def _vllm_wake(internal: object) -> None:
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        await client.post(f"http://127.0.0.1:{internal}/wake_up")
+        try:
+            await client.post(f"http://127.0.0.1:{internal}/reset_prefix_cache")
+        except Exception:
+            pass
+
+
+async def _wait_awake(internal: object, cap: float) -> bool:
+    deadline = time.monotonic() + cap
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        while time.monotonic() < deadline:
+            try:
+                resp = await client.get(f"http://127.0.0.1:{internal}/is_sleeping")
+                if resp.status_code == 200 and not resp.json().get("is_sleeping", True):
+                    return True
+            except Exception:
+                pass
+            await asyncio.sleep(0.2)
+    return False
+
+
+async def _pause_to_ram(meta: dict, key: str) -> None:
+    await _vllm_sleep(meta.get("internal_port"), level=1)
+    meta["pause_tier"] = "ram"
+    meta["status"] = "paused_ram"
+    meta["paused_ram_mb"] = _ram_estimate(meta)
+    logger.info("Paused %s to RAM (sleep level 1)", key)
+
+
+async def _pause_to_disk(meta: dict, key: str) -> None:
+    container = _containers.get(key)
+    meta["desired_state"] = "paused"
+    if container is not None:
+        await asyncio.to_thread(_remove_container, container)
+    _containers.pop(key, None)
+    meta["pause_tier"] = "disk"
+    meta["status"] = "paused_disk"
+    meta["paused_ram_mb"] = 0
+    logger.info("Paused %s to disk (container stopped, compile cache kept)", key)
+
+
+async def _pause(key: str, tier: str | None = None) -> None:
+    meta = _statuses.get(key)
+    if not meta or meta.get("pause_tier"):
+        return
+    if tier is None:
+        tier = await _auto_tier(meta)
+    if tier == "ram":
+        await _pause_to_ram(meta, key)
+    else:
+        await _pause_to_disk(meta, key)
+
+
+async def _relaunch_disk_paused(key: str, cap: float) -> bool:
+    """Re-launch a disk-paused deployment on its internal port (warm cache)."""
+    meta = _statuses.get(key)
+    if not meta:
+        return False
+    manifest = meta.get("launch_manifest") or {}
+    internal = meta.get("internal_port")
+    runtime = meta.get("container_runtime")
+    image = meta.get("image")
+    model = meta.get("model_name")
+    fraction = float(meta.get("gpu_memory_fraction") or 0.0)
+    gpu_ids = meta.get("gpu_ids") or []
+    command = [
+        "--model", str(model),
+        "--port", str(internal),
+        "--gpu-memory-utilization", str(fraction),
+        "--host", "127.0.0.1",
+        "--enable-sleep-mode",
+    ]
+    if meta.get("tensor_parallel_size"):
+        command.extend(["--tensor-parallel-size", str(meta.get("tensor_parallel_size"))])
+    command.extend(_engine_args_to_cli(meta.get("engine_args") or {}))
+    command.extend(_lora_args_to_cli(meta.get("lora_modules") or []))
+    extra_args = manifest.get("extra_args") or []
+    if extra_args:
+        command.extend(_rewrite_paths_for_container(extra_args))
+
+    environment = _env_from_pairs(manifest.get("env_vars"))
+    environment.setdefault("VLLM_SERVER_DEV_MODE", "1")
+    environment.setdefault("VLLM_CACHE_ROOT", _VLLM_CACHE_MOUNT)
+    name = _container_name(key)
+    labels = {
+        _LABEL_MANAGED: "true",
+        _LABEL_KEY: key,
+        _LABEL_PORT: str(meta.get("port")),
+        _LABEL_VERSION: str(meta.get("vllm_version") or ""),
+        _LABEL_RUNTIME: str(runtime or ""),
+        _LABEL_LAUNCH: json.dumps(manifest, separators=(",", ":")),
+    }
+    meta["desired_state"] = "running"
+    meta["status"] = "loading"
+    container = await asyncio.to_thread(
+        _run_container,
+        image,
+        command,
+        name,
+        environment,
+        _device_requests(gpu_ids, runtime or "docker"),
+        labels,
+        runtime or "docker",
+        _compile_cache_host_dir(key),
+    )
+    _containers[key] = container
+    meta["container_id"] = container.id
+    asyncio.create_task(_stream_container_logs(key, container))
+    asyncio.create_task(_monitor_container(key, container))
+    deadline = time.monotonic() + cap
+    while time.monotonic() < deadline:
+        if await _is_ready(internal):
+            return True
+        await asyncio.sleep(0.5)
+    return False
+
+
+async def _ensure_active(key: str, cap: float = _RESUME_WAIT_CAP_SECONDS) -> bool:
+    """Wake a paused deployment (evicting others if needed). Idempotent."""
+    async with _resume_lock(key):
+        meta = _statuses.get(key)
+        if not meta:
+            return False
+        tier = meta.get("pause_tier")
+        if not tier:
+            return True  # already active
+        fit = await _ensure_fit(meta.get("gpu_ids") or [], float(meta.get("gpu_memory_fraction") or 0.0), key)
+        if fit is False:
+            return False
+        if tier == "ram":
+            await _vllm_wake(meta.get("internal_port"))
+            ok = await _wait_awake(meta.get("internal_port"), cap)
+        else:
+            ok = await _relaunch_disk_paused(key, cap)
+        if ok:
+            meta["pause_tier"] = None
+            meta["status"] = "running"
+            meta["paused_ram_mb"] = 0
+            meta["last_active_at"] = time.monotonic()
+        return ok
+
+
 def _restart_threshold(key: str) -> int:
     """Crash-loop breaker threshold: per-deployment override or the default.
 
@@ -1887,7 +2671,7 @@ async def _monitor_container(
     """
     import time
 
-    port = _statuses.get(key, {}).get("port")
+    port = _serve_port(key)
     last_restart_count = 0
     last_usage_scrape = 0.0
     ever_ready = False
@@ -1899,7 +2683,13 @@ async def _monitor_container(
             # Container was removed out from under us.
             desired = _statuses.get(key, {}).get("desired_state")
             if key in _statuses:
-                _statuses[key]["status"] = "stopped" if desired == "stopped" else "error"
+                if desired == "stopped":
+                    _statuses[key]["status"] = "stopped"
+                elif desired == "paused":
+                    _statuses[key]["status"] = "paused_disk"
+                    _statuses[key]["pause_tier"] = "disk"
+                else:
+                    _statuses[key]["status"] = "error"
             _containers.pop(key, None)
             break
         except Exception as exc:
@@ -1917,6 +2707,26 @@ async def _monitor_container(
                     _statuses[key]["status"] = "stopped"
                 _containers.pop(key, None)
                 break
+            continue
+
+        # Disk-pause teardown: removing the container is in flight; the NotFound
+        # branch above finalises it. Don't treat the exit as a crash.
+        if desired == "paused":
+            if status in ("exited", "dead"):
+                if key in _statuses:
+                    _statuses[key]["status"] = "paused_disk"
+                    _statuses[key]["pause_tier"] = "disk"
+                _containers.pop(key, None)
+                break
+            continue
+
+        # RAM-paused (sleep level 1): the container is alive but the engine is
+        # offloaded. Skip readiness/scrape so we don't flip it back to running;
+        # an unexpected exit still surfaces as an error.
+        if _statuses.get(key, {}).get("pause_tier") == "ram":
+            if status in ("exited", "dead") and key in _statuses:
+                _statuses[key]["status"] = "error"
+                _statuses[key]["exit_code"] = state.get("ExitCode")
             continue
 
         # desired == "running" below.
@@ -1988,6 +2798,8 @@ async def _monitor_container(
                 usage = await _scrape_vllm_metrics(port, key=key)
                 if usage and key in _statuses:
                     _statuses[key]["usage"] = usage
+                    # Feeds the eviction traffic-guard (never evict a busy model).
+                    _statuses[key]["requests_running"] = usage.get("requests_running")
             # Keep monitoring for exits/crash loops.
             continue
 
@@ -2346,7 +3158,19 @@ def _reconcile_containers() -> None:
                 status["engine_args"] = manifest.get("engine_args") or {}
                 status["lora_modules"] = manifest.get("lora_modules") or []
                 status["max_failed_restarts"] = manifest.get("max_failed_restarts")
+                # Warm-mode bookkeeping survives a restart via the manifest, so
+                # the agent re-fronts the public port and can pause/resume again.
+                warm = bool(manifest.get("warm"))
+                status["warm"] = warm
+                status["pinned"] = bool(manifest.get("pinned"))
+                status["pause_tier"] = None
+                status["paused_ram_mb"] = 0
+                status["last_active_at"] = time.monotonic()
+                if warm:
+                    status["internal_port"] = manifest.get("internal_port") or port
         _statuses[key] = status
+        if status.get("warm") and isinstance(port, int) and port > 0:
+            asyncio.create_task(_start_proxy(key, port))
         asyncio.create_task(_stream_container_logs(key, container, resume=True))
         asyncio.create_task(_monitor_container(key, container))
         recovered += 1
@@ -2713,9 +3537,12 @@ def _kill_pid_via_container(pid: int) -> bool:
     return not psutil.pid_exists(pid)
 
 
-@app.post("/gpu-processes/{pid}/kill")
-def kill_gpu_process(pid: int) -> dict[str, object]:
-    """Kill a single rogue vLLM GPU process (SIGTERM, then SIGKILL)."""
+def _kill_vllm_pid(pid: int, kind: str = "GPU process") -> dict[str, object]:
+    """SIGTERM→SIGKILL a rogue vLLM pid, escalating to a root container if needed.
+
+    Shared by the GPU-process and warm-artifact (RAM sleeper) kill endpoints.
+    Refuses pids owned by a live deployment (409) and non-vLLM pids (404).
+    """
     try:
         proc = psutil.Process(pid)
     except psutil.NoSuchProcess:
@@ -2726,7 +3553,7 @@ def kill_gpu_process(pid: int) -> dict[str, object]:
             detail="Owned by an active deployment — stop it from the Deployments table.",
         )
     if not _looks_like_vllm(_proc_name(pid), pid):
-        raise HTTPException(status_code=404, detail="Not a vLLM GPU process")
+        raise HTTPException(status_code=404, detail=f"Not a vLLM {kind}")
     try:
         proc.terminate()
         try:
@@ -2751,6 +3578,102 @@ def kill_gpu_process(pid: int) -> dict[str, object]:
             ),
         )
     return {"status": "killed", "pid": pid}
+
+
+@app.post("/gpu-processes/{pid}/kill")
+def kill_gpu_process(pid: int) -> dict[str, object]:
+    """Kill a single rogue vLLM GPU process (SIGTERM, then SIGKILL)."""
+    return _kill_vllm_pid(pid, kind="GPU process")
+
+
+# ---------------------------------------------------------------------------
+# Rogue warm-cache artifact detection (RAM sleepers + orphaned compile caches)
+# ---------------------------------------------------------------------------
+
+
+def _dir_size_mb(path: Path) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                continue
+    return round(total / (1024 * 1024))
+
+
+def _ram_sleeper_candidates() -> list[dict[str, object]]:
+    """vLLM processes pinning CPU RAM that no live deployment accounts for.
+
+    A level-1 sleeper has released its VRAM, so the GPU-process scan misses it;
+    this RSS-based scan finds an EngineCore/Worker that outlived its deployment
+    (e.g. an agent restart that lost in-memory state).
+    """
+    owned = set(_tracked_gpu_pids().keys())
+    out: list[dict[str, object]] = []
+    for proc in psutil.process_iter(["pid", "name", "memory_info"]):
+        try:
+            pid = proc.info["pid"]
+            if pid in owned:
+                continue
+            name = proc.info.get("name") or ""
+            if not _looks_like_vllm(name, pid):
+                continue
+            mem = proc.info.get("memory_info")
+            rss_mb = round((getattr(mem, "rss", 0) or 0) / (1024 * 1024))
+            if rss_mb < _SLEEPER_RSS_MIN_MB:
+                continue
+            out.append({"pid": pid, "process_name": name, "rss_mb": rss_mb})
+        except psutil.Error:
+            continue
+    return out
+
+
+def _orphan_compile_caches() -> list[dict[str, object]]:
+    """Compile-cache subdirs not attributable to any deployment we still track."""
+    if not _COMPILE_CACHE_DIR.exists():
+        return []
+    tracked = {_cache_subdir(key) for key in _statuses}
+    out: list[dict[str, object]] = []
+    for child in sorted(_COMPILE_CACHE_DIR.iterdir()):
+        if not child.is_dir() or child.name in tracked:
+            continue
+        out.append(
+            {"name": child.name, "path": str(child), "size_mb": _dir_size_mb(child)}
+        )
+    return out
+
+
+@app.get("/warm-artifacts")
+def list_warm_artifacts() -> dict[str, list[dict[str, object]]]:
+    """Orphaned warm-cache artifacts: RAM sleepers and disk compile caches."""
+    return {
+        "ram_sleepers": _ram_sleeper_candidates(),
+        "disk_caches": _orphan_compile_caches(),
+    }
+
+
+@app.post("/warm-artifacts/sleepers/{pid}/kill")
+def kill_ram_sleeper(pid: int) -> dict[str, object]:
+    """Kill a rogue RAM-sleeping vLLM process (frees its CPU memory)."""
+    return _kill_vllm_pid(pid, kind="process")
+
+
+@app.delete("/warm-artifacts/caches/{name}")
+def delete_warm_cache(name: str) -> dict[str, str]:
+    """Delete one orphaned compile-cache subdir (refused if a deployment owns it)."""
+    if "/" in name or "\\" in name or name in ("", ".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid cache name.")
+    target = _COMPILE_CACHE_DIR / name
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Cache directory not found.")
+    if name in {_cache_subdir(key) for key in _statuses}:
+        raise HTTPException(
+            status_code=409,
+            detail="Owned by a tracked deployment — stop it from the Deployments table.",
+        )
+    _delete_compile_subdir(name)
+    return {"status": "removed", "name": name}
 
 
 # ---------------------------------------------------------------------------

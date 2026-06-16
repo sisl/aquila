@@ -26,6 +26,8 @@ class DeploymentBase(BaseModel):
     owner: str | None = None
     # Requested serve duration in seconds; None means serve indefinitely.
     duration_seconds: int | None = None
+    # Warm cache: protect this deployment from automatic eviction.
+    pinned: bool = False
     status: str = "stopped"
 
 
@@ -77,6 +79,15 @@ class DeploymentStart(DeploymentBase):
 class DeploymentRestart(BaseModel):
     owner: str
     duration_seconds: int | None = None
+
+
+class DeploymentPin(BaseModel):
+    pinned: bool
+
+
+class DeploymentPause(BaseModel):
+    # "ram" | "disk"; omit for auto (RAM if it fits the budget, else disk).
+    tier: str | None = None
 
 
 class DeploymentFromManifest(BaseModel):
