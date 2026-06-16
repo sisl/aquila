@@ -490,7 +490,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
 
         <DialogSection
           title="Orphaned GPU Processes"
-          hint={'vLLM GPU workers (e.g. "VLLM::EngineCore") that outlived their container and still pin VRAM, with no container left to stop. Killing one frees its GPU memory. Processes owned by another user (e.g. root under rootful Docker) need elevated privileges and will report a permission error.'}
+          hint={'vLLM GPU workers (e.g. "VLLM::EngineCore") that outlived their container and still pin VRAM, with no container left to stop. Killing one frees its GPU memory; a root-owned orphan (from rootful Docker) is killed via a one-shot root container, and if that still fails the error shows a manual cleanup command.'}
         >
         {gpuProcessesQuery.isLoading ? (
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>

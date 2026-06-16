@@ -2682,6 +2682,37 @@ def list_gpu_processes() -> dict[str, list[dict[str, object]]]:
     return {"processes": processes}
 
 
+def _kill_pid_via_container(pid: int) -> bool:
+    """SIGKILL a root-owned host pid via a one-shot root container; True if gone.
+
+    A vLLM worker leaked from a *rootful* container runs as root on the host, so
+    the agent (a regular user) cannot signal it directly — but a root container
+    sharing the host PID namespace can. Mirrors the root-container fallback used
+    for deleting root-owned cache dirs. Prefers Docker (the rootful runtime that
+    produces such orphans); under rootless Podman the process is agent-owned and
+    the native kill already succeeded before this fallback was reached.
+    """
+    available = _available_runtimes()
+    runtimes = (["docker"] if "docker" in available else []) + [
+        r for r in available if r != "docker"
+    ]
+    for runtime in runtimes:
+        try:
+            _runtime_client(runtime).containers.run(
+                _CLEANUP_IMAGE,
+                ["kill", "-9", str(pid)],
+                pid_mode="host",
+                remove=True,
+            )
+        except Exception as exc:
+            # A non-zero exit (e.g. the pid already died) raises here; the
+            # pid_exists check below is the real success signal.
+            logger.warning("Container kill of pid %s via %s failed: %s", pid, runtime, exc)
+        if not psutil.pid_exists(pid):
+            return True
+    return not psutil.pid_exists(pid)
+
+
 @app.post("/gpu-processes/{pid}/kill")
 def kill_gpu_process(pid: int) -> dict[str, object]:
     """Kill a single rogue vLLM GPU process (SIGTERM, then SIGKILL)."""
@@ -2705,12 +2736,18 @@ def kill_gpu_process(pid: int) -> dict[str, object]:
     except psutil.NoSuchProcess:
         pass
     except psutil.AccessDenied:
+        # The orphan is owned by another user (rootful Docker → root). The agent
+        # can't signal it directly, but a root container in the host PID
+        # namespace can — escalate the same way root-owned cache dirs are deleted.
+        if _kill_pid_via_container(pid):
+            return {"status": "killed", "pid": pid, "via": "container"}
         raise HTTPException(
             status_code=403,
             detail=(
                 f"Permission denied killing pid {pid}: it is owned by another user "
                 f"(e.g. root, under rootful Docker). The agent runs as "
-                f"'{getpass.getuser()}' and needs elevated privileges to kill it."
+                f"'{getpass.getuser()}' and the root-container fallback could not "
+                f"kill it either — remove it manually with 'sudo kill -9 {pid}'."
             ),
         )
     return {"status": "killed", "pid": pid}

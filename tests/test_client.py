@@ -2317,18 +2317,62 @@ async def test_kill_gpu_process_rejects_non_vllm():
 
 
 @pytest.mark.anyio
-async def test_kill_gpu_process_permission_denied():
+async def test_kill_gpu_process_permission_denied_and_container_fails():
+    # Agent can't signal the root-owned process AND the root-container fallback
+    # also can't kill it → 403 with manual-cleanup guidance.
     proc = _fake_proc()
     proc.terminate.side_effect = client_main.psutil.AccessDenied()
     with mock.patch.object(
         client_main.psutil, "Process", return_value=proc
     ), mock.patch.object(
         client_main, "_tracked_gpu_pids", return_value={}
-    ), mock.patch.object(client_main, "_looks_like_vllm", return_value=True):
+    ), mock.patch.object(
+        client_main, "_looks_like_vllm", return_value=True
+    ), mock.patch.object(client_main, "_kill_pid_via_container", return_value=False):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post("/gpu-processes/111/kill")
     assert resp.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_kill_gpu_process_escalates_to_root_container():
+    # A root-owned orphan (rootful Docker): native kill is denied, but the
+    # root-container fallback succeeds → 200.
+    proc = _fake_proc()
+    proc.terminate.side_effect = client_main.psutil.AccessDenied()
+    with mock.patch.object(
+        client_main.psutil, "Process", return_value=proc
+    ), mock.patch.object(
+        client_main, "_tracked_gpu_pids", return_value={}
+    ), mock.patch.object(
+        client_main, "_looks_like_vllm", return_value=True
+    ), mock.patch.object(
+        client_main, "_kill_pid_via_container", return_value=True
+    ) as escalate:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/gpu-processes/111/kill")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "killed", "pid": 111, "via": "container"}
+    escalate.assert_called_once_with(111)
+
+
+def test_kill_pid_via_container_uses_host_pid_namespace():
+    fake = mock.MagicMock()
+    with mock.patch.object(
+        client_main, "_available_runtimes", return_value=["docker", "podman"]
+    ), mock.patch.object(
+        client_main, "_runtime_client", return_value=fake
+    ), mock.patch.object(client_main.psutil, "pid_exists", return_value=False):
+        assert client_main._kill_pid_via_container(2840605) is True
+    # Prefers Docker (the rootful runtime), runs kill -9 in the host PID namespace.
+    fake.containers.run.assert_called_once()
+    args, kwargs = fake.containers.run.call_args
+    assert args[0] == client_main._CLEANUP_IMAGE
+    assert args[1] == ["kill", "-9", "2840605"]
+    assert kwargs["pid_mode"] == "host"
+    assert kwargs["remove"] is True
 
 
 @pytest.mark.anyio
