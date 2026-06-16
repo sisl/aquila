@@ -37,7 +37,10 @@ import app.api.nodes as nodes_api  # noqa: E402
 import app.services.model_names as model_names  # noqa: E402
 import app.services.sync as sync  # noqa: E402
 from app.db.session import get_session  # noqa: E402
-from app.services.node_state import rogue_container_counts  # noqa: E402
+from app.services.node_state import (  # noqa: E402
+    rogue_container_counts,
+    rogue_process_counts,
+)
 from app.services.notify import _warned_expiring  # noqa: E402
 
 for _name in [n for n in sys.modules if n == "app" or n.startswith("app.")]:
@@ -71,6 +74,7 @@ def _seed_caches():
     sync.live_usage[1] = {"tokens_per_second": 1.0}
     sync._deployment_fail_counts[1] = 3
     rogue_container_counts[1] = 1
+    rogue_process_counts[1] = 2
     _warned_expiring.add((1, "2026-06-11"))
 
 
@@ -110,6 +114,7 @@ async def test_purge_database_deletes_all_tables_and_clears_caches():
     assert not sync.live_usage
     assert not sync._deployment_fail_counts
     assert not rogue_container_counts
+    assert not rogue_process_counts
     assert not _warned_expiring
 
 
@@ -184,6 +189,7 @@ async def test_delete_node_removes_rows_caches_and_consul():
     node = SimpleNamespace(id=7, hostname="stale-host")
     session = _FakeNodeSession(node)
     rogue_container_counts[7] = 2
+    rogue_process_counts[7] = 3
     sync._node_fail_counts["stale-host"] = 5
     sync.live_usage[11] = {"tokens_per_second": 1.0}
     sync.pull_progress[12] = {"percent": 50}
@@ -209,6 +215,7 @@ async def test_delete_node_removes_rows_caches_and_consul():
     assert session.committed
     deregister.assert_called_once_with("stale-host")
     assert 7 not in rogue_container_counts
+    assert 7 not in rogue_process_counts
     assert "stale-host" not in sync._node_fail_counts
     assert 11 not in sync.live_usage
     assert 12 not in sync.pull_progress
@@ -290,7 +297,9 @@ async def test_purge_deployments_keeps_node_caches():
     assert session.deleted_tables == ["deployments"]
     assert not sync.live_usage  # deployment caches cleared
     assert rogue_container_counts  # node caches kept
+    assert rogue_process_counts  # node caches kept
     rogue_container_counts.clear()
+    rogue_process_counts.clear()
     sync._deployment_fail_counts.clear()
     _warned_expiring.clear()
 

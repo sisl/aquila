@@ -27,6 +27,8 @@ class NodeRead(NodeBase):
     id: int
     # Derived (not persisted): rogue/untracked vLLM containers seen on the node.
     rogue_container_count: int | None = None
+    # Derived (not persisted): orphaned vLLM GPU processes (no live container).
+    rogue_process_count: int | None = None
     last_heartbeat_at: datetime | None = None
     created_at: datetime | None = None
 

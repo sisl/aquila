@@ -23,6 +23,8 @@ export type Node = {
   default_pip_packages?: string[];
   installed_packages?: string[];
   rogue_container_count?: number | null;
+  // Orphaned vLLM GPU processes (workers that outlived their container).
+  rogue_process_count?: number | null;
   // Detected container runtimes ("docker"/"podman"); empty = node unusable.
   available_runtimes?: string[];
   // Per-node runtime override; null = auto (preferred runtime).
@@ -359,6 +361,15 @@ export type NodeImage = {
   runtimes?: string[];
 };
 
+export type GpuProcess = {
+  pid: number;
+  gpu_index?: number | null;
+  gpu_memory_mb?: number | null;
+  process_name: string;
+  tracked: boolean;
+  key?: string | null;
+};
+
 export type ImagePruneResult = {
   removed: string[];
   freed_mb: number;
@@ -404,6 +415,17 @@ export function stopNodeContainer(
     `/nodes/${nodeId}/containers/${encodeURIComponent(containerId)}/stop`,
     "POST"
   );
+}
+
+export function fetchNodeGpuProcesses(nodeId: number): Promise<GpuProcess[]> {
+  return requestWithDetail<GpuProcess[]>(`/nodes/${nodeId}/gpu-processes`);
+}
+
+export function killNodeGpuProcess(
+  nodeId: number,
+  pid: number
+): Promise<{ status: string; pid: number }> {
+  return requestWithDetail(`/nodes/${nodeId}/gpu-processes/${pid}/kill`, "POST");
 }
 
 export function fetchNodeImages(nodeId: number): Promise<NodeImage[]> {

@@ -220,6 +220,32 @@ async def stop_container(
     _raise_for_client_error(response)
 
 
+async def list_gpu_processes(
+    node_ip: str, node_port: int | None
+) -> list[dict[str, object]]:
+    url = _satellite_url(node_ip, node_port, "/gpu-processes")
+    try:
+        response = await get_client().get(url, timeout=15.0)
+    except httpx.RequestError as exc:
+        raise _unreachable(url, exc) from exc
+    if response.is_success:
+        return response.json().get("processes", [])
+    _raise_for_client_error(response)
+
+
+async def kill_gpu_process(
+    node_ip: str, node_port: int | None, pid: int
+) -> dict[str, object]:
+    url = _satellite_url(node_ip, node_port, f"/gpu-processes/{pid}/kill")
+    try:
+        response = await get_client().post(url, timeout=30.0)
+    except httpx.RequestError as exc:
+        raise _unreachable(url, exc) from exc
+    if response.is_success:
+        return response.json()
+    _raise_for_client_error(response)
+
+
 async def list_images(node_ip: str, node_port: int | None) -> list[dict[str, object]]:
     url = _satellite_url(node_ip, node_port, "/images")
     try:

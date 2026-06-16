@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 import asyncio
 from collections import deque
+import getpass
 import hashlib
 import json
 import logging
@@ -1720,6 +1721,7 @@ def _run_container(
             command=command,
             name=name,
             detach=True,
+            init=True,
             network_mode="host",
             ipc_mode="host",
             device_requests=device_requests,
@@ -1756,13 +1758,84 @@ async def stop_deployment(payload: StopRequest) -> dict[str, str]:
     return {"status": "stopped", "key": key}
 
 
+def _process_tree_pids(pid: int) -> dict[int, float]:
+    """``{pid: create_time}`` for *pid* and all its descendants (host PID ns).
+
+    create_time is captured so a later kill can detect PID reuse and never
+    signal an unrelated process that inherited a recycled pid.
+    """
+    snapshot: dict[int, float] = {}
+    if not pid:
+        return snapshot
+    try:
+        root = psutil.Process(pid)
+    except psutil.Error:
+        return snapshot
+    procs = [root]
+    try:
+        procs.extend(root.children(recursive=True))
+    except psutil.Error:
+        pass
+    for proc in procs:
+        try:
+            snapshot[proc.pid] = proc.create_time()
+        except psutil.Error:
+            continue
+    return snapshot
+
+
+def _container_process_tree(container) -> dict[int, float]:
+    """``{pid: create_time}`` for a container's main process and descendants.
+
+    Containers run in the host PID namespace's view (no ``pid_mode``), so the
+    runtime exposes the main process's host pid and psutil can walk the tree.
+    """
+    try:
+        container.reload()
+        pid = (container.attrs.get("State") or {}).get("Pid")
+    except Exception:
+        return {}
+    if not isinstance(pid, int) or pid <= 0:
+        return {}
+    return _process_tree_pids(pid)
+
+
+def _kill_pids(snapshot: dict[int, float], context: str = "") -> None:
+    """SIGKILL any pid in *snapshot* still alive and unchanged (PID-reuse safe).
+
+    Best-effort: a process that already exited (the normal case) or that the
+    agent's user may not signal is logged, not raised.
+    """
+    suffix = f" [{context}]" if context else ""
+    for pid, created in snapshot.items():
+        try:
+            proc = psutil.Process(pid)
+            if abs(proc.create_time() - created) > 1.0:
+                continue  # pid recycled into a different process — leave it
+            name = proc.name()
+            proc.kill()
+            logger.warning("Reaped surviving process %s (pid %s)%s", name, pid, suffix)
+        except psutil.NoSuchProcess:
+            continue  # already gone — expected when teardown worked
+        except psutil.AccessDenied as exc:
+            logger.warning("Cannot reap leftover pid %s (permission)%s: %s", pid, suffix, exc)
+        except psutil.Error as exc:
+            logger.warning("Error reaping leftover pid %s%s: %s", pid, suffix, exc)
+
+
 def _remove_container(container: "docker.models.containers.Container") -> None:
     # Stop (SIGTERM, then SIGKILL after the grace period) and remove. The image
     # is kept — it is the warm-start cache for future deployments.
+    #
+    # Capture the container's host process tree BEFORE teardown: vLLM's
+    # EngineCore multiprocessing worker can outlive `stop`/`remove` (it
+    # reparents to init and keeps pinning VRAM with no container left to find),
+    # so we explicitly reap any survivor afterwards.
+    tree = _container_process_tree(container)
     try:
         container.stop(timeout=30)
     except NotFound:
-        return
+        pass
     except Exception as exc:
         logger.warning("Error stopping container %s: %s", container.id[:12], exc)
     try:
@@ -1771,6 +1844,8 @@ def _remove_container(container: "docker.models.containers.Container") -> None:
         pass
     except Exception as exc:
         logger.warning("Error removing container %s: %s", container.id[:12], exc)
+    if tree:
+        _kill_pids(tree, context=f"container {container.id[:12]}")
 
 
 def _restart_threshold(key: str) -> int:
@@ -2450,6 +2525,195 @@ def stop_container(container_id: str) -> dict[str, str]:
         )
     _remove_container(container)
     return {"status": "removed", "id": container_id}
+
+
+# ---------------------------------------------------------------------------
+# Rogue vLLM GPU process detection (orphans that outlived their container)
+# ---------------------------------------------------------------------------
+
+
+def _proc_name(pid: int) -> str:
+    """Best-effort process name for *pid* (empty string if it can't be read)."""
+    try:
+        return psutil.Process(pid).name() or ""
+    except psutil.Error:
+        return ""
+
+
+def _looks_like_vllm(name: str, pid: int | None = None) -> bool:
+    """True if a process is a vLLM worker.
+
+    vLLM titles its multiprocessing workers ``VLLM::EngineCore`` /
+    ``VLLM::Worker`` (the comm field is truncated to 15 chars). The name check
+    covers the common case; the cmdline check catches retitled or wrapper
+    processes.
+    """
+    low = (name or "").lower()
+    if "vllm" in low or "enginecore" in low:
+        return True
+    if pid:
+        try:
+            cmd = " ".join(psutil.Process(pid).cmdline()).lower()
+        except psutil.Error:
+            return False
+        return "vllm" in cmd or "enginecore" in cmd
+    return False
+
+
+def _gpu_processes_nvml() -> "list[dict[str, object]] | None":
+    """Per-PID GPU compute usage via NVML, or None if NVML is unavailable."""
+    try:
+        import pynvml  # type: ignore
+
+        pynvml.nvmlInit()
+    except Exception:
+        return None
+    out: list[dict[str, object]] = []
+    try:
+        for index in range(pynvml.nvmlDeviceGetCount()):
+            handle = pynvml.nvmlDeviceGetHandleByIndex(index)
+            try:
+                infos = pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
+            except Exception:
+                infos = []
+            for info in infos:
+                used = getattr(info, "usedGpuMemory", None)
+                # NVML reports a large sentinel when the value is unavailable.
+                mb = (
+                    round(used / (1024 * 1024))
+                    if isinstance(used, int) and 0 <= used < (1 << 60)
+                    else None
+                )
+                out.append(
+                    {
+                        "pid": int(info.pid),
+                        "gpu_index": index,
+                        "gpu_memory_mb": mb,
+                        "process_name": _proc_name(int(info.pid)),
+                    }
+                )
+    except Exception as exc:
+        logger.warning("NVML compute-process query failed: %s", exc)
+        return None
+    finally:
+        try:
+            pynvml.nvmlShutdown()
+        except Exception:
+            pass
+    return out
+
+
+def _gpu_processes_smi() -> "list[dict[str, object]]":
+    """Per-PID GPU compute usage via nvidia-smi (fallback when NVML is absent)."""
+    if not shutil.which("nvidia-smi"):
+        return []
+    try:
+        output = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=pid,used_gpu_memory,process_name",
+                "--format=csv,noheader,nounits",
+            ],
+            text=True,
+        )
+    except Exception as exc:
+        logger.warning("nvidia-smi compute-app query failed: %s", exc)
+        return []
+    out: list[dict[str, object]] = []
+    for line in output.strip().splitlines():
+        # process_name can contain commas/spaces, so keep the tail intact.
+        parts = line.split(",", 2)
+        if len(parts) < 3:
+            continue
+        pid = _smi_int(parts[0].strip())
+        if pid is None:
+            continue
+        out.append(
+            {
+                "pid": pid,
+                "gpu_index": None,
+                "gpu_memory_mb": _smi_int(parts[1].strip()),
+                "process_name": parts[2].strip(),
+            }
+        )
+    return out
+
+
+def _gpu_compute_processes() -> "list[dict[str, object]]":
+    """All GPU compute processes on this node (NVML preferred, nvidia-smi fallback)."""
+    procs = _gpu_processes_nvml()
+    return procs if procs is not None else _gpu_processes_smi()
+
+
+def _tracked_gpu_pids() -> dict[int, str]:
+    """``{pid: deployment_key}`` for processes owned by live deployments.
+
+    A vLLM GPU process under one of these trees backs a tracked deployment;
+    any other vLLM GPU process is a rogue orphan.
+    """
+    owned: dict[int, str] = {}
+    for key, container in list(_containers.items()):
+        for pid in _container_process_tree(container):
+            owned[pid] = key
+    return owned
+
+
+@app.get("/gpu-processes")
+def list_gpu_processes() -> dict[str, list[dict[str, object]]]:
+    """List vLLM GPU compute processes on this node.
+
+    ``tracked`` marks a process owned by a live deployment; an untracked vLLM
+    GPU process is "rogue" — e.g. an ``EngineCore`` worker that outlived its
+    container and still pins VRAM, safe to kill from the UI.
+    """
+    vllm = [
+        p
+        for p in _gpu_compute_processes()
+        if _looks_like_vllm(str(p.get("process_name") or ""), p.get("pid"))  # type: ignore[arg-type]
+    ]
+    if not vllm:
+        return {"processes": []}
+    owned = _tracked_gpu_pids()
+    processes: list[dict[str, object]] = []
+    for proc in vllm:
+        pid = proc.get("pid")
+        key = owned.get(pid) if isinstance(pid, int) else None
+        processes.append({**proc, "tracked": key is not None, "key": key})
+    return {"processes": processes}
+
+
+@app.post("/gpu-processes/{pid}/kill")
+def kill_gpu_process(pid: int) -> dict[str, object]:
+    """Kill a single rogue vLLM GPU process (SIGTERM, then SIGKILL)."""
+    try:
+        proc = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        raise HTTPException(status_code=404, detail="Process not found")
+    if pid in _tracked_gpu_pids():
+        raise HTTPException(
+            status_code=409,
+            detail="Owned by an active deployment — stop it from the Deployments table.",
+        )
+    if not _looks_like_vllm(_proc_name(pid), pid):
+        raise HTTPException(status_code=404, detail="Not a vLLM GPU process")
+    try:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except psutil.TimeoutExpired:
+            proc.kill()
+    except psutil.NoSuchProcess:
+        pass
+    except psutil.AccessDenied:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Permission denied killing pid {pid}: it is owned by another user "
+                f"(e.g. root, under rootful Docker). The agent runs as "
+                f"'{getpass.getuser()}' and needs elevated privileges to kill it."
+            ),
+        )
+    return {"status": "killed", "pid": pid}
 
 
 # ---------------------------------------------------------------------------

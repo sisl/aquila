@@ -304,6 +304,17 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
                           title="Untracked vLLM container(s) detected — click to manage"
                         />
                       )}
+                      {node.rogue_process_count != null && node.rogue_process_count > 0 && (
+                        <Chip
+                          icon={<WarningAmberRounded sx={{ fontSize: 13 }} />}
+                          label={`${node.rogue_process_count} orphan GPU`}
+                          size="small"
+                          color="warning"
+                          onClick={onManage ? () => onManage(node) : undefined}
+                          clickable={Boolean(onManage)}
+                          title="Orphaned vLLM GPU process(es) holding VRAM with no container — click to manage"
+                        />
+                      )}
                       {lowDisk && (
                         <Chip
                           icon={<WarningAmberRounded sx={{ fontSize: 13 }} />}

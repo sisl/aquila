@@ -9,7 +9,7 @@ from app.models.deployment_config import DeploymentConfig
 from app.models.node import Node
 from app.models.node_metric import NodeMetric
 from app.services import sync
-from app.services.node_state import rogue_container_counts
+from app.services.node_state import rogue_container_counts, rogue_process_counts
 from app.services.notify import _warned_expiring
 from app.ws.manager import manager
 
@@ -75,6 +75,7 @@ async def purge_database(
         _warned_expiring.clear()
     if "nodes" in selected:
         rogue_container_counts.clear()
+        rogue_process_counts.clear()
         sync._node_fail_counts.clear()
     return counts
 

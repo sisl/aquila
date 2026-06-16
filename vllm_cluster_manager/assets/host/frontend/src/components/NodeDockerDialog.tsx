@@ -25,13 +25,16 @@ import {
   fetchLocalModels,
   fetchLocalModelTransfers,
   fetchNodeContainers,
+  fetchNodeGpuProcesses,
   fetchNodeImages,
   fetchNodeModelCache,
+  killNodeGpuProcess,
   pruneNodeImages,
   pullLocalModel,
   stopNodeContainer,
   uploadLocalModelArchive,
   uploadLocalModelFolder,
+  type GpuProcess,
   type ImagePruneResult,
   type LocalModelUploadResult,
   type Node
@@ -78,6 +81,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
   const [actionError, setActionError] = useState("");
   const [pruneResult, setPruneResult] = useState<ImagePruneResult | null>(null);
   const [confirmStopId, setConfirmStopId] = useState<string | null>(null);
+  const [confirmKillPid, setConfirmKillPid] = useState<number | null>(null);
   const [confirmImageId, setConfirmImageId] = useState<string | null>(null);
   const [confirmPrune, setConfirmPrune] = useState(false);
   const [confirmModelName, setConfirmModelName] = useState<string | null>(null);
@@ -97,6 +101,13 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
   const containersQuery = useQuery({
     queryKey: ["node-containers", nodeId],
     queryFn: () => fetchNodeContainers(nodeId as number),
+    enabled,
+    refetchInterval: 5000
+  });
+
+  const gpuProcessesQuery = useQuery({
+    queryKey: ["node-gpu-processes", nodeId],
+    queryFn: () => fetchNodeGpuProcesses(nodeId as number),
     enabled,
     refetchInterval: 5000
   });
@@ -136,6 +147,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["node-containers", nodeId] });
+    queryClient.invalidateQueries({ queryKey: ["node-gpu-processes", nodeId] });
     queryClient.invalidateQueries({ queryKey: ["node-images", nodeId] });
     queryClient.invalidateQueries({ queryKey: ["node-model-cache", nodeId] });
     queryClient.invalidateQueries({ queryKey: ["node-local-models", nodeId] });
@@ -144,6 +156,15 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
 
   const stopMutation = useMutation({
     mutationFn: (containerId: string) => stopNodeContainer(nodeId as number, containerId),
+    onSuccess: () => {
+      setActionError("");
+      refresh();
+    },
+    onError: (error) => setActionError(errorMessage(error))
+  });
+
+  const killProcessMutation = useMutation({
+    mutationFn: (pid: number) => killNodeGpuProcess(nodeId as number, pid),
     onSuccess: () => {
       setActionError("");
       refresh();
@@ -286,6 +307,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
     uploadProgress !== null;
 
   const containers = containersQuery.data ?? [];
+  const gpuProcesses = gpuProcessesQuery.data ?? [];
   const images = imagesQuery.data ?? [];
   const cachedModels = modelCacheQuery.data ?? [];
   const localModels = localModelsQuery.data ?? [];
@@ -457,6 +479,86 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
                   <TableCell colSpan={5} sx={{ borderBottom: "none" }}>
                     <Typography variant="body2" className="muted" sx={{ py: 1 }}>
                       No vLLM containers on this node.
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        )}
+        </DialogSection>
+
+        <DialogSection
+          title="Orphaned GPU Processes"
+          hint={'vLLM GPU workers (e.g. "VLLM::EngineCore") that outlived their container and still pin VRAM, with no container left to stop. Killing one frees its GPU memory. Processes owned by another user (e.g. root under rootful Docker) need elevated privileges and will report a permission error.'}
+        >
+        {gpuProcessesQuery.isLoading ? (
+          <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+            <CircularProgress size={20} />
+          </Box>
+        ) : gpuProcessesQuery.isError ? (
+          <Typography variant="body2" color="error">
+            {errorMessage(gpuProcessesQuery.error)}
+          </Typography>
+        ) : (
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>PID</TableCell>
+                <TableCell>Process</TableCell>
+                <TableCell>GPU memory</TableCell>
+                <TableCell>GPU</TableCell>
+                <TableCell>Tracking</TableCell>
+                <TableCell align="right">Action</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {gpuProcesses.map((proc: GpuProcess) => (
+                <TableRow key={proc.pid} hover>
+                  <TableCell>
+                    <Mono>{proc.pid}</Mono>
+                  </TableCell>
+                  <TableCell>
+                    <Mono>{proc.process_name || "—"}</Mono>
+                  </TableCell>
+                  <TableCell>
+                    {proc.gpu_memory_mb != null
+                      ? `${(proc.gpu_memory_mb / 1024).toFixed(1)} GB`
+                      : "—"}
+                  </TableCell>
+                  <TableCell>{proc.gpu_index != null ? proc.gpu_index : "—"}</TableCell>
+                  <TableCell>
+                    <Chip
+                      label={proc.tracked ? "Active" : "Rogue"}
+                      size="small"
+                      color={proc.tracked ? "success" : "warning"}
+                    />
+                  </TableCell>
+                  <TableCell align="right">
+                    {proc.tracked ? (
+                      <Typography variant="body2" className="muted">
+                        managed
+                      </Typography>
+                    ) : (
+                      <AppButton
+                        type="button"
+                        variant="stop"
+                        className="app-button--small"
+                        ghost
+                        disabled={busy}
+                        onClick={() => setConfirmKillPid(proc.pid)}
+                      >
+                        Kill
+                      </AppButton>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {gpuProcesses.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} sx={{ borderBottom: "none" }}>
+                    <Typography variant="body2" className="muted" sx={{ py: 1 }}>
+                      No vLLM GPU processes on this node.
                     </Typography>
                   </TableCell>
                 </TableRow>
@@ -876,6 +978,20 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
           setConfirmStopId(null);
         }}
         onCancel={() => setConfirmStopId(null)}
+      />
+      <ConfirmDialog
+        open={confirmKillPid !== null}
+        title="Kill this GPU process?"
+        body="The orphaned vLLM process will be terminated (SIGTERM, then SIGKILL) and its GPU memory freed. This cannot be undone."
+        confirmLabel="Kill"
+        danger
+        onConfirm={() => {
+          if (confirmKillPid !== null) {
+            killProcessMutation.mutate(confirmKillPid);
+          }
+          setConfirmKillPid(null);
+        }}
+        onCancel={() => setConfirmKillPid(null)}
       />
       <ConfirmDialog
         open={confirmImageId !== null}

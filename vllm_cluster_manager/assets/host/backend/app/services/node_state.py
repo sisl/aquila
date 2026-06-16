@@ -8,3 +8,7 @@ the node read responses, so a backend restart simply rebuilds them.
 
 # node_id -> number of rogue (untracked) vLLM containers currently on the node.
 rogue_container_counts: dict[int, int] = {}
+
+# node_id -> number of rogue (orphaned) vLLM GPU processes — workers that
+# outlived their container and still pin VRAM with no container to find.
+rogue_process_counts: dict[int, int] = {}

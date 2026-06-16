@@ -11,10 +11,15 @@ from app.models.deployment import ACTIVE_STATUSES, Deployment
 from app.core.config import settings
 from app.services import runtime_settings
 from app.services.consul import consul_service
-from app.services.client_api import get_metrics, get_statuses, list_containers
+from app.services.client_api import (
+    get_metrics,
+    get_statuses,
+    list_containers,
+    list_gpu_processes,
+)
 from app.services.deployment_state import set_status
 from app.services.deployment_stop import stop_deployment_internal
-from app.services.node_state import rogue_container_counts
+from app.services.node_state import rogue_container_counts, rogue_process_counts
 from app.services.notify import _warned_expiring, notify
 from app.ws.manager import manager
 
@@ -386,6 +391,19 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
                             # Docker unreachable / transient error: keep last known.
                             logger.debug(
                                 "Container list from %s failed: %s", node.hostname, exc
+                            )
+
+                    # Surface orphaned vLLM GPU processes (no live container).
+                    if reachable:
+                        try:
+                            processes = await list_gpu_processes(node.ip_address, node.port)
+                            rogue_process_counts[node_id] = sum(
+                                1 for p in processes if not p.get("tracked")
+                            )
+                        except Exception as exc:
+                            # GPU/process query unavailable: keep last known.
+                            logger.debug(
+                                "GPU process list from %s failed: %s", node.hostname, exc
                             )
 
                     client_dep_map: dict[str, dict] = {

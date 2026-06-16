@@ -2164,6 +2164,238 @@ async def test_stop_container_not_found():
 
 
 # ---------------------------------------------------------------------------
+# Rogue vLLM GPU process detection + container child-process reaping
+# ---------------------------------------------------------------------------
+
+
+def _fake_proc(*, name="VLLM::EngineCore", cmdline=None, create_time=100.0):
+    proc = mock.MagicMock()
+    proc.name.return_value = name
+    proc.cmdline.return_value = cmdline if cmdline is not None else ["python", "-m", "vllm"]
+    proc.create_time.return_value = create_time
+    return proc
+
+
+class TestLooksLikeVllm:
+    def test_matches_engine_core_name(self):
+        assert client_main._looks_like_vllm("VLLM::EngineCore") is True
+
+    def test_matches_vllm_in_cmdline(self):
+        proc = _fake_proc(name="python", cmdline=["python", "-m", "vllm.entrypoints"])
+        with mock.patch.object(client_main.psutil, "Process", return_value=proc):
+            assert client_main._looks_like_vllm("python", 4242) is True
+
+    def test_rejects_unrelated(self):
+        proc = _fake_proc(name="postgres", cmdline=["postgres", "-D", "/data"])
+        with mock.patch.object(client_main.psutil, "Process", return_value=proc):
+            assert client_main._looks_like_vllm("postgres", 4242) is False
+
+
+def test_gpu_processes_smi_parses():
+    csv = "111, 40869, VLLM::EngineCore\n222, 1024, python -m something, weird\n"
+    with mock.patch.object(
+        client_main.shutil, "which", return_value="/usr/bin/nvidia-smi"
+    ), mock.patch.object(client_main.subprocess, "check_output", return_value=csv):
+        procs = client_main._gpu_processes_smi()
+    assert procs[0] == {
+        "pid": 111,
+        "gpu_index": None,
+        "gpu_memory_mb": 40869,
+        "process_name": "VLLM::EngineCore",
+    }
+    assert procs[1]["pid"] == 222
+    # process_name keeps its tail intact even when it contains commas.
+    assert procs[1]["process_name"] == "python -m something, weird"
+
+
+def test_gpu_processes_nvml_parses():
+    info = mock.MagicMock(pid=111, usedGpuMemory=40869 * 1024 * 1024)
+    fake_nvml = mock.MagicMock()
+    fake_nvml.nvmlDeviceGetCount.return_value = 1
+    fake_nvml.nvmlDeviceGetComputeRunningProcesses.return_value = [info]
+    with mock.patch.dict("sys.modules", {"pynvml": fake_nvml}), mock.patch.object(
+        client_main, "_proc_name", return_value="VLLM::EngineCore"
+    ):
+        procs = client_main._gpu_processes_nvml()
+    assert procs == [
+        {
+            "pid": 111,
+            "gpu_index": 0,
+            "gpu_memory_mb": 40869,
+            "process_name": "VLLM::EngineCore",
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_list_gpu_processes_marks_rogue_and_tracked():
+    procs = [
+        {"pid": 111, "gpu_index": 1, "gpu_memory_mb": 40000, "process_name": "VLLM::EngineCore"},
+        {"pid": 222, "gpu_index": 0, "gpu_memory_mb": 16000, "process_name": "VLLM::Worker"},
+        {"pid": 333, "gpu_index": 0, "gpu_memory_mb": 500, "process_name": "postgres"},
+    ]
+    with mock.patch.object(
+        client_main, "_gpu_compute_processes", return_value=procs
+    ), mock.patch.object(
+        client_main,
+        "_looks_like_vllm",
+        side_effect=lambda name, pid=None: "vllm" in name.lower(),
+    ), mock.patch.object(
+        client_main, "_tracked_gpu_pids", return_value={222: "model:abc"}
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/gpu-processes")
+    assert resp.status_code == 200
+    items = {p["pid"]: p for p in resp.json()["processes"]}
+    # postgres (not a vLLM process) is filtered out entirely.
+    assert set(items) == {111, 222}
+    assert items[111]["tracked"] is False
+    assert items[111]["key"] is None
+    assert items[222]["tracked"] is True
+    assert items[222]["key"] == "model:abc"
+
+
+@pytest.mark.anyio
+async def test_kill_gpu_process_success():
+    proc = _fake_proc()
+    with mock.patch.object(
+        client_main.psutil, "Process", return_value=proc
+    ), mock.patch.object(
+        client_main, "_tracked_gpu_pids", return_value={}
+    ), mock.patch.object(client_main, "_looks_like_vllm", return_value=True):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/gpu-processes/111/kill")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "killed", "pid": 111}
+    proc.terminate.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_kill_gpu_process_escalates_to_sigkill():
+    proc = _fake_proc()
+    proc.wait.side_effect = client_main.psutil.TimeoutExpired(1)
+    with mock.patch.object(
+        client_main.psutil, "Process", return_value=proc
+    ), mock.patch.object(
+        client_main, "_tracked_gpu_pids", return_value={}
+    ), mock.patch.object(client_main, "_looks_like_vllm", return_value=True):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/gpu-processes/111/kill")
+    assert resp.status_code == 200
+    proc.kill.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_kill_gpu_process_refuses_tracked():
+    proc = _fake_proc()
+    with mock.patch.object(
+        client_main.psutil, "Process", return_value=proc
+    ), mock.patch.object(client_main, "_tracked_gpu_pids", return_value={111: "k"}):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/gpu-processes/111/kill")
+    assert resp.status_code == 409
+    proc.terminate.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_kill_gpu_process_rejects_non_vllm():
+    proc = _fake_proc(name="postgres")
+    with mock.patch.object(
+        client_main.psutil, "Process", return_value=proc
+    ), mock.patch.object(
+        client_main, "_tracked_gpu_pids", return_value={}
+    ), mock.patch.object(client_main, "_looks_like_vllm", return_value=False):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/gpu-processes/111/kill")
+    assert resp.status_code == 404
+    proc.terminate.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_kill_gpu_process_permission_denied():
+    proc = _fake_proc()
+    proc.terminate.side_effect = client_main.psutil.AccessDenied()
+    with mock.patch.object(
+        client_main.psutil, "Process", return_value=proc
+    ), mock.patch.object(
+        client_main, "_tracked_gpu_pids", return_value={}
+    ), mock.patch.object(client_main, "_looks_like_vllm", return_value=True):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/gpu-processes/111/kill")
+    assert resp.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_kill_gpu_process_not_found():
+    with mock.patch.object(
+        client_main.psutil, "Process", side_effect=client_main.psutil.NoSuchProcess(999)
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/gpu-processes/999/kill")
+    assert resp.status_code == 404
+
+
+def test_remove_container_reaps_surviving_children():
+    container = mock.MagicMock()
+    container.id = "abc123def456"
+    snapshot = {1234: 100.0}
+    with mock.patch.object(
+        client_main, "_container_process_tree", return_value=snapshot
+    ), mock.patch.object(client_main, "_kill_pids") as kill:
+        client_main._remove_container(container)
+    container.stop.assert_called_once()
+    container.remove.assert_called_once_with(force=True)
+    kill.assert_called_once()
+    assert kill.call_args.args[0] == snapshot
+
+
+def test_kill_pids_kills_unchanged_process():
+    proc = _fake_proc(create_time=100.0)
+    with mock.patch.object(client_main.psutil, "Process", return_value=proc):
+        client_main._kill_pids({555: 100.0})
+    proc.kill.assert_called_once()
+
+
+def test_kill_pids_skips_recycled_pid():
+    proc = _fake_proc(create_time=999.0)  # create_time mismatch => pid recycled
+    with mock.patch.object(client_main.psutil, "Process", return_value=proc):
+        client_main._kill_pids({555: 100.0})
+    proc.kill.assert_not_called()
+
+
+def test_kill_pids_ignores_gone_process():
+    with mock.patch.object(
+        client_main.psutil, "Process", side_effect=client_main.psutil.NoSuchProcess(555)
+    ):
+        client_main._kill_pids({555: 100.0})  # must not raise
+
+
+def test_run_container_uses_init():
+    fake = mock.MagicMock()
+    fake.containers.get.side_effect = client_main.NotFound("none")
+    sentinel = object()
+    fake.containers.run.return_value = sentinel
+    with mock.patch.object(
+        client_main, "_runtime_client", return_value=fake
+    ), mock.patch.object(client_main, "_volumes", return_value={}):
+        result = client_main._run_container(
+            "img:1", ["--model", "m"], "vllm-x", {}, [], {"k": "v"}
+        )
+    assert result is sentinel
+    kwargs = fake.containers.run.call_args.kwargs
+    assert kwargs["init"] is True
+    assert kwargs["network_mode"] == "host"
+    assert kwargs["ipc_mode"] == "host"
+
+
+# ---------------------------------------------------------------------------
 # Image prune endpoint (/images/prune)
 # ---------------------------------------------------------------------------
 
