@@ -19,7 +19,7 @@ import time
 import zipfile
 
 import docker
-from docker.errors import APIError, ImageNotFound, NotFound
+from docker.errors import APIError, ContainerError, ImageNotFound, NotFound
 from docker.types import DeviceRequest
 import httpx
 from datetime import datetime, timezone
@@ -964,6 +964,18 @@ _FAILURE_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
         "raise gpu-memory-utilization.",
     ),
     (
+        "no_gpu",
+        re.compile(
+            r"Failed to infer device type|No CUDA runtime is found"
+            r"|0 active driver\(s\) found|could not select device driver",
+            re.I,
+        ),
+        "No GPU was visible inside the container. The NVIDIA Container Toolkit "
+        "is not wired into the runtime — run: sudo nvidia-ctk runtime configure "
+        "--runtime=docker && sudo systemctl restart docker (for Podman, generate "
+        "a CDI spec with nvidia-ctk cdi generate), then redeploy.",
+    ),
+    (
         "hf_auth",
         re.compile(
             r"401 Client Error|403 Client Error|GatedRepoError|gated repo"
@@ -1568,6 +1580,74 @@ def _podman_gpu_error() -> str | None:
     return None
 
 
+# Cached result of the Docker GPU passthrough probe: (timestamp, bool|None).
+# None = inconclusive (couldn't run the probe); True/False = passes / doesn't.
+_docker_gpu_probe_cache: "tuple[float, bool | None]" = (0.0, None)
+_DOCKER_GPU_PROBE_TTL = 60.0
+
+
+def _docker_gpu_probe() -> bool | None:
+    """Whether Docker can actually inject a GPU into a container (cached).
+
+    Returns True if a one-shot container sees an NVIDIA device, False if it
+    demonstrably can't (ran without the device, or the daemon rejected the GPU
+    request), and None when the probe itself couldn't run (e.g. the tiny probe
+    image isn't available offline) so the caller does not block the deploy.
+
+    The NVIDIA Container Toolkit always exposes ``/dev/nvidiactl`` inside a
+    container when a GPU is passed, so its presence is a reliable, runtime-,
+    legacy-hook- and CDI-agnostic signal.
+    """
+    global _docker_gpu_probe_cache
+    ts, cached = _docker_gpu_probe_cache
+    now = time.monotonic()
+    if ts > 0 and now - ts < _DOCKER_GPU_PROBE_TTL:
+        return cached
+    result: bool | None
+    try:
+        _runtime_client("docker").containers.run(
+            _CLEANUP_IMAGE,
+            ["test", "-e", "/dev/nvidiactl"],
+            device_requests=[DeviceRequest(count=-1, capabilities=[["gpu"]])],
+            remove=True,
+        )
+        result = True
+    except ContainerError:
+        # The container ran but the device node was absent — no GPU injected.
+        result = False
+    except APIError as exc:
+        msg = str(exc).lower()
+        # "could not select device driver ... with capabilities: [[gpu]]" is the
+        # daemon telling us the NVIDIA runtime isn't wired in.
+        if "could not select device driver" in msg or "nvidia" in msg:
+            result = False
+        else:
+            result = None
+    except Exception:
+        result = None
+    _docker_gpu_probe_cache = (now, result)
+    return result
+
+
+def _docker_gpu_error() -> str | None:
+    """Guidance when Docker can't pass GPUs on this node (None if it can/unknown).
+
+    Mirrors ``_podman_gpu_error``: without GPU passthrough the container starts
+    CPU-only and vLLM crash-loops on "Failed to infer device type" — fail fast
+    with a fix instead.
+    """
+    if _docker_gpu_probe() is False:
+        return (
+            "Docker cannot pass GPUs to containers on this node — a test "
+            "container saw no NVIDIA device. The NVIDIA Container Toolkit is "
+            "not wired into Docker. Install nvidia-container-toolkit if needed, "
+            "then run: sudo nvidia-ctk runtime configure --runtime=docker && "
+            "sudo systemctl restart docker. Verify with: docker run --rm "
+            "--gpus all <vllm-image> nvidia-smi, then redeploy."
+        )
+    return None
+
+
 def _volumes(compile_cache_dir: Path | None = None) -> dict[str, dict[str, str]]:
     volumes: dict[str, dict[str, str]] = {}
     hf_cache = Path(os.path.expanduser(settings.hf_cache_dir)).resolve()
@@ -1762,6 +1842,12 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
         )
     if runtime == "podman":
         gpu_reason = _podman_gpu_error()
+        if gpu_reason:
+            raise HTTPException(status_code=409, detail=gpu_reason)
+    elif runtime == "docker" and not payload.skip_resource_check:
+        # Fail fast (before the multi-GB image pull) when Docker can't inject a
+        # GPU, instead of launching a CPU-only container that crash-loops.
+        gpu_reason = _docker_gpu_error()
         if gpu_reason:
             raise HTTPException(status_code=409, detail=gpu_reason)
 
@@ -2691,6 +2777,10 @@ async def _monitor_container(
                 else:
                     _statuses[key]["status"] = "error"
             _containers.pop(key, None)
+            # Disk-pause keeps its public-port proxy (it wakes the model);
+            # any other terminal exit must release it.
+            if desired != "paused":
+                await _stop_proxy(key)
             break
         except Exception as exc:
             logger.warning("Error inspecting container for %s: %s", key, exc)
@@ -2706,6 +2796,7 @@ async def _monitor_container(
                 if key in _statuses:
                     _statuses[key]["status"] = "stopped"
                 _containers.pop(key, None)
+                await _stop_proxy(key)
                 break
             continue
 
@@ -2776,6 +2867,7 @@ async def _monitor_container(
                 # UI), and the pulled image stays cached for a fast redeploy.
                 await asyncio.to_thread(_remove_container, container)
                 _containers.pop(key, None)
+                await _stop_proxy(key)
                 break
 
         if status in ("exited", "dead"):

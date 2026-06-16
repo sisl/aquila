@@ -3009,3 +3009,136 @@ async def test_stop_deletes_compile_cache_and_proxy(logs_dir):
     assert resp.status_code == 200
     del_cache.assert_called_once_with("m:8000")
     stop_proxy.assert_awaited_once_with("m:8000")
+
+
+# ---------------------------------------------------------------------------
+# Docker GPU pre-flight guard + no-GPU failure classification
+# ---------------------------------------------------------------------------
+
+
+class TestDockerGpuProbe:
+    @staticmethod
+    def _client_raising(exc):
+        client = mock.MagicMock()
+        client.containers.run.side_effect = exc
+        return client
+
+    def test_true_when_device_present(self):
+        client = mock.MagicMock()  # containers.run returns normally
+        with mock.patch.object(client_main, "_docker_gpu_probe_cache", (0.0, None)), \
+            mock.patch.object(client_main, "_runtime_client", return_value=client):
+            assert client_main._docker_gpu_probe() is True
+            assert client_main._docker_gpu_error() is None
+
+    def test_false_on_container_error(self):
+        exc = client_main.ContainerError(object(), 1, ["test"], "alpine:3", b"")
+        with mock.patch.object(client_main, "_docker_gpu_probe_cache", (0.0, None)), \
+            mock.patch.object(
+                client_main, "_runtime_client", return_value=self._client_raising(exc)
+            ):
+            assert client_main._docker_gpu_probe() is False
+            msg = client_main._docker_gpu_error()
+            assert msg and "nvidia-ctk" in msg
+
+    def test_false_on_device_driver_apierror(self):
+        exc = client_main.APIError(
+            'could not select device driver "" with capabilities: [[gpu]]'
+        )
+        with mock.patch.object(client_main, "_docker_gpu_probe_cache", (0.0, None)), \
+            mock.patch.object(
+                client_main, "_runtime_client", return_value=self._client_raising(exc)
+            ):
+            assert client_main._docker_gpu_probe() is False
+
+    def test_inconclusive_when_probe_image_missing(self):
+        exc = client_main.ImageNotFound("alpine:3 not found")
+        with mock.patch.object(client_main, "_docker_gpu_probe_cache", (0.0, None)), \
+            mock.patch.object(
+                client_main, "_runtime_client", return_value=self._client_raising(exc)
+            ):
+            # Inconclusive must NOT block deploys.
+            assert client_main._docker_gpu_probe() is None
+            assert client_main._docker_gpu_error() is None
+
+    def test_result_is_cached(self):
+        client = mock.MagicMock()
+        with mock.patch.object(client_main, "_docker_gpu_probe_cache", (0.0, None)), \
+            mock.patch.object(client_main, "_runtime_client", return_value=client):
+            client_main._docker_gpu_probe()
+            client_main._docker_gpu_probe()
+        assert client.containers.run.call_count == 1  # second call hit the cache
+
+
+@pytest.mark.anyio
+async def test_start_rejected_when_docker_cannot_pass_gpus(logs_dir):
+    with mock.patch.object(
+        client_main, "_available_runtimes", return_value=["docker"]
+    ), mock.patch.object(
+        client_main, "_docker_gpu_error",
+        return_value="Docker cannot pass GPUs ... sudo nvidia-ctk runtime configure ...",
+    ), mock.patch.dict(client_main._statuses, {}, clear=True), \
+        mock.patch.dict(client_main._containers, {}, clear=True):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/deployments/start",
+                json={
+                    "model_name": "org/model",
+                    "port": 38911,
+                    "gpu_memory_fraction": 0.5,
+                    "vllm_version": "0.9.1",
+                },
+            )
+    assert resp.status_code == 409
+    assert "nvidia-ctk" in resp.json()["detail"]
+    # Fail-fast: no provisional status, no container, port left free for retry.
+    assert "org/model:38911" not in client_main._statuses
+    assert "org/model:38911" not in client_main._containers
+
+
+@pytest.mark.anyio
+async def test_start_skip_resource_check_bypasses_gpu_guard(logs_dir):
+    # The operator override must skip the GPU pre-flight entirely.
+    probe = mock.MagicMock()
+    with mock.patch.object(
+        client_main, "_available_runtimes", return_value=["docker"]
+    ), mock.patch.object(client_main, "_docker_gpu_error", probe), \
+        mock.patch.object(client_main, "_ensure_image", side_effect=RuntimeError("stop here")), \
+        mock.patch.dict(client_main._statuses, {}, clear=True), \
+        mock.patch.dict(client_main._containers, {}, clear=True):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(
+                "/deployments/start",
+                json={
+                    "model_name": "org/model",
+                    "port": 38912,
+                    "gpu_memory_fraction": 0.5,
+                    "vllm_version": "0.9.1",
+                    "skip_resource_check": True,
+                },
+            )
+    probe.assert_not_called()
+
+
+class TestClassifyNoGpu:
+    def test_failed_to_infer_device_type(self):
+        result = client_main._classify_failure(
+            ["RuntimeError: Failed to infer device type, please set VLLM_LOGGING_LEVEL=DEBUG"]
+        )
+        assert result is not None
+        code, msg = result
+        assert code == "no_gpu"
+        assert "nvidia-ctk" in msg
+
+    def test_no_cuda_runtime(self):
+        result = client_main._classify_failure(
+            ["W0616 torch/utils/cpp_extension.py:140] No CUDA runtime is found, using CUDA_HOME=..."]
+        )
+        assert result and result[0] == "no_gpu"
+
+    def test_could_not_select_device_driver(self):
+        result = client_main._classify_failure(
+            ['docker: could not select device driver "" with capabilities: [[gpu]].']
+        )
+        assert result and result[0] == "no_gpu"
