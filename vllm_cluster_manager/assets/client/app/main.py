@@ -2863,11 +2863,11 @@ async def _wait_awake(internal: object, cap: float) -> bool:
     return False
 
 
-async def _wait_port_reachable(port: object, timeout: float = 30) -> bool:
+async def _wait_port_reachable(port: object, timeout: float = 60) -> bool:
     if not isinstance(port, int):
         return False
     deadline = time.monotonic() + timeout
-    async with httpx.AsyncClient(timeout=5.0) as client:
+    async with httpx.AsyncClient(timeout=10.0) as client:
         while time.monotonic() < deadline:
             try:
                 resp = await client.get(f"http://127.0.0.1:{port}/is_sleeping")
@@ -3024,7 +3024,7 @@ async def _ensure_active(key: str, cap: float = _RESUME_WAIT_CAP_SECONDS) -> boo
             except Exception as exc:
                 logger.warning("Failed to remove mem limit for %s: %s", key, exc)
             internal = meta.get("internal_port")
-            reachable = await _wait_port_reachable(internal, timeout=30)
+            reachable = await _wait_port_reachable(internal, timeout=60)
             if reachable:
                 try:
                     await _vllm_wake(internal)
@@ -3036,6 +3036,9 @@ async def _ensure_active(key: str, cap: float = _RESUME_WAIT_CAP_SECONDS) -> boo
                 ok = False
             if not ok:
                 logger.info("Disk-sleep wake failed for %s, falling back to cold restart", key)
+                meta["disk_sleep"] = False
+                _containers.pop(key, None)
+                _clear_disk_sleep(key)
                 ok = await _relaunch_disk_paused(key, cap)
         else:
             ok = await _relaunch_disk_paused(key, cap)
@@ -3094,9 +3097,13 @@ async def _monitor_container(
     ever_ready = False
     while True:
         await asyncio.sleep(2)
+        if _containers.get(key) is not container:
+            break
         try:
             await asyncio.to_thread(container.reload)
         except NotFound:
+            if _containers.get(key) is not container:
+                break
             # Container was removed out from under us.
             desired = _statuses.get(key, {}).get("desired_state")
             if key in _statuses:

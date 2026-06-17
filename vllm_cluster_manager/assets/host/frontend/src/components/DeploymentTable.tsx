@@ -27,8 +27,10 @@ import {
 } from "@mui/material";
 
 import type { Deployment, DeploymentExtension } from "../services/api";
+import { useColumnVisibility, type ColumnDef } from "../hooks/useColumnVisibility";
 import { AppButton } from "./AppButton";
 import { AppDialog } from "./AppDialog";
+import { ColumnPicker } from "./ColumnPicker";
 import { EmptyState } from "./EmptyState";
 import { Mono } from "./Mono";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -68,6 +70,21 @@ type SortKey =
   | "usage"
   | "remaining"
   | "status";
+
+const DEPLOYMENT_COLUMNS: ColumnDef[] = [
+  { key: "model",     label: "Model",        alwaysVisible: true },
+  { key: "owner",     label: "Owner" },
+  { key: "node",      label: "Node" },
+  { key: "port",      label: "Port" },
+  { key: "vllm",      label: "vLLM",         compactHidden: true },
+  { key: "fraction",  label: "GPU Fraction",  compactHidden: true },
+  { key: "gpus",      label: "GPUs" },
+  { key: "args",      label: "Args",          compactHidden: true },
+  { key: "usage",     label: "Usage",         compactHidden: true },
+  { key: "remaining", label: "Remaining" },
+  { key: "status",    label: "Status" },
+  { key: "actions",   label: "Actions",       alwaysVisible: true },
+];
 
 type Remaining = { text: string; urgent: boolean };
 
@@ -212,7 +229,9 @@ export function DeploymentTable({
   // without horizontal scrolling (the side rail eats ~400px of the viewport).
   const muiTheme = useTheme();
   const compact = useMediaQuery(muiTheme.breakpoints.down("xl"));
-  const columnCount = compact ? 8 : 12;
+  const { visibleKeys, userHidden, toggle: toggleColumn, reset: resetColumns, isCustomized } =
+    useColumnVisibility("vcm:columns:deployments", DEPLOYMENT_COLUMNS, compact);
+  const columnCount = visibleKeys.size;
 
   // Tick once a second so the remaining-time countdown and the <1h highlight
   // stay live regardless of how often the deployments query refetches.
@@ -336,7 +355,15 @@ export function DeploymentTable({
 
   return (
     <>
-    <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1.5 }}>
+    <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 1, mb: 1.5 }}>
+      <ColumnPicker
+        columns={DEPLOYMENT_COLUMNS}
+        userHidden={userHidden}
+        compact={compact}
+        onToggle={toggleColumn}
+        onReset={resetColumns}
+        isCustomized={isCustomized}
+      />
       <TextField
         size="small"
         placeholder="Search model, owner, node, status…"
@@ -372,16 +399,16 @@ export function DeploymentTable({
         <TableHead>
           <TableRow>
             {sortableHeader("model", "Model")}
-            {sortableHeader("owner", "Owner")}
-            {sortableHeader("node", "Node")}
-            {sortableHeader("port", "Port")}
-            {!compact && sortableHeader("vllm", "vLLM")}
-            {!compact && sortableHeader("fraction", "GPU Fraction")}
-            <TableCell>GPUs</TableCell>
-            {!compact && <TableCell>Args</TableCell>}
-            {!compact && sortableHeader("usage", "Usage")}
-            {sortableHeader("remaining", "Remaining")}
-            {sortableHeader("status", "Status")}
+            {visibleKeys.has("owner") && sortableHeader("owner", "Owner")}
+            {visibleKeys.has("node") && sortableHeader("node", "Node")}
+            {visibleKeys.has("port") && sortableHeader("port", "Port")}
+            {visibleKeys.has("vllm") && sortableHeader("vllm", "vLLM")}
+            {visibleKeys.has("fraction") && sortableHeader("fraction", "GPU Fraction")}
+            {visibleKeys.has("gpus") && <TableCell>GPUs</TableCell>}
+            {visibleKeys.has("args") && <TableCell>Args</TableCell>}
+            {visibleKeys.has("usage") && sortableHeader("usage", "Usage")}
+            {visibleKeys.has("remaining") && sortableHeader("remaining", "Remaining")}
+            {visibleKeys.has("status") && sortableHeader("status", "Status")}
             <TableCell align="right">Actions</TableCell>
           </TableRow>
         </TableHead>
@@ -407,10 +434,10 @@ export function DeploymentTable({
                     </Box>
                   </Tooltip>
                 </TableCell>
-                <TableCell>{deployment.owner || "-"}</TableCell>
-                <TableCell>{nodeNameById[deployment.node_id] ?? deployment.node_id}</TableCell>
-                <TableCell>{deployment.port}</TableCell>
-                {!compact && (
+                {visibleKeys.has("owner") && <TableCell>{deployment.owner || "-"}</TableCell>}
+                {visibleKeys.has("node") && <TableCell>{nodeNameById[deployment.node_id] ?? deployment.node_id}</TableCell>}
+                {visibleKeys.has("port") && <TableCell>{deployment.port}</TableCell>}
+                {visibleKeys.has("vllm") && (
                   <TableCell>
                     <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.75 }}>
                       {deployment.vllm_version || "-"}
@@ -420,13 +447,15 @@ export function DeploymentTable({
                     </Box>
                   </TableCell>
                 )}
-                {!compact && <TableCell>{deployment.gpu_memory_fraction}</TableCell>}
-                <TableCell>
-                  {deployment.gpu_ids && deployment.gpu_ids.length > 0
-                    ? deployment.gpu_ids.join(", ")
-                    : "-"}
-                </TableCell>
-                {!compact && (
+                {visibleKeys.has("fraction") && <TableCell>{deployment.gpu_memory_fraction}</TableCell>}
+                {visibleKeys.has("gpus") && (
+                  <TableCell>
+                    {deployment.gpu_ids && deployment.gpu_ids.length > 0
+                      ? deployment.gpu_ids.join(", ")
+                      : "-"}
+                  </TableCell>
+                )}
+                {visibleKeys.has("args") && (
                   <TableCell>
                     {argRows.length > 0 ? (
                       <Mono block sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
@@ -439,7 +468,7 @@ export function DeploymentTable({
                     )}
                   </TableCell>
                 )}
-                {!compact && (
+                {visibleKeys.has("usage") && (
                   <TableCell>
                     {deployment.total_requests ? (
                       <Tooltip
@@ -481,78 +510,80 @@ export function DeploymentTable({
                     )}
                   </TableCell>
                 )}
-                <TableCell>
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
-                    {/* Fixed-width tabular text keeps the extend control at a
-                        consistent x-position across rows. */}
-                    <Typography
-                      variant="body2"
-                      sx={{
-                        color: remaining.urgent ? "error.main" : "inherit",
-                        fontWeight: remaining.urgent ? 600 : 400,
-                        whiteSpace: "nowrap",
-                        fontVariantNumeric: "tabular-nums",
-                        minWidth: 64
-                      }}
-                    >
-                      {remaining.text}
-                    </Typography>
-                    {onExtend &&
-                      deployment.duration_seconds != null &&
-                      (deployment.status === "running" ||
-                        deployment.status === "loading") && (
-                        <Tooltip title="Extend serve time" enterDelay={500}>
-                          <IconButton
-                            size="small"
-                            aria-label="Extend serve time"
-                            onClick={(event) => openExtendMenu(event, deployment)}
-                            sx={{ p: 0.25, color: "text.secondary" }}
-                          >
-                            <AddIcon sx={{ fontSize: 15 }} />
-                          </IconButton>
-                        </Tooltip>
-                      )}
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  <Tooltip
-                    title={deployment.last_error ?? ""}
-                    arrow
-                    disableHoverListener={!deployment.last_error}
-                  >
-                    <Box
-                      sx={{
-                        display: "inline-flex",
-                        flexDirection: "column",
-                        alignItems: "flex-start",
-                        gap: 0.25
-                      }}
-                    >
-                      <Chip
-                        label={statusLabel(deployment)}
-                        size="small"
-                        color={statusColor(deployment.status)}
-                      />
-                      {deployment.status === "error" && deployment.last_error && (
-                        <Typography
-                          variant="caption"
-                          onClick={() => onLogs(deployment.id)}
-                          sx={{
-                            color: "error.main",
-                            maxWidth: 180,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                            cursor: "pointer",
-                            "&:hover": { textDecoration: "underline" }
-                          }}
-                        >
-                          {deployment.last_error}
-                        </Typography>
-                      )}
+                {visibleKeys.has("remaining") && (
+                  <TableCell>
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          color: remaining.urgent ? "error.main" : "inherit",
+                          fontWeight: remaining.urgent ? 600 : 400,
+                          whiteSpace: "nowrap",
+                          fontVariantNumeric: "tabular-nums",
+                          minWidth: 64
+                        }}
+                      >
+                        {remaining.text}
+                      </Typography>
+                      {onExtend &&
+                        deployment.duration_seconds != null &&
+                        (deployment.status === "running" ||
+                          deployment.status === "loading") && (
+                          <Tooltip title="Extend serve time" enterDelay={500}>
+                            <IconButton
+                              size="small"
+                              aria-label="Extend serve time"
+                              onClick={(event) => openExtendMenu(event, deployment)}
+                              sx={{ p: 0.25, color: "text.secondary" }}
+                            >
+                              <AddIcon sx={{ fontSize: 15 }} />
+                            </IconButton>
+                          </Tooltip>
+                        )}
                     </Box>
-                  </Tooltip>
-                </TableCell>
+                  </TableCell>
+                )}
+                {visibleKeys.has("status") && (
+                  <TableCell>
+                    <Tooltip
+                      title={deployment.last_error ?? ""}
+                      arrow
+                      disableHoverListener={!deployment.last_error}
+                    >
+                      <Box
+                        sx={{
+                          display: "inline-flex",
+                          flexDirection: "column",
+                          alignItems: "flex-start",
+                          gap: 0.25
+                        }}
+                      >
+                        <Chip
+                          label={statusLabel(deployment)}
+                          size="small"
+                          color={statusColor(deployment.status)}
+                        />
+                        {deployment.status === "error" && deployment.last_error && (
+                          <Typography
+                            variant="caption"
+                            onClick={() => onLogs(deployment.id)}
+                            sx={{
+                              color: "error.main",
+                              maxWidth: 180,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              cursor: "pointer",
+                              "&:hover": { textDecoration: "underline" }
+                            }}
+                          >
+                            {deployment.last_error}
+                          </Typography>
+                        )}
+                      </Box>
+                    </Tooltip>
+                  </TableCell>
+                )}
                 <TableCell align="right">
                   <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
                     <AppButton

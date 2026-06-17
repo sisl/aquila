@@ -25,7 +25,9 @@ import {
 } from "@mui/material";
 
 import type { Node } from "../services/api";
+import { useColumnVisibility, type ColumnDef } from "../hooks/useColumnVisibility";
 import { AppButton } from "./AppButton";
+import { ColumnPicker } from "./ColumnPicker";
 import { EmptyState } from "./EmptyState";
 import { NodeMetricsPanel } from "./NodeMetricsPanel";
 
@@ -131,6 +133,16 @@ function GpuCell({ nodeId, gpus }: { nodeId: number; gpus: GpuUsage[] }) {
 
 type SortKey = "hostname" | "ip" | "port" | "status" | "heartbeat";
 
+const NODE_COLUMNS: ColumnDef[] = [
+  { key: "hostname",  label: "Hostname",       alwaysVisible: true },
+  { key: "ip",        label: "IP Address" },
+  { key: "port",      label: "Client Port",    compactHidden: true },
+  { key: "gpus",      label: "GPUs" },
+  { key: "status",    label: "Status" },
+  { key: "heartbeat", label: "Last Heartbeat", compactHidden: true },
+  { key: "actions",   label: "Actions",        alwaysVisible: true },
+];
+
 export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenance }: NodeTableProps) {
   const [expandedNodeId, setExpandedNodeId] = useState<number | null>(null);
 
@@ -138,7 +150,9 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
   // horizontal scrolling on tablets/laptops.
   const muiTheme = useTheme();
   const compact = useMediaQuery(muiTheme.breakpoints.down("lg"));
-  const columnCount = compact ? 5 : 7;
+  const { visibleKeys, userHidden, toggle: toggleColumn, reset: resetColumns, isCustomized } =
+    useColumnVisibility("vcm:columns:nodes", NODE_COLUMNS, compact);
+  const columnCount = visibleKeys.size;
 
   // Search + sort are purely presentational (same pattern as the
   // deployments table).
@@ -211,7 +225,15 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
 
   return (
     <>
-    <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1.5 }}>
+    <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 1, mb: 1.5 }}>
+      <ColumnPicker
+        columns={NODE_COLUMNS}
+        userHidden={userHidden}
+        compact={compact}
+        onToggle={toggleColumn}
+        onReset={resetColumns}
+        isCustomized={isCustomized}
+      />
       <TextField
         size="small"
         placeholder="Search hostname, IP, status…"
@@ -247,11 +269,11 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
         <TableHead>
           <TableRow>
             {sortableHeader("hostname", "Hostname")}
-            {sortableHeader("ip", "IP Address")}
-            {!compact && sortableHeader("port", "Client Port")}
-            <TableCell>GPUs</TableCell>
-            {sortableHeader("status", "Status")}
-            {!compact && sortableHeader("heartbeat", "Last Heartbeat", "right")}
+            {visibleKeys.has("ip") && sortableHeader("ip", "IP Address")}
+            {visibleKeys.has("port") && sortableHeader("port", "Client Port")}
+            {visibleKeys.has("gpus") && <TableCell>GPUs</TableCell>}
+            {visibleKeys.has("status") && sortableHeader("status", "Status")}
+            {visibleKeys.has("heartbeat") && sortableHeader("heartbeat", "Last Heartbeat", "right")}
             <TableCell align="right">Actions</TableCell>
           </TableRow>
         </TableHead>
@@ -264,98 +286,102 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
               <Fragment key={node.id}>
                 <TableRow hover>
                   <TableCell>{node.hostname}</TableCell>
-                  <TableCell>{node.ip_address}</TableCell>
-                  {!compact && <TableCell>{node.port ?? "-"}</TableCell>}
-                  <TableCell>
-                    {node.gpu_usage && node.gpu_usage.length > 0 ? (
-                      <GpuCell nodeId={node.id} gpus={node.gpu_usage} />
-                    ) : (
-                      <Typography variant="body2" color="text.secondary">
-                        -
-                      </Typography>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
-                      <Chip
-                        label={
-                          node.maintenance
-                            ? "maintenance"
-                            : node.status === "no-runtime"
-                              ? "no runtime"
-                              : node.status
-                        }
-                        size="small"
-                        color={statusColor(node)}
-                        title={
-                          node.status === "no-runtime"
-                            ? "No container runtime detected — install Docker or enable the Podman socket."
-                            : undefined
-                        }
-                      />
-                      {node.rogue_container_count != null && node.rogue_container_count > 0 && (
-                        <Chip
-                          icon={<WarningAmberRounded sx={{ fontSize: 13 }} />}
-                          label={`${node.rogue_container_count} rogue`}
-                          size="small"
-                          color="warning"
-                          onClick={onManage ? () => onManage(node) : undefined}
-                          clickable={Boolean(onManage)}
-                          title="Untracked vLLM container(s) detected — click to manage"
-                        />
+                  {visibleKeys.has("ip") && <TableCell>{node.ip_address}</TableCell>}
+                  {visibleKeys.has("port") && <TableCell>{node.port ?? "-"}</TableCell>}
+                  {visibleKeys.has("gpus") && (
+                    <TableCell>
+                      {node.gpu_usage && node.gpu_usage.length > 0 ? (
+                        <GpuCell nodeId={node.id} gpus={node.gpu_usage} />
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">
+                          -
+                        </Typography>
                       )}
-                      {node.rogue_process_count != null && node.rogue_process_count > 0 && (
+                    </TableCell>
+                  )}
+                  {visibleKeys.has("status") && (
+                    <TableCell>
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
                         <Chip
-                          icon={<WarningAmberRounded sx={{ fontSize: 13 }} />}
-                          label={`${node.rogue_process_count} orphan GPU`}
+                          label={
+                            node.maintenance
+                              ? "maintenance"
+                              : node.status === "no-runtime"
+                                ? "no runtime"
+                                : node.status
+                          }
                           size="small"
-                          color="warning"
-                          onClick={onManage ? () => onManage(node) : undefined}
-                          clickable={Boolean(onManage)}
-                          title="Orphaned vLLM GPU process(es) holding VRAM with no container — click to manage"
+                          color={statusColor(node)}
+                          title={
+                            node.status === "no-runtime"
+                              ? "No container runtime detected — install Docker or enable the Podman socket."
+                              : undefined
+                          }
                         />
-                      )}
-                      {node.rogue_artifact_count != null && node.rogue_artifact_count > 0 && (
-                        <Chip
-                          icon={<WarningAmberRounded sx={{ fontSize: 13 }} />}
-                          label={`${node.rogue_artifact_count} orphan cache`}
-                          size="small"
-                          color="warning"
-                          onClick={onManage ? () => onManage(node) : undefined}
-                          clickable={Boolean(onManage)}
-                          title="Orphaned warm-cache artifacts (RAM sleepers / disk compile caches) — click to manage"
-                        />
-                      )}
-                      {node.warm_offload_enabled &&
-                        node.ram_cache_used_mb != null &&
-                        node.ram_cache_used_mb > 0 && (
+                        {node.rogue_container_count != null && node.rogue_container_count > 0 && (
                           <Chip
-                            label={`RAM cache ${(node.ram_cache_used_mb / 1024).toFixed(1)}${
-                              node.ram_cache_limit_mb
-                                ? `/${(node.ram_cache_limit_mb / 1024).toFixed(0)}`
-                                : ""
-                            } GB`}
+                            icon={<WarningAmberRounded sx={{ fontSize: 13 }} />}
+                            label={`${node.rogue_container_count} rogue`}
                             size="small"
-                            color="info"
+                            color="warning"
                             onClick={onManage ? () => onManage(node) : undefined}
                             clickable={Boolean(onManage)}
-                            title="CPU RAM held by paused (RAM) models — click to manage warm cache"
+                            title="Untracked vLLM container(s) detected — click to manage"
                           />
                         )}
-                      {lowDisk && (
-                        <Chip
-                          icon={<WarningAmberRounded sx={{ fontSize: 13 }} />}
-                          label={`${freeGb!.toFixed(0)} GB disk free`}
-                          size="small"
-                          color="warning"
-                          onClick={onManage ? () => onManage(node) : undefined}
-                          clickable={Boolean(onManage)}
-                          title="Low disk space — click to manage the model/image caches"
-                        />
-                      )}
-                    </Box>
-                  </TableCell>
-                  {!compact && (
+                        {node.rogue_process_count != null && node.rogue_process_count > 0 && (
+                          <Chip
+                            icon={<WarningAmberRounded sx={{ fontSize: 13 }} />}
+                            label={`${node.rogue_process_count} orphan GPU`}
+                            size="small"
+                            color="warning"
+                            onClick={onManage ? () => onManage(node) : undefined}
+                            clickable={Boolean(onManage)}
+                            title="Orphaned vLLM GPU process(es) holding VRAM with no container — click to manage"
+                          />
+                        )}
+                        {node.rogue_artifact_count != null && node.rogue_artifact_count > 0 && (
+                          <Chip
+                            icon={<WarningAmberRounded sx={{ fontSize: 13 }} />}
+                            label={`${node.rogue_artifact_count} orphan cache`}
+                            size="small"
+                            color="warning"
+                            onClick={onManage ? () => onManage(node) : undefined}
+                            clickable={Boolean(onManage)}
+                            title="Orphaned warm-cache artifacts (RAM sleepers / disk compile caches) — click to manage"
+                          />
+                        )}
+                        {node.warm_offload_enabled &&
+                          node.ram_cache_used_mb != null &&
+                          node.ram_cache_used_mb > 0 && (
+                            <Chip
+                              label={`RAM cache ${(node.ram_cache_used_mb / 1024).toFixed(1)}${
+                                node.ram_cache_limit_mb
+                                  ? `/${(node.ram_cache_limit_mb / 1024).toFixed(0)}`
+                                  : ""
+                              } GB`}
+                              size="small"
+                              color="info"
+                              onClick={onManage ? () => onManage(node) : undefined}
+                              clickable={Boolean(onManage)}
+                              title="CPU RAM held by paused (RAM) models — click to manage warm cache"
+                            />
+                          )}
+                        {lowDisk && (
+                          <Chip
+                            icon={<WarningAmberRounded sx={{ fontSize: 13 }} />}
+                            label={`${freeGb!.toFixed(0)} GB disk free`}
+                            size="small"
+                            color="warning"
+                            onClick={onManage ? () => onManage(node) : undefined}
+                            clickable={Boolean(onManage)}
+                            title="Low disk space — click to manage the model/image caches"
+                          />
+                        )}
+                      </Box>
+                    </TableCell>
+                  )}
+                  {visibleKeys.has("heartbeat") && (
                     <TableCell align="right">{node.last_heartbeat_at ?? "-"}</TableCell>
                   )}
                   <TableCell align="right">

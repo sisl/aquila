@@ -3214,10 +3214,14 @@ class TestDiskSleep:
             mock.patch.dict(client_main._containers, {"m:8000": container}, clear=True), \
             mock.patch.object(client_main, "_ensure_fit", return_value=(True, [])), \
             mock.patch.object(client_main, "_wait_port_reachable", return_value=False), \
+            mock.patch.object(client_main, "_clear_disk_sleep") as clear, \
             mock.patch.object(client_main, "_relaunch_disk_paused", return_value=True) as relaunch:
             ok = await client_main._ensure_active("m:8000")
+            assert "m:8000" not in client_main._containers or \
+                client_main._containers["m:8000"] is not container
         assert ok is True
         relaunch.assert_awaited_once()
+        clear.assert_called()
 
     @pytest.mark.anyio
     async def test_ensure_active_disk_sleep_falls_back_when_dead(self):
@@ -3246,6 +3250,18 @@ class TestDiskSleep:
     def test_swap_available_mb_returns_zero_on_error(self):
         with mock.patch.object(psutil, "swap_memory", side_effect=RuntimeError):
             assert client_main._swap_available_mb() == 0.0
+
+    @pytest.mark.anyio
+    async def test_monitor_exits_when_container_superseded(self):
+        old_container = mock.MagicMock()
+        new_container = mock.MagicMock()
+        meta = _meta(status="loading", desired_state="running")
+        with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
+            mock.patch.dict(client_main._containers, {"m:8000": new_container}, clear=True), \
+            mock.patch.object(client_main, "_stop_proxy") as stop_proxy:
+            await client_main._monitor_container("m:8000", old_container)
+        stop_proxy.assert_not_awaited()
+        assert meta["status"] == "loading"
 
 
 class TestEnsureActive:
