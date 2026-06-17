@@ -1277,6 +1277,46 @@ class TestStartProvisionalStatus:
             assert resp.status_code == 500
             assert "org/model:38474" not in client_main._statuses
 
+    @pytest.mark.anyio
+    async def test_start_returns_offloaded_list(self, logs_dir):
+        # A warm-mode deploy that auto-offloads reports what it moved so the host
+        # can surface it transparently.
+        def fake_ensure(image_ref, extra_packages, log, progress_cb=None, runtime="docker"):
+            return image_ref
+
+        container = mock.MagicMock()
+        container.id = "cid"
+        offloaded = [{"key": "old:8000", "model_name": "old", "tier": "ram"}]
+        with mock.patch.object(
+            client_main, "_available_runtimes", return_value=["docker"]
+        ), mock.patch.object(client_main, "_ensure_image", fake_ensure), \
+            mock.patch.object(client_main, "_run_container", return_value=container), \
+            mock.patch.object(client_main, "_image_digest", return_value="sha256:d"), \
+            mock.patch.object(client_main, "_effective_runtime", return_value="docker"), \
+            mock.patch.object(client_main, "_docker_gpu_error", return_value=None), \
+            mock.patch.object(
+                client_main, "_ensure_fit", return_value=(True, offloaded)
+            ), mock.patch.object(client_main, "_start_proxy", mock.AsyncMock()), \
+            mock.patch("asyncio.create_task"), mock.patch.dict(
+                client_main._node_policy, {"warm_offload_enabled": True}, clear=False
+            ), mock.patch.dict(client_main._statuses, {}, clear=True), \
+            mock.patch.dict(client_main._containers, {}, clear=True), \
+            mock.patch.dict(client_main._logs, {}, clear=True):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/deployments/start",
+                    json={
+                        "model_name": "org/model",
+                        "port": 38477,
+                        "gpu_memory_fraction": 0.5,
+                        "vllm_version": "0.9.1",
+                        "gpu_ids": [0],
+                    },
+                )
+            assert resp.status_code == 200
+            assert resp.json()["offloaded"] == offloaded
+
 
 # ---------------------------------------------------------------------------
 # Persistent deployment logs
@@ -2793,6 +2833,17 @@ def test_pick_victim_none_when_all_protected():
         assert client_main._pick_victim([0], requester_key="new:9000") is None
 
 
+def test_pick_victim_skips_non_warm():
+    # A model deployed before warm cache was enabled (no sleep mode, no loopback
+    # internal_port + proxy) is not evictable — stopping it would leave it
+    # un-resumable, so it must never be chosen as a victim.
+    statuses = {"legacy:8000": _meta(warm=False, internal_port=None, last_active_at=1.0)}
+    with mock.patch.dict(client_main._statuses, statuses, clear=True), mock.patch.dict(
+        client_main._containers, {"legacy:8000": object()}, clear=True
+    ):
+        assert client_main._pick_victim([0], requester_key="new:9000") is None
+
+
 class TestEnsureFit:
     @pytest.mark.anyio
     async def test_warm_disabled_returns_none(self):
@@ -2805,22 +2856,24 @@ class TestEnsureFit:
         with mock.patch.dict(client_main._node_policy, {"warm_offload_enabled": True}), \
             mock.patch.dict(client_main._statuses, statuses, clear=True), \
             mock.patch.dict(client_main._containers, {"small:8000": object()}, clear=True):
-            assert await client_main._ensure_fit([0], 0.5, "new:9000") is True
+            assert await client_main._ensure_fit([0], 0.5, "new:9000") == (True, [])
 
     @pytest.mark.anyio
     async def test_evicts_lru_then_fits(self):
         statuses = {"old:8000": _meta(gpu_memory_fraction=0.9, last_active_at=1.0)}
 
         async def fake_pause(key, tier=None):
-            client_main._statuses[key]["pause_tier"] = "ram"
+            client_main._statuses[key]["pause_tier"] = tier or "ram"
 
         with mock.patch.dict(client_main._node_policy, {"warm_offload_enabled": True}), \
             mock.patch.dict(client_main._statuses, statuses, clear=True), \
             mock.patch.dict(client_main._containers, {"old:8000": object()}, clear=True), \
             mock.patch.object(client_main, "_pause", side_effect=fake_pause) as paused:
-            result = await client_main._ensure_fit([0], 0.5, "new:9000")
-        assert result is True
-        paused.assert_awaited_once_with("old:8000")
+            ok, offloaded = await client_main._ensure_fit([0], 0.5, "new:9000")
+        assert ok is True
+        # The planner assigns an explicit tier (RAM here, unlimited budget).
+        paused.assert_awaited_once_with("old:8000", tier="ram")
+        assert offloaded == [{"key": "old:8000", "model_name": "m", "tier": "ram"}]
 
     @pytest.mark.anyio
     async def test_no_eligible_victim_returns_false(self):
@@ -2828,7 +2881,152 @@ class TestEnsureFit:
         with mock.patch.dict(client_main._node_policy, {"warm_offload_enabled": True}), \
             mock.patch.dict(client_main._statuses, statuses, clear=True), \
             mock.patch.dict(client_main._containers, {"pinned:8000": object()}, clear=True):
-            assert await client_main._ensure_fit([0], 0.5, "new:9000") is False
+            assert await client_main._ensure_fit([0], 0.5, "new:9000") == (False, [])
+
+    @pytest.mark.anyio
+    async def test_non_warm_victim_never_sleeps(self):
+        # GPU 0 holds a non-warm legacy model and a warm one. Only the warm model
+        # is eligible; the legacy model must be left untouched (no /sleep to a
+        # None internal port, no 500).
+        statuses = {
+            "legacy:8000": _meta(
+                gpu_memory_fraction=0.5, warm=False, internal_port=None, last_active_at=1.0
+            ),
+            "warm:8001": _meta(
+                port=8001, internal_port=41001, gpu_memory_fraction=0.5, last_active_at=2.0
+            ),
+        }
+        with mock.patch.dict(
+            client_main._node_policy,
+            {"warm_offload_enabled": True, "ram_cache_limit_mb": None},
+            clear=False,
+        ), mock.patch.dict(client_main._statuses, statuses, clear=True), \
+            mock.patch.dict(
+                client_main._containers, {k: object() for k in statuses}, clear=True
+            ), mock.patch.object(client_main, "_vllm_sleep") as sleep, \
+            mock.patch.object(client_main, "_ram_estimate", return_value=4096.0):
+            ok, offloaded = await client_main._ensure_fit([0], 0.5, "new:9000")
+            # The legacy model must be left untouched (asserted inside the patch).
+            assert client_main._statuses["legacy:8000"].get("pause_tier") is None
+        assert ok is True
+        assert [o["key"] for o in offloaded] == ["warm:8001"]
+        sleep.assert_awaited_once()  # the warm victim, not the legacy one
+
+
+class TestPlanEviction:
+    def test_fits_without_eviction(self):
+        statuses = {"small:8000": _meta(gpu_memory_fraction=0.2)}
+        with mock.patch.dict(client_main._statuses, statuses, clear=True), \
+            mock.patch.dict(client_main._containers, {"small:8000": object()}, clear=True):
+            plan = client_main._plan_eviction([0], 0.5, "new:9000")
+        assert plan["fits"] is True
+        assert plan["plan"] == []
+        assert plan["reason"] is None
+
+    def test_warm_victim_to_ram_unlimited(self):
+        statuses = {"old:8000": _meta(gpu_memory_fraction=0.9, last_active_at=1.0)}
+        with mock.patch.dict(
+            client_main._node_policy, {"ram_cache_limit_mb": None}, clear=False
+        ), mock.patch.dict(client_main._statuses, statuses, clear=True), \
+            mock.patch.dict(client_main._containers, {"old:8000": object()}, clear=True):
+            plan = client_main._plan_eviction([0], 0.5, "new:9000")
+        assert plan["fits"] is True
+        assert [(s["key"], s["tier"]) for s in plan["plan"]] == [("old:8000", "ram")]
+
+    def test_warm_victim_to_disk_over_budget(self):
+        statuses = {"old:8000": _meta(gpu_memory_fraction=0.9, last_active_at=1.0)}
+        with mock.patch.dict(
+            client_main._node_policy, {"ram_cache_limit_mb": 100}, clear=False
+        ), mock.patch.object(client_main, "_ram_estimate", return_value=5000.0), \
+            mock.patch.dict(client_main._statuses, statuses, clear=True), \
+            mock.patch.dict(client_main._containers, {"old:8000": object()}, clear=True):
+            plan = client_main._plan_eviction([0], 0.5, "new:9000")
+        assert plan["fits"] is True
+        assert [(s["key"], s["tier"]) for s in plan["plan"]] == [("old:8000", "disk")]
+
+    def test_cascade_multiple_victims(self):
+        statuses = {
+            "a:8000": _meta(gpu_memory_fraction=0.6, last_active_at=1.0),
+            "b:8001": _meta(port=8001, gpu_memory_fraction=0.6, last_active_at=2.0),
+        }
+        with mock.patch.dict(
+            client_main._node_policy, {"ram_cache_limit_mb": None}, clear=False
+        ), mock.patch.dict(client_main._statuses, statuses, clear=True), \
+            mock.patch.dict(
+                client_main._containers, {k: object() for k in statuses}, clear=True
+            ):
+            plan = client_main._plan_eviction([0], 0.5, "new:9000")
+        # reserved 1.2; evict LRU a (->0.6, still over with +0.5), then b (->0.0).
+        assert plan["fits"] is True
+        assert [s["key"] for s in plan["plan"]] == ["a:8000", "b:8001"]
+
+    def test_nothing_eligible_sets_reason(self):
+        statuses = {
+            "legacy:8000": _meta(
+                gpu_memory_fraction=0.9, warm=False, internal_port=None
+            )
+        }
+        with mock.patch.dict(
+            client_main._node_policy, {"warm_offload_enabled": True}, clear=False
+        ), mock.patch.dict(client_main._statuses, statuses, clear=True), \
+            mock.patch.dict(client_main._containers, {"legacy:8000": object()}, clear=True):
+            plan = client_main._plan_eviction([0], 0.5, "new:9000")
+        assert plan["fits"] is False
+        assert plan["over_gpus"] == [0]
+        assert plan["reason"]
+
+
+class TestPlanEndpoint:
+    @pytest.mark.anyio
+    async def test_returns_plan_and_mutates_nothing(self):
+        statuses = {"old:8000": _meta(gpu_memory_fraction=0.9, last_active_at=1.0)}
+        with mock.patch.dict(
+            client_main._node_policy,
+            {"warm_offload_enabled": True, "ram_cache_limit_mb": None},
+            clear=False,
+        ), mock.patch.dict(client_main._statuses, statuses, clear=True), \
+            mock.patch.dict(client_main._containers, {"old:8000": object()}, clear=True):
+            before = dict(client_main._statuses["old:8000"])
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/deployments/plan",
+                    json={
+                        "model_name": "new",
+                        "port": 9000,
+                        "gpu_memory_fraction": 0.5,
+                        "gpu_ids": [0],
+                    },
+                )
+            after = dict(client_main._statuses["old:8000"])
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["warm_enabled"] is True
+        assert body["fits"] is True
+        assert [(s["key"], s["tier"]) for s in body["plan"]] == [("old:8000", "ram")]
+        assert before == after  # dry-run is read-only
+
+    @pytest.mark.anyio
+    async def test_warm_disabled_is_trivial(self):
+        with mock.patch.dict(
+            client_main._node_policy, {"warm_offload_enabled": False}, clear=False
+        ), mock.patch.dict(client_main._statuses, {}, clear=True):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/deployments/plan",
+                    json={
+                        "model_name": "new",
+                        "port": 9000,
+                        "gpu_memory_fraction": 0.5,
+                        "gpu_ids": [0],
+                    },
+                )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["warm_enabled"] is False
+        assert body["fits"] is True
+        assert body["plan"] == []
 
 
 class TestTierSelection:
@@ -2909,7 +3107,7 @@ class TestEnsureActive:
     async def test_ram_resume_wakes_and_runs(self):
         meta = _meta(pause_tier="ram", status="paused_ram")
         with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
-            mock.patch.object(client_main, "_ensure_fit", return_value=True), \
+            mock.patch.object(client_main, "_ensure_fit", return_value=(True, [])), \
             mock.patch.object(client_main, "_vllm_wake") as wake, \
             mock.patch.object(client_main, "_wait_awake", return_value=True):
             ok = await client_main._ensure_active("m:8000")
@@ -2928,7 +3126,7 @@ class TestEnsureActive:
     async def test_returns_false_when_cannot_fit(self):
         meta = _meta(pause_tier="ram", status="paused_ram")
         with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
-            mock.patch.object(client_main, "_ensure_fit", return_value=False):
+            mock.patch.object(client_main, "_ensure_fit", return_value=(False, [])):
             assert await client_main._ensure_active("m:8000") is False
         assert meta["pause_tier"] == "ram"  # stays paused
 

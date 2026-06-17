@@ -56,6 +56,10 @@ import {
   pauseDeployment,
   resumeDeployment,
   pinDeployment,
+  planDeployment,
+  type DeployPlan,
+  type DeploymentStart,
+  type OffloadItem,
   type RuntimeSettings
 } from "../services/api";
 import { connectWebSocket } from "../services/ws";
@@ -151,6 +155,10 @@ export function Dashboard() {
   const [trustRemoteCode, setTrustRemoteCode] = useState(false);
   const [maxFailedRestarts, setMaxFailedRestarts] = useState("");
   const [skipResourceCheck, setSkipResourceCheck] = useState(false);
+  // Warm cache: confirm dialog gate + what we told the agent to offload (so the
+  // success toast can report it, since the deploy response carries only the row).
+  const [confirmOffload, setConfirmOffload] = useState(false);
+  const pendingOffloadRef = useRef<OffloadItem[]>([]);
   const [extraPackagesText, setExtraPackagesText] = useState("");
   const [uploadingPackage, setUploadingPackage] = useState(false);
   const [uploadError, setUploadError] = useState("");
@@ -330,7 +338,14 @@ export function Dashboard() {
         return [deployment, ...existing];
       });
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
-      toast.success(`Deployment of ${deployment.model_name} started.`);
+      const moved = pendingOffloadRef.current;
+      const movedSuffix = moved.length
+        ? ` Offloaded ${moved
+            .map((m) => `${m.model_name} → ${m.tier === "ram" ? "RAM" : "disk"}`)
+            .join(", ")}.`
+        : "";
+      pendingOffloadRef.current = [];
+      toast.success(`Deployment of ${deployment.model_name} started.${movedSuffix}`);
       const defaults = queryClient.getQueryData<RuntimeSettings>(["settings"]);
       setModelName("");
       setPort(defaults?.default_port ?? 8001);
@@ -1083,6 +1098,69 @@ export function Dashboard() {
     hadServedNameConflict.current = has;
   }, [servedNameConflict]);
 
+  // Warm cache: when the selected node auto-offloads and the chosen GPU(s) look
+  // full, ask the agent which models it would move (and where) so we can show a
+  // transparent confirmation before deploying instead of hard-blocking.
+  const isWarmSelected = !!selectedNode && warmNodeIds.has(selectedNode.id);
+  const planEnabled =
+    isWarmSelected &&
+    gpuAllocationWarning !== null &&
+    canDeploy &&
+    gpuIds.length > 0;
+  const deployPlanQuery = useQuery({
+    queryKey: ["deploy-plan", nodeId, modelName.trim(), port, gpuFraction, gpuIds],
+    queryFn: () =>
+      planDeployment({
+        node_id: Number(nodeId),
+        model_name: modelName.trim(),
+        port,
+        gpu_memory_fraction: gpuFraction,
+        gpu_ids: gpuIds
+      }),
+    enabled: planEnabled
+  });
+  const offloadPlan: DeployPlan | undefined = planEnabled
+    ? deployPlanQuery.data
+    : undefined;
+  const planLoading = planEnabled && deployPlanQuery.isLoading;
+  // The agent says it fits (with or without moving anything aside).
+  const planFits = offloadPlan?.fits === true;
+  const willOffload = planFits && offloadPlan!.would_offload.length > 0;
+  const offloadBlocked = offloadPlan?.fits === false;
+
+  const buildStartPayload = (): DeploymentStart => ({
+    node_id: Number(nodeId),
+    model_name: modelName.trim(),
+    owner: owner.trim(),
+    duration_seconds: durationSeconds,
+    port,
+    gpu_memory_fraction: gpuFraction,
+    gpu_ids: gpuIds,
+    extra_args: extraArgs.length > 0 ? extraArgs : undefined,
+    env_vars: extraEnvVars.length > 0 ? extraEnvVars : undefined,
+    vllm_version: vllmVersion.trim() || undefined,
+    extra_packages:
+      cleanedExtraPackages.length > 0 ? cleanedExtraPackages : undefined,
+    engine_args: Object.keys(engineArgs).length > 0 ? engineArgs : undefined,
+    lora_modules: cleanedLoraModules.length > 0 ? cleanedLoraModules : undefined,
+    max_failed_restarts: parsedMaxFailedRestarts,
+    skip_resource_check: skipResourceCheck || undefined
+  });
+
+  const submitDeploy = () => {
+    // Remember the offload preview so onSuccess can name what moved.
+    pendingOffloadRef.current = willOffload ? offloadPlan!.would_offload : [];
+    startMutation.mutate(buildStartPayload());
+  };
+
+  const handleDeployClick = () => {
+    if (willOffload) {
+      setConfirmOffload(true);
+    } else {
+      submitDeploy();
+    }
+  };
+
   return (
     <Box className="app">
       <Box className="brand">
@@ -1697,9 +1775,35 @@ export function Dashboard() {
                   borderBottomRightRadius: "var(--radius-lg)"
                 }}
               >
-                {gpuAllocationWarning && (
+                {/* Over-allocation on a non-warm node (or when the plan lookup
+                    failed) is a hard block; on a warm node it becomes a
+                    transparent offload preview instead. */}
+                {gpuAllocationWarning &&
+                  (!isWarmSelected || (deployPlanQuery.isError && !planLoading)) && (
+                    <Alert severity="warning" sx={{ mb: 1.5 }}>
+                      {gpuAllocationWarning}
+                    </Alert>
+                  )}
+                {isWarmSelected && planLoading && (
+                  <Alert severity="info" sx={{ mb: 1.5 }}>
+                    Checking which models to offload to make room…
+                  </Alert>
+                )}
+                {isWarmSelected && willOffload && (
+                  <Alert severity="info" sx={{ mb: 1.5 }}>
+                    GPU is full — deploying will move{" "}
+                    {offloadPlan!.would_offload
+                      .map(
+                        (m) =>
+                          `${m.model_name} → ${m.tier === "ram" ? "RAM" : "disk"}`
+                      )
+                      .join(", ")}{" "}
+                    to warm cache. You'll confirm first.
+                  </Alert>
+                )}
+                {isWarmSelected && offloadBlocked && (
                   <Alert severity="warning" sx={{ mb: 1.5 }}>
-                    {gpuAllocationWarning}
+                    {offloadPlan!.blocked_reason ?? gpuAllocationWarning}
                   </Alert>
                 )}
                 {portInUseWarning && (
@@ -1735,32 +1839,49 @@ export function Dashboard() {
                   disabled={
                     !canDeploy ||
                     startMutation.isPending ||
-                    gpuAllocationWarning !== null ||
-                    servedNameConflict !== null
+                    servedNameConflict !== null ||
+                    planLoading ||
+                    // Over-allocation blocks deploy unless warm-offload can fit it
+                    // (planFits is true on a warm node once the agent confirms a plan).
+                    (gpuAllocationWarning !== null && !planFits)
                   }
-                  onClick={() =>
-                    startMutation.mutate({
-                      node_id: Number(nodeId),
-                      model_name: modelName.trim(),
-                      owner: owner.trim(),
-                      duration_seconds: durationSeconds,
-                      port,
-                      gpu_memory_fraction: gpuFraction,
-                      gpu_ids: gpuIds,
-                      extra_args: extraArgs.length > 0 ? extraArgs : undefined,
-                      env_vars: extraEnvVars.length > 0 ? extraEnvVars : undefined,
-                      vllm_version: vllmVersion.trim() || undefined,
-                      extra_packages: cleanedExtraPackages.length > 0 ? cleanedExtraPackages : undefined,
-                      engine_args: Object.keys(engineArgs).length > 0 ? engineArgs : undefined,
-                      lora_modules:
-                        cleanedLoraModules.length > 0 ? cleanedLoraModules : undefined,
-                      max_failed_restarts: parsedMaxFailedRestarts,
-                      skip_resource_check: skipResourceCheck || undefined
-                    })
-                  }
+                  onClick={handleDeployClick}
                 >
-                  {startMutation.isPending ? "Starting..." : "Deploy Model"}
+                  {startMutation.isPending
+                    ? "Starting..."
+                    : willOffload
+                      ? "Deploy & offload…"
+                      : "Deploy Model"}
                 </Button>
+                <ConfirmDialog
+                  open={confirmOffload}
+                  title="Offload models to deploy"
+                  body={
+                    <Box>
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        The selected GPU is full. Deploying{" "}
+                        <strong>{modelName.trim()}</strong> will move these models
+                        to warm cache:
+                      </Typography>
+                      <Box component="ul" sx={{ pl: 3, m: 0 }}>
+                        {(offloadPlan?.would_offload ?? []).map((m) => (
+                          <li key={`${m.model_name}-${m.tier}`}>
+                            <strong>{m.model_name}</strong> →{" "}
+                            {m.tier === "ram"
+                              ? "RAM (paused; wakes in ~1s on next call)"
+                              : "disk (stopped; reloaded from warm cache on next call)"}
+                          </li>
+                        ))}
+                      </Box>
+                    </Box>
+                  }
+                  confirmLabel="Deploy & offload"
+                  onConfirm={() => {
+                    setConfirmOffload(false);
+                    submitDeploy();
+                  }}
+                  onCancel={() => setConfirmOffload(false)}
+                />
               </Box>
             </Stack>
           </Paper>

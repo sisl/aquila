@@ -572,3 +572,116 @@ async def test_check_served_name_endpoint_reports_conflict_and_suggestion():
     assert taken["suggestion"] == "taken-2"
     free = await deployments_api.check_served_name("fresh", None, session)
     assert free == {"available": True}
+
+
+# ---------------------------------------------------------------------------
+# POST /deployments/plan (warm-offload deploy preview)
+# ---------------------------------------------------------------------------
+
+
+class _FakePlanSession:
+    """get() returns the node; execute() returns the seeded deployment rows."""
+
+    def __init__(self, node, deployments):
+        self.node = node
+        self._deployments = deployments
+
+    async def get(self, model, obj_id):
+        return self.node if self.node and self.node.id == obj_id else None
+
+    async def execute(self, stmt):
+        rows = list(self._deployments)
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows))
+
+
+def _plan_app(session):
+    test_app = FastAPI()
+    test_app.include_router(deployments_api.router, prefix="/deployments")
+
+    async def _override():
+        yield session
+
+    test_app.dependency_overrides[get_session] = _override
+    return test_app
+
+
+async def _post_plan(session):
+    transport = ASGITransport(app=_plan_app(session))
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.post(
+            "/deployments/plan",
+            json={
+                "node_id": 1,
+                "model_name": "new",
+                "port": 9001,
+                "gpu_memory_fraction": 0.5,
+                "gpu_ids": [0],
+            },
+        )
+
+
+@pytest.mark.anyio
+async def test_plan_endpoint_maps_keys_to_models():
+    node = SimpleNamespace(
+        id=1, ip_address="10.0.0.1", port=9000, warm_offload_enabled=True
+    )
+    dep = SimpleNamespace(
+        id=10, model_name="old", port=8000, node_id=1, status="running"
+    )
+    agent_plan = {
+        "fits": True,
+        "warm_enabled": True,
+        "plan": [{"key": "old:8000", "model_name": "old", "tier": "ram"}],
+        "reason": None,
+    }
+    with mock.patch.object(
+        deployments_api, "plan_deployment", new=mock.AsyncMock(return_value=agent_plan)
+    ):
+        resp = await _post_plan(_FakePlanSession(node, [dep]))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["fits"] is True
+    assert body["warm_enabled"] is True
+    assert body["would_offload"] == [
+        {"deployment_id": 10, "model_name": "old", "tier": "ram"}
+    ]
+    assert body["blocked_reason"] is None
+
+
+@pytest.mark.anyio
+async def test_plan_endpoint_blocked_sets_reason():
+    node = SimpleNamespace(
+        id=1, ip_address="10.0.0.1", port=9000, warm_offload_enabled=True
+    )
+    agent_plan = {
+        "fits": False,
+        "warm_enabled": True,
+        "plan": [],
+        "reason": "GPU 0 full and no warm model is eligible.",
+    }
+    with mock.patch.object(
+        deployments_api, "plan_deployment", new=mock.AsyncMock(return_value=agent_plan)
+    ):
+        resp = await _post_plan(_FakePlanSession(node, []))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["fits"] is False
+    assert body["blocked_reason"]
+    assert body["would_offload"] == []
+
+
+@pytest.mark.anyio
+async def test_plan_endpoint_warm_disabled_short_circuits():
+    node = SimpleNamespace(
+        id=1, ip_address="10.0.0.1", port=9000, warm_offload_enabled=False
+    )
+    # The agent must NOT be consulted when warm-offload is off for the node.
+    with mock.patch.object(
+        deployments_api, "plan_deployment", new=mock.AsyncMock()
+    ) as agent:
+        resp = await _post_plan(_FakePlanSession(node, []))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["warm_enabled"] is False
+    assert body["fits"] is True
+    agent.assert_not_awaited()

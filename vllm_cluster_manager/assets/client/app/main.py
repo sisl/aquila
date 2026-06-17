@@ -656,6 +656,18 @@ def _warm_for(payload: "StartRequest | None", meta: dict | None = None) -> bool:
     return node_on and engine_args.get("disable_sleep_mode") is not True
 
 
+def _warm_capable(meta: dict) -> bool:
+    """True if this deployment can be paused/woken by the warm-cache machinery.
+
+    Only models launched in warm mode have ``--enable-sleep-mode`` and a
+    loopback ``internal_port`` fronted by the agent proxy, so only they can be
+    slept to RAM or relaunched-to-disk and transparently woken on the next call.
+    A model deployed before warm-offload was enabled (no proxy, no sleep flags)
+    is *not* evictable — stopping it would leave it un-resumable.
+    """
+    return bool(meta.get("warm")) and bool(meta.get("internal_port"))
+
+
 def _cache_subdir(key: str) -> str:
     """Stable short id for a deployment's compile-cache directory."""
     return hashlib.sha256(key.encode()).hexdigest()[:16]
@@ -1795,7 +1807,7 @@ def check_port(port: int) -> dict[str, object]:
 
 
 @app.post("/deployments/start")
-async def start_deployment(payload: StartRequest) -> dict[str, str]:
+async def start_deployment(payload: StartRequest) -> dict[str, object]:
     key = f"{payload.model_name}:{payload.port}"
     if key in _containers:
         raise HTTPException(status_code=400, detail="Deployment already running")
@@ -1831,22 +1843,26 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
     # restarts on them. In warm mode the agent first tries to make room by
     # offloading the least-recently-used unpinned model instead of hard-failing.
     warm = _warm_for(payload)
+    offloaded: list[dict] = []
     if not payload.skip_resource_check:
-        if warm and _warm_enabled():
-            fit = await _ensure_fit(payload.gpu_ids or [], payload.gpu_memory_fraction, key)
-            if fit is False:
+        fit = await _ensure_fit(payload.gpu_ids or [], payload.gpu_memory_fraction, key)
+        if fit is None:
+            # Warm-offload disabled — fall back to the plain resource pre-check.
+            reason = _check_gpu_resources(payload)
+            if reason:
+                raise HTTPException(status_code=409, detail=reason)
+        else:
+            ok, offloaded = fit
+            if not ok:
                 raise HTTPException(
                     status_code=507,
                     detail=(
                         "GPU is full and no model is eligible for automatic offload "
-                        "(all candidates are pinned or actively serving). Pin fewer "
-                        "models, stop one, or lower the GPU memory fraction."
+                        "(all candidates are pinned, actively serving, or were "
+                        "deployed before warm cache was enabled). Pin fewer models, "
+                        "stop one, or lower the GPU memory fraction."
                     ),
                 )
-        else:
-            reason = _check_gpu_resources(payload)
-            if reason:
-                raise HTTPException(status_code=409, detail=reason)
 
     _logs[key] = deque(maxlen=2000)
     # Fresh run, fresh file (the previous run is kept as "<file>.1").
@@ -2037,7 +2053,12 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
         await _start_proxy(key, payload.port)
     asyncio.create_task(_stream_container_logs(key, container))
     asyncio.create_task(_monitor_container(key, container))
-    return {"status": "started", "key": key, "vllm_version": resolved_version}
+    return {
+        "status": "started",
+        "key": key,
+        "vllm_version": resolved_version,
+        "offloaded": offloaded,
+    }
 
 
 def _run_container(
@@ -2133,6 +2154,32 @@ async def pause_deployment(payload: PauseRequest) -> dict[str, object]:
     tier = payload.tier if payload.tier in ("ram", "disk") else None
     await _pause(payload.key, tier)
     return {"status": "paused", "key": payload.key, "tier": meta.get("pause_tier")}
+
+
+class PlanRequest(BaseModel):
+    """Dry-run a deployment: which models would be offloaded to make it fit."""
+
+    model_name: str
+    port: int
+    gpu_memory_fraction: float
+    gpu_ids: list[int] | None = None
+
+
+@app.post("/deployments/plan")
+def plan_deployment(payload: PlanRequest) -> dict[str, object]:
+    """Preview the warm-offload plan for a hypothetical deployment.
+
+    Read-only: mutates no state and acquires no locks. When warm-offload is off
+    the plan is trivially empty (the deploy path uses the plain resource check).
+    """
+    requester_key = f"{payload.model_name}:{payload.port}"
+    if not _warm_enabled():
+        return {"fits": True, "warm_enabled": False, "plan": [], "reason": None}
+    result = _plan_eviction(
+        payload.gpu_ids or [], payload.gpu_memory_fraction, requester_key
+    )
+    result["warm_enabled"] = True
+    return result
 
 
 class ResumeRequest(BaseModel):
@@ -2499,16 +2546,28 @@ def _is_busy(meta: dict) -> bool:
     return False
 
 
-def _pick_victim(gpus: "set[int] | list[int]", requester_key: str) -> str | None:
-    """LRU running, unpinned, not-busy deployment sharing one of *gpus*."""
+def _pick_victim(
+    gpus: "set[int] | list[int]",
+    requester_key: str,
+    exclude: "set[str] | None" = None,
+) -> str | None:
+    """LRU warm-capable, running, unpinned, not-busy deployment sharing *gpus*.
+
+    Only warm-capable models are eligible (see :func:`_warm_capable`); evicting a
+    non-warm model would leave it un-resumable. *exclude* lets the dry-run
+    planner skip victims it has already chosen in this simulation pass.
+    """
     gpuset = set(gpus)
+    skip = exclude or set()
     candidates: list[tuple[float, str]] = []
     for key, meta in _statuses.items():
-        if key == requester_key:
+        if key == requester_key or key in skip:
             continue
         if meta.get("pause_tier") or meta.get("pinned"):
             continue
         if key not in _containers or meta.get("status") != "running":
+            continue
+        if not _warm_capable(meta):
             continue
         ids = set(meta.get("gpu_ids") or _all_gpu_indices())
         if not (ids & gpuset):
@@ -2573,6 +2632,8 @@ async def _enforce_ram_budget(incoming_mb: float) -> None:
 
 async def _auto_tier(meta: dict) -> str:
     """Pause to RAM when it fits the node's RAM-cache budget, else to disk."""
+    if not _warm_capable(meta):
+        return "disk"  # not sleep-capable — RAM tier is impossible
     limit = _ram_limit_mb()
     if limit is None:
         return "ram"
@@ -2581,34 +2642,126 @@ async def _auto_tier(meta: dict) -> str:
     return "ram" if _ram_used_mb() + estimate <= limit else "disk"
 
 
+def _plan_eviction(
+    target_gpu_ids: "list[int]", fraction: float, requester_key: str
+) -> dict:
+    """Simulate which models would be offloaded to fit *fraction* on the GPUs.
+
+    Pure: reads ``_statuses`` but mutates nothing and acquires no locks, so it is
+    safe to call for a dry-run preview. Mirrors the selection (:func:`_pick_victim`,
+    LRU/unpinned/not-busy/warm-capable) and tiering (:func:`_auto_tier`, RAM until
+    the budget is hit — including LRU RAM→disk demotion — then disk) that
+    :func:`_ensure_fit` performs.
+
+    Returns ``{"fits": bool, "plan": [{"key","model_name","tier","warm"}],
+    "over_gpus": [...], "reason": str | None}``. ``reason`` is set only when the
+    request cannot be made to fit.
+    """
+    gpus = list(target_gpu_ids) or _all_gpu_indices()
+    if not gpus:
+        return {"fits": True, "plan": [], "over_gpus": [], "reason": None}
+
+    reserved = dict(_reserved_by_gpu())  # mutable working copy
+    ram_used = _ram_used_mb()
+    ram_limit = _ram_limit_mb()
+    # RAM-paused models, LRU first, for simulated demotion to disk.
+    sim_ram = sorted(
+        (float(m.get("last_active_at") or 0.0), float(m.get("paused_ram_mb") or 0.0))
+        for m in _statuses.values()
+        if m.get("pause_tier") == "ram"
+    )
+    chosen: list[dict] = []
+    chosen_keys: set[str] = set()
+    for _ in range(64):
+        over = [g for g in gpus if reserved.get(g, 0.0) + fraction > 1.0 + 1e-6]
+        if not over:
+            return {"fits": True, "plan": chosen, "over_gpus": [], "reason": None}
+        victim = _pick_victim(over, requester_key, exclude=chosen_keys)
+        if victim is None:
+            reason = (
+                f"GPU {', '.join(map(str, over))} full and no warm model is eligible "
+                "to offload — remaining models are pinned, actively serving, or were "
+                "deployed before warm cache was enabled. Pin fewer models, stop one, "
+                "lower the GPU memory fraction, or redeploy legacy models."
+            )
+            return {"fits": False, "plan": chosen, "over_gpus": over, "reason": reason}
+        meta = _statuses[victim]
+        # Tier: RAM only when it fits the budget (after demoting LRU RAM models),
+        # else disk. A warm-capable victim can always fall back to disk.
+        estimate = _ram_estimate(meta)
+        if ram_limit is None:
+            tier = "ram"
+            ram_used += estimate
+        else:
+            while ram_used + estimate > ram_limit and sim_ram:
+                ram_used -= sim_ram.pop(0)[1]
+            if ram_used + estimate <= ram_limit:
+                tier = "ram"
+                ram_used += estimate
+            else:
+                tier = "disk"
+        frac = float(meta.get("gpu_memory_fraction") or 0.0)
+        for gid in meta.get("gpu_ids") or _all_gpu_indices():
+            if gid in reserved:
+                reserved[gid] = max(0.0, reserved[gid] - frac)
+        chosen.append(
+            {
+                "key": victim,
+                "model_name": meta.get("model_name"),
+                "tier": tier,
+                "warm": True,
+            }
+        )
+        chosen_keys.add(victim)
+    over = [g for g in gpus if reserved.get(g, 0.0) + fraction > 1.0 + 1e-6]
+    return {
+        "fits": False,
+        "plan": chosen,
+        "over_gpus": over,
+        "reason": "Too many models to offload to fit this request.",
+    }
+
+
 async def _ensure_fit(
     target_gpu_ids: "list[int]", fraction: float, requester_key: str
-) -> bool | None:
-    """Make room on the target GPUs by offloading LRU models.
+) -> "tuple[bool, list[dict]] | None":
+    """Make room on the target GPUs by offloading LRU warm models.
 
-    Returns True when the request fits (possibly after evictions), False when
-    nothing is eligible to evict, and None when warm-offload is disabled (the
-    caller should fall back to the plain resource pre-check).
+    Plans the eviction (:func:`_plan_eviction`) under the per-GPU locks, then
+    executes it with explicit per-victim tiers so a non-warm model is never sent
+    to RAM. Returns ``(fits, offloaded)`` where *offloaded* is the list of
+    ``{"key","model_name","tier"}`` actually paused, or ``None`` when warm-offload
+    is disabled (the caller should fall back to the plain resource pre-check).
     """
     if not _warm_enabled():
         return None
     gpus = list(target_gpu_ids) or _all_gpu_indices()
     if not gpus:
-        return True  # only unified-memory metrics — can't reason, allow
+        return True, []  # only unified-memory metrics — can't reason, allow
     locks = [_gpu_lock(g) for g in sorted(set(gpus))]
     for lock in locks:
         await lock.acquire()
     try:
-        for _ in range(64):  # bounded; one eviction per turn
-            reserved = _reserved_by_gpu()
-            over = [g for g in gpus if reserved.get(g, 0.0) + fraction > 1.0 + 1e-6]
-            if not over:
-                return True
-            victim = _pick_victim(over, requester_key)
-            if victim is None:
-                return False
-            await _pause(victim)
-        return False
+        plan = _plan_eviction(gpus, fraction, requester_key)
+        if not plan["fits"]:
+            return False, []  # don't half-evict if it can't be made to fit
+        offloaded: list[dict] = []
+        for step in plan["plan"]:
+            meta = _statuses.get(step["key"])
+            if not meta or meta.get("pause_tier"):
+                continue
+            await _pause(step["key"], tier=step["tier"])
+            offloaded.append(
+                {
+                    "key": step["key"],
+                    "model_name": step.get("model_name"),
+                    "tier": meta.get("pause_tier") or step["tier"],
+                }
+            )
+        reserved = _reserved_by_gpu()
+        if any(reserved.get(g, 0.0) + fraction > 1.0 + 1e-6 for g in gpus):
+            return False, offloaded
+        return True, offloaded
     finally:
         for lock in locks:
             lock.release()
@@ -2675,6 +2828,10 @@ async def _pause(key: str, tier: str | None = None) -> None:
         return
     if tier is None:
         tier = await _auto_tier(meta)
+    # Defense in depth: a model launched without sleep mode can only go to disk,
+    # never RAM (else _pause_to_ram would POST /sleep to a None internal port).
+    if tier == "ram" and not _warm_capable(meta):
+        tier = "disk"
     if tier == "ram":
         await _pause_to_ram(meta, key)
     else:
@@ -2755,7 +2912,7 @@ async def _ensure_active(key: str, cap: float = _RESUME_WAIT_CAP_SECONDS) -> boo
         if not tier:
             return True  # already active
         fit = await _ensure_fit(meta.get("gpu_ids") or [], float(meta.get("gpu_memory_fraction") or 0.0), key)
-        if fit is False:
+        if fit is not None and not fit[0]:
             return False
         if tier == "ram":
             await _vllm_wake(meta.get("internal_port"))

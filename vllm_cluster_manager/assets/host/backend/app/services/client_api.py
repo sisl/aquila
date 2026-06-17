@@ -251,6 +251,34 @@ async def kill_gpu_process(
     _raise_for_client_error(response)
 
 
+async def plan_deployment(
+    node_ip: str,
+    node_port: int | None,
+    model_name: str,
+    port: int,
+    gpu_memory_fraction: float,
+    gpu_ids: list[int] | None = None,
+) -> dict[str, object]:
+    """Dry-run: ask the agent which warm models it would offload to fit a deploy."""
+    url = _satellite_url(node_ip, node_port, "/deployments/plan")
+    try:
+        response = await get_client().post(
+            url,
+            json={
+                "model_name": model_name,
+                "port": port,
+                "gpu_memory_fraction": gpu_memory_fraction,
+                "gpu_ids": gpu_ids,
+            },
+            timeout=15.0,
+        )
+    except httpx.RequestError as exc:
+        raise _unreachable(url, exc) from exc
+    if response.is_success:
+        return response.json()
+    _raise_for_client_error(response)
+
+
 async def pause_model(
     node_ip: str, node_port: int | None, key: str, tier: str | None = None
 ) -> dict[str, object]:

@@ -165,6 +165,33 @@ async def test_pause_model_posts_tier():
 
 
 @pytest.mark.anyio
+async def test_plan_deployment_posts_params():
+    seen = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+        seen["path"] = request.url.path
+        seen["body"] = _json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"fits": True, "warm_enabled": True, "plan": [], "reason": None},
+        )
+
+    with mock.patch.object(client_api, "get_client", return_value=_mock_transport(handler)):
+        result = await client_api.plan_deployment(
+            "10.0.0.1", 9000, "org/model", 8000, 0.5, [0, 1]
+        )
+    assert seen["path"] == "/deployments/plan"
+    assert seen["body"] == {
+        "model_name": "org/model",
+        "port": 8000,
+        "gpu_memory_fraction": 0.5,
+        "gpu_ids": [0, 1],
+    }
+    assert result["fits"] is True
+
+
+@pytest.mark.anyio
 async def test_resume_model_posts_key():
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/deployments/resume"

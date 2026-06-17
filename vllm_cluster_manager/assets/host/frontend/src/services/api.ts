@@ -490,6 +490,35 @@ export function resumeDeployment(deploymentId: number): Promise<Deployment> {
   return requestWithDetail(`/deployments/${deploymentId}/resume`, "POST");
 }
 
+// One model the agent would move out of the way for a new deployment.
+export type OffloadItem = {
+  deployment_id: number | null;
+  model_name: string;
+  tier: "ram" | "disk";
+};
+
+export type DeployPlan = {
+  // Whether the deploy fits, possibly after the listed offloads.
+  fits: boolean;
+  // False when the node has warm-offload turned off (nothing auto-offloaded).
+  warm_enabled: boolean;
+  would_offload: OffloadItem[];
+  // Set when fits is false: why no plan can make room.
+  blocked_reason: string | null;
+};
+
+// Dry-run a deploy: preview which warm models would be offloaded (and where)
+// before committing. Read-only on the node.
+export function planDeployment(payload: {
+  node_id: number;
+  model_name: string;
+  port: number;
+  gpu_memory_fraction: number;
+  gpu_ids?: number[];
+}): Promise<DeployPlan> {
+  return requestWithDetail<DeployPlan>(`/deployments/plan`, "POST", payload);
+}
+
 export function fetchNodeWarmArtifacts(nodeId: number): Promise<WarmArtifacts> {
   return requestWithDetail<WarmArtifacts>(`/nodes/${nodeId}/warm-artifacts`);
 }

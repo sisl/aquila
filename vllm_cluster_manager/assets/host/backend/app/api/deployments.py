@@ -16,9 +16,12 @@ from app.schemas.deployment import (
     DeploymentFromManifest,
     DeploymentPause,
     DeploymentPin,
+    DeploymentPlanRead,
+    DeploymentPlanRequest,
     DeploymentRead,
     DeploymentStart,
     DeploymentRestart,
+    OffloadItem,
 )
 from app.services import model_names
 from app.services import runtime_settings
@@ -27,6 +30,7 @@ from app.services.client_api import (
     get_logs,
     pause_model,
     pin_model,
+    plan_deployment,
     resume_model,
     start_model,
     stream_log_download,
@@ -325,6 +329,69 @@ async def start_deployment(
     payload: DeploymentStart, session: AsyncSession = Depends(get_session)
 ) -> DeploymentRead:
     return await _launch(payload, session)
+
+
+@router.post("/plan", response_model=DeploymentPlanRead)
+async def plan_deployment_preview(
+    payload: DeploymentPlanRequest, session: AsyncSession = Depends(get_session)
+) -> DeploymentPlanRead:
+    """Preview which warm models a deploy would auto-offload, before committing.
+
+    Read-only. Returns ``warm_enabled=False`` when the node has warm-offload off
+    (the deploy path then uses the plain resource check, offloading nothing).
+    """
+    node = await session.get(Node, payload.node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    if not node.warm_offload_enabled:
+        return DeploymentPlanRead(fits=True, warm_enabled=False)
+    try:
+        result = await plan_deployment(
+            node.ip_address,
+            node.port,
+            payload.model_name,
+            payload.port,
+            payload.gpu_memory_fraction,
+            payload.gpu_ids,
+        )
+    except HTTPException:
+        # Agent unreachable or errored — don't block the UI; deploy will still
+        # try (and the deploy path itself enforces capacity authoritatively).
+        return DeploymentPlanRead(fits=True, warm_enabled=True)
+    result = result or {}
+
+    # Map the agent's deployment keys ("model:port") back to host rows so the UI
+    # shows friendly names and can link the affected deployments.
+    rows = (
+        (
+            await session.execute(
+                select(Deployment).where(
+                    Deployment.node_id == node.id,
+                    Deployment.status.in_(ACTIVE_STATUSES),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_key = {_deployment_key(d): d for d in rows}
+    would_offload: list[OffloadItem] = []
+    for step in result.get("plan") or []:
+        row = by_key.get(step.get("key"))
+        would_offload.append(
+            OffloadItem(
+                deployment_id=row.id if row else None,
+                model_name=(row.model_name if row else step.get("model_name"))
+                or step.get("key", ""),
+                tier=step.get("tier", "disk"),
+            )
+        )
+    return DeploymentPlanRead(
+        fits=bool(result.get("fits", True)),
+        warm_enabled=bool(result.get("warm_enabled", True)),
+        would_offload=would_offload,
+        blocked_reason=result.get("reason"),
+    )
 
 
 @router.post("/stop/{deployment_id}", response_model=DeploymentRead)

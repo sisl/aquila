@@ -90,6 +90,33 @@ class DeploymentPause(BaseModel):
     tier: str | None = None
 
 
+class DeploymentPlanRequest(BaseModel):
+    """Dry-run a deploy to preview which warm models would be offloaded."""
+
+    node_id: int
+    model_name: str
+    port: int
+    gpu_memory_fraction: float
+    gpu_ids: list[int] | None = None
+
+
+class OffloadItem(BaseModel):
+    # deployment_id is None if the agent reports a model the host has no row for.
+    deployment_id: int | None = None
+    model_name: str
+    tier: str  # "ram" | "disk"
+
+
+class DeploymentPlanRead(BaseModel):
+    # Whether the deploy fits (possibly after the listed offloads).
+    fits: bool
+    # False when the node has warm-offload turned off (no auto-offload at all).
+    warm_enabled: bool
+    would_offload: list[OffloadItem] = []
+    # Set when fits is False: why no plan can make room.
+    blocked_reason: str | None = None
+
+
 class DeploymentFromManifest(BaseModel):
     """Redeploy from an exported manifest; runtime placement is chosen anew."""
 
