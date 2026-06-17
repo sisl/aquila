@@ -435,12 +435,43 @@ _ASSET_IGNORE = shutil.ignore_patterns(
 )
 
 
+def _refresh_tree(src: Path, dest: Path) -> None:
+    """Recursively copy *src* into *dest*, refreshing file CONTENTS only.
+
+    Unlike ``shutil.copytree``, this never replicates directory or file
+    metadata (mode/mtime/owner). That matters because containers we launch
+    bind-mount and ``chown`` some runtime subdirs to their own uid — e.g. the
+    Consul container takes ``infra/consul`` as uid 100. ``copytree`` would then
+    fail on every re-run (``copystat`` → ``os.utime`` on a dir we no longer own
+    → ``EPERM``). We only need current file contents in the runtime tree, so we
+    skip metadata entirely and overwrite files by unlinking first (which needs
+    only write permission on the parent dir, which we always hold).
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    entries = sorted(p.name for p in src.iterdir())
+    ignored = _ASSET_IGNORE(str(src), entries)
+    for name in entries:
+        if name in ignored:
+            continue
+        src_child = src / name
+        dest_child = dest / name
+        if src_child.is_dir() and not src_child.is_symlink():
+            _refresh_tree(src_child, dest_child)
+        else:
+            if dest_child.is_symlink() or dest_child.exists():
+                try:
+                    dest_child.unlink()
+                except OSError:
+                    pass
+            shutil.copyfile(src_child, dest_child, follow_symlinks=True)
+
+
 def copy_assets(kind: str, dest: Path) -> None:
     src_root = resources.files("vllm_cluster_manager.assets") / kind
     if not src_root.is_dir():
         raise RuntimeError(f"Missing packaged assets for {kind}.")
     with resources.as_file(src_root) as src_path:
-        shutil.copytree(src_path, dest, dirs_exist_ok=True, ignore=_ASSET_IGNORE)
+        _refresh_tree(Path(src_path), dest)
 
 
 def write_host_env_files(runtime_dir: Path, config: HostConfig) -> None:
@@ -493,7 +524,7 @@ def copy_assets_subdir(kind: str, subdir: str, dest: Path) -> None:
     if not src_root.is_dir():
         raise RuntimeError(f"Missing packaged assets for {kind}/{subdir}.")
     with resources.as_file(src_root) as src_path:
-        shutil.copytree(src_path, dest, dirs_exist_ok=True, ignore=_ASSET_IGNORE)
+        _refresh_tree(Path(src_path), dest)
 
 
 def write_client_env_file(runtime_dir: Path, config: ClientConfig) -> None:

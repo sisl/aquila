@@ -62,6 +62,7 @@ import {
   type OffloadItem,
   type RuntimeSettings
 } from "../services/api";
+import { copyToClipboard } from "../services/clipboard";
 import { connectWebSocket } from "../services/ws";
 import { StatusCard } from "../components/StatusCard";
 import { SectionLabel } from "../components/SectionLabel";
@@ -544,7 +545,7 @@ export function Dashboard() {
 
   const copyManifest = async () => {
     try {
-      await navigator.clipboard.writeText(manifestJson);
+      await copyToClipboard(manifestJson);
       toast.success("Manifest copied to clipboard.");
     } catch {
       toast.error("Clipboard unavailable.");

@@ -375,3 +375,67 @@ class TestInfraPersistence:
         ):
             cli_mod.run_clean(remove_docker=False, assume_yes=True)
         stop_infra.assert_called_once_with(data_root / "host", purge=True)
+
+
+# ---------------------------------------------------------------------------
+# Asset refresh (_refresh_tree / copy_assets) — content-only, no metadata
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_tree_updates_content_and_skips_ignored(tmp_path):
+    from vllm_cluster_manager import cli as cli_mod
+
+    src = tmp_path / "src"
+    (src / "sub").mkdir(parents=True)
+    (src / "a.txt").write_text("new")
+    (src / "sub" / "b.txt").write_text("nested")
+    (src / "__pycache__").mkdir()
+    (src / "__pycache__" / "x.pyc").write_text("junk")
+    (src / "mod.pyc").write_text("bytecode")
+
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "a.txt").write_text("stale")  # already present -> overwritten
+
+    cli_mod._refresh_tree(src, dest)
+
+    assert (dest / "a.txt").read_text() == "new"
+    assert (dest / "sub" / "b.txt").read_text() == "nested"
+    # Ignore patterns are honored (no stale bytecode in the runtime tree).
+    assert not (dest / "__pycache__").exists()
+    assert not (dest / "mod.pyc").exists()
+
+
+def test_refresh_tree_does_not_touch_directory_metadata(tmp_path, monkeypatch):
+    """Regression: a runtime subdir chowned by a container (e.g. Consul takes
+    infra/consul as uid 100) must not break a re-copy. copytree failed there via
+    copystat -> os.utime (EPERM); _refresh_tree must never call those."""
+    from vllm_cluster_manager import cli as cli_mod
+
+    src = tmp_path / "src"
+    (src / "infra" / "consul").mkdir(parents=True)
+    (src / "infra" / "consul" / "consul.hcl").write_text("config v2")
+    dest = tmp_path / "dest"
+    (dest / "infra" / "consul").mkdir(parents=True)
+    (dest / "infra" / "consul" / "consul.hcl").write_text("config v1 stale")
+
+    def _forbidden(name):
+        def _boom(*_a, **_k):
+            pytest.fail(f"{name} must not be called by _refresh_tree")
+
+        return _boom
+
+    monkeypatch.setattr(cli_mod.shutil, "copystat", _forbidden("shutil.copystat"))
+    monkeypatch.setattr(cli_mod.shutil, "copy2", _forbidden("shutil.copy2"))
+    monkeypatch.setattr(cli_mod.os, "utime", _forbidden("os.utime"))
+
+    cli_mod._refresh_tree(src, dest)
+
+    assert (dest / "infra" / "consul" / "consul.hcl").read_text() == "config v2"
+
+
+def test_copy_assets_subdir_missing_raises(tmp_path):
+    from vllm_cluster_manager import cli as cli_mod
+
+    with pytest.raises(RuntimeError, match="Missing packaged assets"):
+        cli_mod.copy_assets_subdir("host", "definitely-not-a-real-subdir", tmp_path / "d")

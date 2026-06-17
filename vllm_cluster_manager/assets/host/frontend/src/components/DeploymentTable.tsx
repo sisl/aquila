@@ -401,7 +401,9 @@ export function DeploymentTable({
                         whiteSpace: "nowrap"
                       }}
                     >
-                      {deployment.model_name}
+                      {(typeof deployment.engine_args?.served_model_name === "string" &&
+                        deployment.engine_args.served_model_name) ||
+                        deployment.model_name}
                     </Box>
                   </Tooltip>
                 </TableCell>

@@ -113,6 +113,10 @@ _RESUME_WAIT_CAP_SECONDS = 120.0
 # A vLLM process holding at least this much RSS with no/low VRAM is treated as
 # a candidate RAM sleeper when scanning for orphaned warm artifacts.
 _SLEEPER_RSS_MIN_MB = 1024
+# Sleep-swap disk tier: keep the container alive in sleep mode and squeeze
+# the cgroup memory limit so the kernel swaps out the model weights.
+_DISK_SLEEP_MEM_LIMIT_MB = 128
+_DISK_SLEEP_MIN_SWAP_MB = 4096
 
 _CLIENT_ROOT = Path(os.environ.get("VLLM_CLIENT_ROOT", Path.home() / ".vllm-client"))
 _PACKAGES_DIR = _CLIENT_ROOT / ".packages"
@@ -666,6 +670,61 @@ def _warm_capable(meta: dict) -> bool:
     is *not* evictable — stopping it would leave it un-resumable.
     """
     return bool(meta.get("warm")) and bool(meta.get("internal_port"))
+
+
+# ---------------------------------------------------------------------------
+# Sleep-swap disk tier helpers
+# ---------------------------------------------------------------------------
+
+
+def _swap_available_mb() -> float:
+    try:
+        return psutil.swap_memory().free / (1024 * 1024)
+    except Exception:
+        return 0.0
+
+
+def _set_container_mem_limit(container: "docker.models.containers.Container", limit_mb: int) -> None:
+    container.update(mem_limit=limit_mb * 1024 * 1024, memswap_limit=-1)
+
+
+def _remove_container_mem_limit(container: "docker.models.containers.Container") -> None:
+    container.update(mem_limit=0, memswap_limit=-1)
+
+
+def _is_container_alive(key: str) -> bool:
+    container = _containers.get(key)
+    if container is None:
+        return False
+    try:
+        container.reload()
+        return container.status == "running"
+    except Exception:
+        return False
+
+
+_PAUSE_STATE_FILE = ".pause_state"
+
+
+def _mark_disk_sleep(key: str) -> None:
+    d = _compile_cache_host_dir(key)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / _PAUSE_STATE_FILE).write_text("disk_sleep")
+
+
+def _clear_disk_sleep(key: str) -> None:
+    try:
+        (_compile_cache_host_dir(key) / _PAUSE_STATE_FILE).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _read_pause_state(key: str) -> str | None:
+    f = _compile_cache_host_dir(key) / _PAUSE_STATE_FILE
+    try:
+        return f.read_text().strip() or None
+    except OSError:
+        return None
 
 
 def _cache_subdir(key: str) -> str:
@@ -2046,6 +2105,7 @@ async def start_deployment(payload: StartRequest) -> dict[str, object]:
         "pinned": payload.pinned,
         "pause_tier": None,
         "paused_ram_mb": 0,
+        "disk_sleep": False,
         "last_active_at": time.monotonic(),
     }
     _log(f"[docker] Started container {name}")
@@ -2114,14 +2174,15 @@ async def stop_deployment(payload: StopRequest) -> dict[str, str]:
         meta["status"] = "stopping"
         meta["desired_state"] = "stopped"
         meta["pause_tier"] = None
+        meta["disk_sleep"] = False
 
     if container is not None:
         await asyncio.to_thread(_remove_container, container)
         _containers.pop(key, None)
     # Tear down the warm-mode public-port proxy, if any.
     await _stop_proxy(key)
-    # Delete this deployment's compiled artifacts; HF weights + image stay
-    # cached for a fast redeploy (the pause path keeps the compile cache).
+    # Delete this deployment's compiled artifacts (including the sleep-swap
+    # sidecar marker); HF weights + image stay cached for a fast redeploy.
     _delete_compile_cache(key)
     if meta is not None:
         meta["status"] = "stopped"
@@ -2813,12 +2874,35 @@ async def _pause_to_ram(meta: dict, key: str) -> None:
 async def _pause_to_disk(meta: dict, key: str) -> None:
     container = _containers.get(key)
     meta["desired_state"] = "paused"
+
+    if (
+        container is not None
+        and _warm_capable(meta)
+        and _swap_available_mb() >= _DISK_SLEEP_MIN_SWAP_MB
+    ):
+        try:
+            if meta.get("pause_tier") != "ram":
+                await _vllm_sleep(meta.get("internal_port"), level=1)
+            await asyncio.to_thread(_set_container_mem_limit, container, _DISK_SLEEP_MEM_LIMIT_MB)
+            _mark_disk_sleep(key)
+            meta["pause_tier"] = "disk"
+            meta["status"] = "paused_disk"
+            meta["paused_ram_mb"] = 0
+            meta["disk_sleep"] = True
+            logger.info("Paused %s to disk (sleep + cgroup swap)", key)
+            return
+        except Exception as exc:
+            logger.warning(
+                "Sleep-swap disk failed for %s, falling back to cold disk: %s", key, exc
+            )
+
     if container is not None:
         await asyncio.to_thread(_remove_container, container)
     _containers.pop(key, None)
     meta["pause_tier"] = "disk"
     meta["status"] = "paused_disk"
     meta["paused_ram_mb"] = 0
+    meta["disk_sleep"] = False
     logger.info("Paused %s to disk (container stopped, compile cache kept)", key)
 
 
@@ -2917,13 +3001,23 @@ async def _ensure_active(key: str, cap: float = _RESUME_WAIT_CAP_SECONDS) -> boo
         if tier == "ram":
             await _vllm_wake(meta.get("internal_port"))
             ok = await _wait_awake(meta.get("internal_port"), cap)
+        elif meta.get("disk_sleep") and _is_container_alive(key):
+            container = _containers[key]
+            try:
+                await asyncio.to_thread(_remove_container_mem_limit, container)
+            except Exception as exc:
+                logger.warning("Failed to remove mem limit for %s: %s", key, exc)
+            await _vllm_wake(meta.get("internal_port"))
+            ok = await _wait_awake(meta.get("internal_port"), cap)
         else:
             ok = await _relaunch_disk_paused(key, cap)
         if ok:
             meta["pause_tier"] = None
             meta["status"] = "running"
             meta["paused_ram_mb"] = 0
+            meta["disk_sleep"] = False
             meta["last_active_at"] = time.monotonic()
+            _clear_disk_sleep(key)
         return ok
 
 
@@ -3009,9 +3103,9 @@ async def _monitor_container(
                 break
             continue
 
-        # Disk-pause teardown: removing the container is in flight; the NotFound
-        # branch above finalises it. Don't treat the exit as a crash.
-        if desired == "paused":
+        # Cold disk-pause teardown: the container is being removed by
+        # _pause_to_disk; the NotFound branch above finalises it.
+        if desired == "paused" and not _statuses.get(key, {}).get("disk_sleep"):
             if status in ("exited", "dead"):
                 if key in _statuses:
                     _statuses[key]["status"] = "paused_disk"
@@ -3020,13 +3114,19 @@ async def _monitor_container(
                 break
             continue
 
-        # RAM-paused (sleep level 1): the container is alive but the engine is
-        # offloaded. Skip readiness/scrape so we don't flip it back to running;
-        # an unexpected exit still surfaces as an error.
-        if _statuses.get(key, {}).get("pause_tier") == "ram":
+        # Sleep-based pause (RAM or disk-sleep): container alive, engine
+        # offloaded. Skip readiness/scrape; unexpected exit → error.
+        meta_snap = _statuses.get(key, {})
+        tier = meta_snap.get("pause_tier")
+        is_sleep_paused = (tier == "ram") or (tier == "disk" and meta_snap.get("disk_sleep"))
+        if is_sleep_paused:
             if status in ("exited", "dead") and key in _statuses:
                 _statuses[key]["status"] = "error"
                 _statuses[key]["exit_code"] = state.get("ExitCode")
+                if _statuses[key].get("disk_sleep"):
+                    _statuses[key]["disk_sleep"] = False
+                    _clear_disk_sleep(key)
+                _containers.pop(key, None)
             continue
 
         # desired == "running" below.
@@ -3466,9 +3566,26 @@ def _reconcile_containers() -> None:
                 status["pinned"] = bool(manifest.get("pinned"))
                 status["pause_tier"] = None
                 status["paused_ram_mb"] = 0
+                status["disk_sleep"] = False
                 status["last_active_at"] = time.monotonic()
                 if warm:
                     status["internal_port"] = manifest.get("internal_port") or port
+                    if _read_pause_state(key) == "disk_sleep":
+                        started_at = container.attrs.get("State", {}).get("StartedAt", "")
+                        try:
+                            from datetime import datetime, timezone
+                            start_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                            uptime = (datetime.now(timezone.utc) - start_dt).total_seconds()
+                        except Exception:
+                            uptime = 0
+                        if uptime > 120:
+                            status["pause_tier"] = "disk"
+                            status["status"] = "paused_disk"
+                            status["disk_sleep"] = True
+                            status["desired_state"] = "paused"
+                            status["paused_ram_mb"] = 0
+                        else:
+                            _clear_disk_sleep(key)
         _statuses[key] = status
         if status.get("warm") and isinstance(port, int) and port > 0:
             asyncio.create_task(_start_proxy(key, port))

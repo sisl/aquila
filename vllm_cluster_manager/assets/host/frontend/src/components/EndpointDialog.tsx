@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import { copyToClipboard } from "../services/clipboard";
 import {
   Box,
   Chip,
@@ -180,7 +181,7 @@ export function EndpointDialog({
 
   const copy = async (label: string, text: string) => {
     try {
-      await navigator.clipboard.writeText(text);
+      await copyToClipboard(text);
       toast.success(`${label} copied.`);
     } catch {
       toast.error("Clipboard unavailable.");
