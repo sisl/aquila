@@ -115,7 +115,7 @@ _RESUME_WAIT_CAP_SECONDS = 120.0
 _SLEEPER_RSS_MIN_MB = 1024
 # Sleep-swap disk tier: keep the container alive in sleep mode and squeeze
 # the cgroup memory limit so the kernel swaps out the model weights.
-_DISK_SLEEP_MEM_LIMIT_MB = 128
+_DISK_SLEEP_MEM_LIMIT_MB = 256
 _DISK_SLEEP_MIN_SWAP_MB = 4096
 
 _CLIENT_ROOT = Path(os.environ.get("VLLM_CLIENT_ROOT", Path.home() / ".vllm-client"))
@@ -2863,6 +2863,22 @@ async def _wait_awake(internal: object, cap: float) -> bool:
     return False
 
 
+async def _wait_port_reachable(port: object, timeout: float = 30) -> bool:
+    if not isinstance(port, int):
+        return False
+    deadline = time.monotonic() + timeout
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        while time.monotonic() < deadline:
+            try:
+                resp = await client.get(f"http://127.0.0.1:{port}/is_sleeping")
+                if resp.status_code == 200:
+                    return True
+            except Exception:
+                pass
+            await asyncio.sleep(1)
+    return False
+
+
 async def _pause_to_ram(meta: dict, key: str) -> None:
     await _vllm_sleep(meta.get("internal_port"), level=1)
     meta["pause_tier"] = "ram"
@@ -3007,8 +3023,20 @@ async def _ensure_active(key: str, cap: float = _RESUME_WAIT_CAP_SECONDS) -> boo
                 await asyncio.to_thread(_remove_container_mem_limit, container)
             except Exception as exc:
                 logger.warning("Failed to remove mem limit for %s: %s", key, exc)
-            await _vllm_wake(meta.get("internal_port"))
-            ok = await _wait_awake(meta.get("internal_port"), cap)
+            internal = meta.get("internal_port")
+            reachable = await _wait_port_reachable(internal, timeout=30)
+            if reachable:
+                try:
+                    await _vllm_wake(internal)
+                    ok = await _wait_awake(internal, cap)
+                except Exception as exc:
+                    logger.warning("Disk-sleep wake failed for %s: %s", key, exc)
+                    ok = False
+            else:
+                ok = False
+            if not ok:
+                logger.info("Disk-sleep wake failed for %s, falling back to cold restart", key)
+                ok = await _relaunch_disk_paused(key, cap)
         else:
             ok = await _relaunch_disk_paused(key, cap)
         if ok:

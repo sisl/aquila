@@ -3190,6 +3190,7 @@ class TestDiskSleep:
         with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
             mock.patch.dict(client_main._containers, {"m:8000": container}, clear=True), \
             mock.patch.object(client_main, "_ensure_fit", return_value=(True, [])), \
+            mock.patch.object(client_main, "_wait_port_reachable", return_value=True), \
             mock.patch.object(client_main, "_vllm_wake") as wake, \
             mock.patch.object(client_main, "_wait_awake", return_value=True), \
             mock.patch.object(client_main, "_relaunch_disk_paused") as relaunch, \
@@ -3203,6 +3204,20 @@ class TestDiskSleep:
         assert meta["pause_tier"] is None
         assert meta["status"] == "running"
         assert meta["disk_sleep"] is False
+
+    @pytest.mark.anyio
+    async def test_ensure_active_disk_sleep_falls_back_on_unreachable(self):
+        meta = _meta(pause_tier="disk", status="paused_disk", disk_sleep=True)
+        container = mock.MagicMock()
+        container.status = "running"
+        with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
+            mock.patch.dict(client_main._containers, {"m:8000": container}, clear=True), \
+            mock.patch.object(client_main, "_ensure_fit", return_value=(True, [])), \
+            mock.patch.object(client_main, "_wait_port_reachable", return_value=False), \
+            mock.patch.object(client_main, "_relaunch_disk_paused", return_value=True) as relaunch:
+            ok = await client_main._ensure_active("m:8000")
+        assert ok is True
+        relaunch.assert_awaited_once()
 
     @pytest.mark.anyio
     async def test_ensure_active_disk_sleep_falls_back_when_dead(self):
