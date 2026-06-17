@@ -416,6 +416,53 @@ def _runtime_client(runtime: str) -> "docker.DockerClient":
     raise ValueError(f"Unknown container runtime: {runtime}")
 
 
+def _daemon_flavor(client: "docker.DockerClient") -> str:
+    """Best-effort 'podman' or 'docker' for the daemon behind *client*.
+
+    The Docker and Podman REST APIs are wire-compatible, so a client labelled
+    "docker" can actually be talking to Podman (most commonly when DOCKER_HOST
+    points at a Podman socket). GPU passthrough differs between them — Docker
+    honours ``capabilities=[["gpu"]]`` (``--gpus``); Podman only CDI — so callers
+    must pick the device-request form by the daemon they are *really* talking to.
+    """
+    try:
+        info = client.version()
+    except Exception:
+        return "docker"  # assume Docker when the version probe is unavailable
+    if any(
+        "podman" in str(c.get("Name", "")).lower()
+        for c in (info.get("Components") or [])
+    ):
+        return "podman"
+    if "podman" in str(info.get("Version", "")).lower():
+        return "podman"
+    if "podman" in str((info.get("Platform") or {}).get("Name", "")).lower():
+        return "podman"
+    return "docker"
+
+
+def _effective_runtime(runtime: str) -> str:
+    """Actual daemon flavor behind *runtime*'s client; warns on a mismatch.
+
+    Lets the launch path stay correct even when the "docker" endpoint is really
+    Podman (or vice versa) instead of silently sending the wrong GPU request.
+    """
+    try:
+        actual = _daemon_flavor(_runtime_client(runtime))
+    except Exception:
+        return runtime
+    if actual != runtime:
+        logger.warning(
+            "Container runtime '%s' resolves to a %s daemon on this node — GPU "
+            "passthrough works differently between them. This usually means "
+            "DOCKER_HOST points at a Podman socket. Using %s-style GPU requests; "
+            "to use real Docker, unset DOCKER_HOST and restart the agent, or set "
+            "this node's runtime to '%s'.",
+            runtime, actual, actual, actual,
+        )
+    return actual
+
+
 # Streaming a multi-GB image between the two stores takes minutes; the regular
 # clients keep docker-py's 60s default so probes fail fast.
 _TRANSFER_TIMEOUT_S = 3600
@@ -1840,11 +1887,16 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
                 f"{', '.join(available_runtimes) or 'none'})."
             ),
         )
-    if runtime == "podman":
+    # GPU passthrough differs by daemon (Docker: --gpus/capabilities; Podman:
+    # CDI), and the two REST APIs are wire-compatible, so a "docker" endpoint can
+    # actually be Podman (e.g. DOCKER_HOST points at a Podman socket). Pick the
+    # GPU form by the daemon we are REALLY talking to, not the label.
+    gpu_runtime = _effective_runtime(runtime)
+    if gpu_runtime == "podman":
         gpu_reason = _podman_gpu_error()
         if gpu_reason:
             raise HTTPException(status_code=409, detail=gpu_reason)
-    elif runtime == "docker" and not payload.skip_resource_check:
+    elif gpu_runtime == "docker" and not payload.skip_resource_check:
         # Fail fast (before the multi-GB image pull) when Docker can't inject a
         # GPU, instead of launching a CPU-only container that crash-loops.
         gpu_reason = _docker_gpu_error()
@@ -1939,7 +1991,7 @@ async def start_deployment(payload: StartRequest) -> dict[str, str]:
             command,
             name,
             environment,
-            _device_requests(payload.gpu_ids, runtime),
+            _device_requests(payload.gpu_ids, gpu_runtime),
             labels,
             runtime,
             compile_cache_dir,
@@ -2676,7 +2728,7 @@ async def _relaunch_disk_paused(key: str, cap: float) -> bool:
         command,
         name,
         environment,
-        _device_requests(gpu_ids, runtime or "docker"),
+        _device_requests(gpu_ids, _effective_runtime(runtime or "docker")),
         labels,
         runtime or "docker",
         _compile_cache_host_dir(key),

@@ -3142,3 +3142,86 @@ class TestClassifyNoGpu:
             ['docker: could not select device driver "" with capabilities: [[gpu]].']
         )
         assert result and result[0] == "no_gpu"
+
+
+# ---------------------------------------------------------------------------
+# Daemon-flavor detection (Docker vs Podman behind a "docker" endpoint)
+# ---------------------------------------------------------------------------
+
+
+class TestDaemonFlavor:
+    def test_detects_podman_via_components(self):
+        client = mock.MagicMock()
+        client.version.return_value = {
+            "Components": [{"Name": "Podman Engine", "Version": "5.4.0"}]
+        }
+        assert client_main._daemon_flavor(client) == "podman"
+
+    def test_detects_docker(self):
+        client = mock.MagicMock()
+        client.version.return_value = {
+            "Components": [{"Name": "Engine", "Version": "27.0"}],
+            "Platform": {"Name": "Docker Engine - Community"},
+        }
+        assert client_main._daemon_flavor(client) == "docker"
+
+    def test_detects_podman_via_platform_name(self):
+        client = mock.MagicMock()
+        client.version.return_value = {"Platform": {"Name": "podman"}}
+        assert client_main._daemon_flavor(client) == "podman"
+
+    def test_defaults_docker_when_version_unavailable(self):
+        client = mock.MagicMock()
+        client.version.side_effect = RuntimeError("boom")
+        assert client_main._daemon_flavor(client) == "docker"
+
+
+class TestEffectiveRuntime:
+    def test_docker_label_actually_podman(self):
+        with mock.patch.object(client_main, "_runtime_client", return_value=mock.MagicMock()), \
+            mock.patch.object(client_main, "_daemon_flavor", return_value="podman"):
+            assert client_main._effective_runtime("docker") == "podman"
+
+    def test_matching_label_passthrough(self):
+        with mock.patch.object(client_main, "_runtime_client", return_value=mock.MagicMock()), \
+            mock.patch.object(client_main, "_daemon_flavor", return_value="docker"):
+            assert client_main._effective_runtime("docker") == "docker"
+
+    def test_returns_label_when_client_unavailable(self):
+        with mock.patch.object(
+            client_main, "_runtime_client", side_effect=RuntimeError("down")
+        ):
+            assert client_main._effective_runtime("docker") == "docker"
+
+
+@pytest.mark.anyio
+async def test_start_uses_podman_gpu_path_when_docker_is_really_podman(logs_dir):
+    # DOCKER_HOST-style misroute: the "docker" endpoint is actually Podman, so
+    # the launch must use the Podman (CDI) GPU guard, not the Docker one.
+    with mock.patch.object(
+        client_main, "_available_runtimes", return_value=["docker"]
+    ), mock.patch.object(
+        client_main, "_effective_runtime", return_value="podman"
+    ), mock.patch.object(
+        client_main, "_podman_gpu_error",
+        return_value="No NVIDIA CDI spec found ... nvidia-ctk cdi generate ...",
+    ) as pod_err, mock.patch.object(
+        client_main, "_docker_gpu_error"
+    ) as dock_err, mock.patch.dict(
+        client_main._statuses, {}, clear=True
+    ), mock.patch.dict(client_main._containers, {}, clear=True):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/deployments/start",
+                json={
+                    "model_name": "org/model",
+                    "port": 38913,
+                    "gpu_memory_fraction": 0.5,
+                    "vllm_version": "0.9.1",
+                },
+            )
+    assert resp.status_code == 409
+    assert "cdi" in resp.json()["detail"].lower()
+    pod_err.assert_called_once()
+    dock_err.assert_not_called()  # never use the Docker GPU form against Podman
