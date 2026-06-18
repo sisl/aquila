@@ -151,7 +151,7 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
   const muiTheme = useTheme();
   const compact = useMediaQuery(muiTheme.breakpoints.down("lg"));
   const { visibleKeys, userHidden, toggle: toggleColumn, reset: resetColumns, isCustomized } =
-    useColumnVisibility("vcm:columns:nodes", NODE_COLUMNS, compact);
+    useColumnVisibility("vcm:columns:nodes", NODE_COLUMNS);
   const columnCount = visibleKeys.size;
 
   // Search + sort are purely presentational (same pattern as the
@@ -229,7 +229,6 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
       <ColumnPicker
         columns={NODE_COLUMNS}
         userHidden={userHidden}
-        compact={compact}
         onToggle={toggleColumn}
         onReset={resetColumns}
         isCustomized={isCustomized}

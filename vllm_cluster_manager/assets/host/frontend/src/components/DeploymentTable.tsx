@@ -230,7 +230,7 @@ export function DeploymentTable({
   const muiTheme = useTheme();
   const compact = useMediaQuery(muiTheme.breakpoints.down("xl"));
   const { visibleKeys, userHidden, toggle: toggleColumn, reset: resetColumns, isCustomized } =
-    useColumnVisibility("vcm:columns:deployments", DEPLOYMENT_COLUMNS, compact);
+    useColumnVisibility("vcm:columns:deployments", DEPLOYMENT_COLUMNS);
   const columnCount = visibleKeys.size;
 
   // Tick once a second so the remaining-time countdown and the <1h highlight
@@ -359,7 +359,6 @@ export function DeploymentTable({
       <ColumnPicker
         columns={DEPLOYMENT_COLUMNS}
         userHidden={userHidden}
-        compact={compact}
         onToggle={toggleColumn}
         onReset={resetColumns}
         isCustomized={isCustomized}

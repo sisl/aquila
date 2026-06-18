@@ -552,7 +552,7 @@ async def pause_deployment(
     session: AsyncSession = Depends(get_session),
 ) -> DeploymentRead:
     deployment, node = await _deployment_and_node(deployment_id, session)
-    if deployment.status not in ("running", "paused_ram", "paused_disk"):
+    if deployment.status not in ("running", "paused_ram"):
         raise HTTPException(
             status_code=409,
             detail=f"Deployment is '{deployment.status}'; only a running deployment can be paused.",
@@ -560,8 +560,7 @@ async def pause_deployment(
     result = await pause_model(
         node.ip_address, node.port, _deployment_key(deployment), payload.tier
     )
-    tier = (result or {}).get("tier")
-    set_status(deployment, "paused_disk" if tier == "disk" else "paused_ram")
+    set_status(deployment, "paused_ram")
     await session.commit()
     await session.refresh(deployment)
     await _broadcast_change(deployment.id)

@@ -19,7 +19,6 @@ import { SectionLabel } from "./SectionLabel";
 type ColumnPickerProps = {
   columns: ColumnDef[];
   userHidden: Set<string>;
-  compact: boolean;
   onToggle: (key: string) => void;
   onReset: () => void;
   isCustomized: boolean;
@@ -28,7 +27,6 @@ type ColumnPickerProps = {
 export function ColumnPicker({
   columns,
   userHidden,
-  compact,
   onToggle,
   onReset,
   isCustomized
@@ -69,17 +67,13 @@ export function ColumnPicker({
         <SectionLabel sx={{ mb: 0.5 }}>Columns</SectionLabel>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 0 }}>
           {toggleable.map((col) => {
-            const disabledByBreakpoint = compact && col.compactHidden;
-            const checked = !disabledByBreakpoint && !userHidden.has(col.key);
-
-            const control = (
+            return (
               <FormControlLabel
                 key={col.key}
                 control={
                   <Checkbox
                     size="small"
-                    checked={checked}
-                    disabled={disabledByBreakpoint}
+                    checked={!userHidden.has(col.key)}
                     onChange={() => onToggle(col.key)}
                   />
                 }
@@ -89,16 +83,6 @@ export function ColumnPicker({
                 sx={{ mr: 0 }}
               />
             );
-
-            if (disabledByBreakpoint) {
-              return (
-                <Tooltip key={col.key} title="Hidden on smaller screens" placement="left">
-                  <Box>{control}</Box>
-                </Tooltip>
-              );
-            }
-
-            return control;
           })}
         </Box>
         <Divider sx={{ my: 1 }} />

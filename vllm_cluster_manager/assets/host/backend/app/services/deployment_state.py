@@ -7,7 +7,7 @@ and pairs every status with its failure reason.
 from datetime import datetime, timezone
 
 _HEALTHY_STATUSES = (
-    "running", "loading", "starting", "stopped", "paused_ram", "paused_disk"
+    "running", "loading", "starting", "stopped", "paused_ram"
 )
 
 

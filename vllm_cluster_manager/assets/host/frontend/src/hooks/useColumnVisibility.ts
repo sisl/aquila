@@ -29,8 +29,7 @@ function persist(storageKey: string, hidden: Set<string>) {
 
 export function useColumnVisibility(
   storageKey: string,
-  columns: ColumnDef[],
-  compact: boolean
+  columns: ColumnDef[]
 ) {
   const validKeys = new Set(columns.filter((c) => !c.alwaysVisible).map((c) => c.key));
   const [userHidden, setUserHidden] = useState(() => loadHidden(storageKey, validKeys));
@@ -41,7 +40,6 @@ export function useColumnVisibility(
       visibleKeys.add(col.key);
       continue;
     }
-    if (compact && col.compactHidden) continue;
     if (!userHidden.has(col.key)) visibleKeys.add(col.key);
   }
 
