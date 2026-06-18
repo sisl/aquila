@@ -123,7 +123,7 @@ def _openai_error(
 
 # Statuses the gateway will route to. Paused deployments are reachable: the
 # node-side proxy transparently wakes them on the first inference request.
-_ROUTABLE_STATUSES = ("running", "paused_ram", "paused_disk")
+_ROUTABLE_STATUSES = ("running", "paused_ram")
 
 
 async def _resolve(session: AsyncSession, model: str):

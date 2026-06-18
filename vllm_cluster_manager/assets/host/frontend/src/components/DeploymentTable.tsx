@@ -118,7 +118,7 @@ function statusColor(
   if (status === "running") return "success";
   if (status === "expired") return "warning";
   if (status === "error" || status === "unreachable") return "error";
-  if (status === "paused_ram" || status === "paused_disk") return "info";
+  if (status === "paused_ram") return "info";
   return "default";
 }
 
@@ -192,7 +192,6 @@ function statusLabel(deployment: Deployment): string {
     return `${deployment.status} (${deployment.detail.replace(/_/g, " ")}${pull})`;
   }
   if (deployment.status === "paused_ram") return "paused (RAM)";
-  if (deployment.status === "paused_disk") return "paused (disk)";
   return deployment.status;
 }
 
@@ -602,7 +601,7 @@ export function DeploymentTable({
                       Logs
                     </AppButton>
                     {onEndpoint &&
-                      ["running", "paused_ram", "paused_disk"].includes(
+                      ["running", "paused_ram"].includes(
                         deployment.status
                       ) && (
                         <AppButton
@@ -616,8 +615,7 @@ export function DeploymentTable({
                       )}
                     {onPin &&
                       (deployment.status === "running" ||
-                        deployment.status === "paused_ram" ||
-                        deployment.status === "paused_disk") &&
+                        deployment.status === "paused_ram") &&
                       (deployment.status !== "running" ||
                         isWarmNode?.(deployment.node_id)) && (
                         <AppButton
@@ -642,8 +640,7 @@ export function DeploymentTable({
                         </AppButton>
                       )}
                     {onResume &&
-                      (deployment.status === "paused_ram" ||
-                        deployment.status === "paused_disk") && (
+                      deployment.status === "paused_ram" && (
                         <AppButton
                           type="button"
                           className="app-button--small"

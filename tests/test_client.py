@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 from unittest import mock
 
-import psutil
 import pytest
 
 # Add client app to sys.path.
@@ -2934,7 +2933,7 @@ class TestPlanEviction:
         assert plan["fits"] is True
         assert [(s["key"], s["tier"]) for s in plan["plan"]] == [("old:8000", "ram")]
 
-    def test_warm_victim_to_disk_over_budget(self):
+    def test_warm_victim_blocked_when_ram_full(self):
         statuses = {"old:8000": _meta(gpu_memory_fraction=0.9, last_active_at=1.0)}
         with mock.patch.dict(
             client_main._node_policy, {"ram_cache_limit_mb": 100}, clear=False
@@ -2942,8 +2941,8 @@ class TestPlanEviction:
             mock.patch.dict(client_main._statuses, statuses, clear=True), \
             mock.patch.dict(client_main._containers, {"old:8000": object()}, clear=True):
             plan = client_main._plan_eviction([0], 0.5, "new:9000")
-        assert plan["fits"] is True
-        assert [(s["key"], s["tier"]) for s in plan["plan"]] == [("old:8000", "disk")]
+        assert plan["fits"] is False
+        assert "full" in plan.get("reason", "").lower()
 
     def test_cascade_multiple_victims(self):
         statuses = {
@@ -3035,46 +3034,22 @@ class TestTierSelection:
         with mock.patch.dict(client_main._node_policy, {"ram_cache_limit_mb": None}):
             assert client_main._ram_limit_mb() is None
 
-    @pytest.mark.anyio
-    async def test_auto_tier_disk_when_over_budget(self):
-        # Limit smaller than the model estimate -> can't fit RAM -> disk.
+    def test_auto_tier_none_when_over_budget(self):
         with mock.patch.dict(
             client_main._node_policy, {"ram_cache_limit_mb": 100}, clear=False
         ), mock.patch.object(client_main, "_ram_estimate", return_value=5000.0), \
             mock.patch.dict(client_main._statuses, {}, clear=True):
-            tier = await client_main._auto_tier(_meta())
-        assert tier == "disk"
+            tier = client_main._auto_tier(_meta())
+        assert tier is None
 
-    @pytest.mark.anyio
-    async def test_auto_tier_ram_when_fits(self):
+    def test_auto_tier_ram_when_fits(self):
         with mock.patch.dict(
             client_main._node_policy, {"ram_cache_limit_mb": 100000}, clear=False
         ), mock.patch.object(client_main, "_ram_estimate", return_value=5000.0), \
             mock.patch.dict(client_main._statuses, {}, clear=True):
-            tier = await client_main._auto_tier(_meta())
+            tier = client_main._auto_tier(_meta())
         assert tier == "ram"
 
-    @pytest.mark.anyio
-    async def test_enforce_ram_budget_demotes_lru(self):
-        statuses = {
-            "a:8000": _meta(pause_tier="ram", paused_ram_mb=8000.0, last_active_at=1.0),
-            "b:8001": _meta(port=8001, pause_tier="ram", paused_ram_mb=8000.0, last_active_at=2.0),
-        }
-        demoted = []
-
-        async def fake_disk(meta, key):
-            meta["pause_tier"] = "disk"
-            meta["paused_ram_mb"] = 0
-            demoted.append(key)
-
-        with mock.patch.dict(
-            client_main._node_policy, {"ram_cache_limit_mb": 20000}, clear=False
-        ), mock.patch.dict(client_main._statuses, statuses, clear=True), \
-            mock.patch.object(client_main, "_pause_to_disk", side_effect=fake_disk):
-            await client_main._enforce_ram_budget(5000.0)
-        # Used was 16 GB; adding 5 GB (21 GB) exceeds the 20 GB limit, so demote
-        # just the LRU sleeper (a); afterwards 8+5 GB fits.
-        assert demoted == ["a:8000"]
 
 
 class TestPause:
@@ -3089,179 +3064,7 @@ class TestPause:
         assert meta["status"] == "paused_ram"
         assert meta["paused_ram_mb"] == 4096.0
 
-    @pytest.mark.anyio
-    async def test_pause_to_disk_removes_container(self):
-        meta = _meta()
-        container = object()
-        with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
-            mock.patch.dict(client_main._containers, {"m:8000": container}, clear=True), \
-            mock.patch.object(client_main, "_remove_container") as remove, \
-            mock.patch.object(client_main, "_swap_available_mb", return_value=0.0):
-            await client_main._pause_to_disk(meta, "m:8000")
-        remove.assert_called_once_with(container)
-        assert meta["pause_tier"] == "disk"
-        assert meta["status"] == "paused_disk"
-        assert meta.get("disk_sleep") is False
-        assert "m:8000" not in client_main._containers
 
-
-class TestDiskSleep:
-    @pytest.mark.anyio
-    async def test_pause_to_disk_uses_sleep_swap_when_available(self):
-        meta = _meta()
-        container = mock.MagicMock()
-        with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
-            mock.patch.dict(client_main._containers, {"m:8000": container}, clear=True), \
-            mock.patch.object(client_main, "_swap_available_mb", return_value=10000.0), \
-            mock.patch.object(client_main, "_vllm_sleep") as sleep, \
-            mock.patch.object(client_main, "_mark_disk_sleep") as mark:
-            await client_main._pause_to_disk(meta, "m:8000")
-            assert "m:8000" in client_main._containers
-        sleep.assert_awaited_once()
-        container.update.assert_called_once_with(
-            mem_limit=client_main._DISK_SLEEP_MEM_LIMIT_MB * 1024 * 1024,
-            memswap_limit=-1,
-        )
-        mark.assert_called_once_with("m:8000")
-        assert meta["pause_tier"] == "disk"
-        assert meta["status"] == "paused_disk"
-        assert meta["disk_sleep"] is True
-
-    @pytest.mark.anyio
-    async def test_pause_to_disk_falls_back_to_cold_when_no_swap(self):
-        meta = _meta()
-        container = mock.MagicMock()
-        with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
-            mock.patch.dict(client_main._containers, {"m:8000": container}, clear=True), \
-            mock.patch.object(client_main, "_swap_available_mb", return_value=0.0), \
-            mock.patch.object(client_main, "_remove_container") as remove:
-            await client_main._pause_to_disk(meta, "m:8000")
-            assert "m:8000" not in client_main._containers
-        remove.assert_called_once_with(container)
-        assert meta["disk_sleep"] is False
-
-    @pytest.mark.anyio
-    async def test_pause_to_disk_falls_back_on_update_failure(self):
-        meta = _meta()
-        container = mock.MagicMock()
-        container.update.side_effect = Exception("API error")
-        with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
-            mock.patch.dict(client_main._containers, {"m:8000": container}, clear=True), \
-            mock.patch.object(client_main, "_swap_available_mb", return_value=10000.0), \
-            mock.patch.object(client_main, "_vllm_sleep"), \
-            mock.patch.object(client_main, "_remove_container") as remove:
-            await client_main._pause_to_disk(meta, "m:8000")
-            assert "m:8000" not in client_main._containers
-        remove.assert_called_once_with(container)
-        assert meta["disk_sleep"] is False
-
-    @pytest.mark.anyio
-    async def test_pause_to_disk_ram_demotion_skips_sleep_call(self):
-        meta = _meta(pause_tier="ram", status="paused_ram")
-        container = mock.MagicMock()
-        with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
-            mock.patch.dict(client_main._containers, {"m:8000": container}, clear=True), \
-            mock.patch.object(client_main, "_swap_available_mb", return_value=10000.0), \
-            mock.patch.object(client_main, "_vllm_sleep") as sleep, \
-            mock.patch.object(client_main, "_mark_disk_sleep"):
-            await client_main._pause_to_disk(meta, "m:8000")
-        sleep.assert_not_awaited()
-        container.update.assert_called_once()
-        assert meta["disk_sleep"] is True
-        assert meta["pause_tier"] == "disk"
-
-    @pytest.mark.anyio
-    async def test_pause_to_disk_not_warm_uses_cold(self):
-        meta = _meta(warm=False, internal_port=None)
-        container = mock.MagicMock()
-        with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
-            mock.patch.dict(client_main._containers, {"m:8000": container}, clear=True), \
-            mock.patch.object(client_main, "_swap_available_mb", return_value=10000.0), \
-            mock.patch.object(client_main, "_remove_container") as remove:
-            await client_main._pause_to_disk(meta, "m:8000")
-        remove.assert_called_once()
-        assert meta["disk_sleep"] is False
-
-    @pytest.mark.anyio
-    async def test_ensure_active_disk_sleep_wakes_container(self):
-        meta = _meta(pause_tier="disk", status="paused_disk", disk_sleep=True)
-        container = mock.MagicMock()
-        container.status = "running"
-        with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
-            mock.patch.dict(client_main._containers, {"m:8000": container}, clear=True), \
-            mock.patch.object(client_main, "_ensure_fit", return_value=(True, [])), \
-            mock.patch.object(client_main, "_wait_port_reachable", return_value=True), \
-            mock.patch.object(client_main, "_vllm_wake") as wake, \
-            mock.patch.object(client_main, "_wait_awake", return_value=True), \
-            mock.patch.object(client_main, "_relaunch_disk_paused") as relaunch, \
-            mock.patch.object(client_main, "_clear_disk_sleep") as clear:
-            ok = await client_main._ensure_active("m:8000")
-        assert ok is True
-        wake.assert_awaited_once()
-        relaunch.assert_not_awaited()
-        container.update.assert_called_once()
-        clear.assert_called_once_with("m:8000")
-        assert meta["pause_tier"] is None
-        assert meta["status"] == "running"
-        assert meta["disk_sleep"] is False
-
-    @pytest.mark.anyio
-    async def test_ensure_active_disk_sleep_falls_back_on_unreachable(self):
-        meta = _meta(pause_tier="disk", status="paused_disk", disk_sleep=True)
-        container = mock.MagicMock()
-        container.status = "running"
-        with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
-            mock.patch.dict(client_main._containers, {"m:8000": container}, clear=True), \
-            mock.patch.object(client_main, "_ensure_fit", return_value=(True, [])), \
-            mock.patch.object(client_main, "_wait_port_reachable", return_value=False), \
-            mock.patch.object(client_main, "_clear_disk_sleep") as clear, \
-            mock.patch.object(client_main, "_relaunch_disk_paused", return_value=True) as relaunch:
-            ok = await client_main._ensure_active("m:8000")
-            assert "m:8000" not in client_main._containers or \
-                client_main._containers["m:8000"] is not container
-        assert ok is True
-        relaunch.assert_awaited_once()
-        clear.assert_called()
-
-    @pytest.mark.anyio
-    async def test_ensure_active_disk_sleep_falls_back_when_dead(self):
-        meta = _meta(pause_tier="disk", status="paused_disk", disk_sleep=True)
-        with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
-            mock.patch.dict(client_main._containers, {}, clear=True), \
-            mock.patch.object(client_main, "_ensure_fit", return_value=(True, [])), \
-            mock.patch.object(client_main, "_relaunch_disk_paused", return_value=True) as relaunch:
-            ok = await client_main._ensure_active("m:8000")
-        assert ok is True
-        relaunch.assert_awaited_once()
-
-    def test_sidecar_round_trip(self, tmp_path):
-        with mock.patch.object(client_main, "_COMPILE_CACHE_DIR", tmp_path):
-            assert client_main._read_pause_state("m:8000") is None
-            client_main._mark_disk_sleep("m:8000")
-            assert client_main._read_pause_state("m:8000") == "disk_sleep"
-            client_main._clear_disk_sleep("m:8000")
-            assert client_main._read_pause_state("m:8000") is None
-
-    def test_swap_available_mb_returns_float(self):
-        with mock.patch.object(psutil, "swap_memory") as sm:
-            sm.return_value = mock.MagicMock(free=8 * 1024 * 1024 * 1024)
-            assert client_main._swap_available_mb() == 8192.0
-
-    def test_swap_available_mb_returns_zero_on_error(self):
-        with mock.patch.object(psutil, "swap_memory", side_effect=RuntimeError):
-            assert client_main._swap_available_mb() == 0.0
-
-    @pytest.mark.anyio
-    async def test_monitor_exits_when_container_superseded(self):
-        old_container = mock.MagicMock()
-        new_container = mock.MagicMock()
-        meta = _meta(status="loading", desired_state="running")
-        with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
-            mock.patch.dict(client_main._containers, {"m:8000": new_container}, clear=True), \
-            mock.patch.object(client_main, "_stop_proxy") as stop_proxy:
-            await client_main._monitor_container("m:8000", old_container)
-        stop_proxy.assert_not_awaited()
-        assert meta["status"] == "loading"
 
 
 class TestEnsureActive:

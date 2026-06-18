@@ -138,7 +138,6 @@ class TestPausedRouting:
 
         assert "running" in _ROUTABLE_STATUSES
         assert "paused_ram" in _ROUTABLE_STATUSES
-        assert "paused_disk" in _ROUTABLE_STATUSES
 
     def test_resolve_routes_a_paused_deployment(self):
         import asyncio
@@ -169,10 +168,8 @@ class TestStatusConstants:
         from app.models.deployment import ACTIVE_STATUSES
 
         assert "paused_ram" in ACTIVE_STATUSES
-        assert "paused_disk" in ACTIVE_STATUSES
 
     def test_healthy_statuses_include_paused(self):
         from app.services.deployment_state import _HEALTHY_STATUSES
 
         assert "paused_ram" in _HEALTHY_STATUSES
-        assert "paused_disk" in _HEALTHY_STATUSES

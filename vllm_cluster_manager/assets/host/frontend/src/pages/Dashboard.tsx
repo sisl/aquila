@@ -342,7 +342,7 @@ export function Dashboard() {
       const moved = pendingOffloadRef.current;
       const movedSuffix = moved.length
         ? ` Offloaded ${moved
-            .map((m) => `${m.model_name} → ${m.tier === "ram" ? "RAM" : "disk"}`)
+            .map((m) => `${m.model_name} → RAM`)
             .join(", ")}.`
         : "";
       pendingOffloadRef.current = [];
@@ -408,8 +408,7 @@ export function Dashboard() {
     mutationFn: (id: number) => pauseDeployment(id),
     onSuccess: (deployment) => {
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
-      const where = deployment.status === "paused_disk" ? "disk" : "RAM";
-      toast.success(`Paused ${deployment.model_name} to ${where}.`);
+      toast.success(`Paused ${deployment.model_name} to RAM.`);
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Failed to pause deployment.");
@@ -1796,7 +1795,7 @@ export function Dashboard() {
                     {offloadPlan!.would_offload
                       .map(
                         (m) =>
-                          `${m.model_name} → ${m.tier === "ram" ? "RAM" : "disk"}`
+                          `${m.model_name} → RAM`
                       )
                       .join(", ")}{" "}
                     to warm cache. You'll confirm first.

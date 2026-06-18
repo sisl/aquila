@@ -22,6 +22,7 @@ import docker
 from docker.errors import APIError, ContainerError, ImageNotFound, NotFound
 from docker.types import DeviceRequest
 import httpx
+import psutil
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File

@@ -475,7 +475,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
         <DialogSection
           title="Warm Cache"
           hint={
-            "When enabled, new deployments launch pausable: the agent auto-offloads the least-recently-used unpinned model (GPU → RAM → disk) to fit new or woken models, and a request to a paused model wakes it. Running deployments keep their mode until redeployed."
+            "When enabled, new deployments launch pausable: the agent auto-offloads the least-recently-used unpinned model (GPU → RAM) to fit new or woken models, and a request to a paused model wakes it. Running deployments keep their mode until redeployed."
           }
           action={
             <FormControlLabel
@@ -523,7 +523,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
               Apply
             </AppButton>
             <Typography variant="body2" className="muted">
-              Past this, RAM-paused models spill to disk. Blank = unlimited.
+              Maximum host RAM for paused model weights. Blank = unlimited.
             </Typography>
           </Box>
         </DialogSection>

@@ -574,7 +574,7 @@ async def resume_deployment(
     deployment, node = await _deployment_and_node(deployment_id, session)
     if deployment.status == "running":
         return deployment
-    if deployment.status not in ("paused_ram", "paused_disk"):
+    if deployment.status not in ("paused_ram",):
         raise HTTPException(
             status_code=409,
             detail=f"Deployment is '{deployment.status}'; only a paused deployment can be resumed.",
