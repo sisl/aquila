@@ -2652,6 +2652,11 @@ def _plan_eviction(
     reserved = dict(_reserved_by_gpu())  # mutable working copy
     ram_used = _ram_used_mb()
     ram_limit = _ram_limit_mb()
+    requester_meta = _statuses.get(requester_key)
+    if not (requester_meta and requester_meta.get("pause_tier") == "ram"):
+        ram_used += _ram_estimate(
+            {"gpu_memory_fraction": fraction, "gpu_ids": list(target_gpu_ids)}
+        )
     chosen: list[dict] = []
     chosen_keys: set[str] = set()
     for _ in range(64):

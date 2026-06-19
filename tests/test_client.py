@@ -2944,6 +2944,44 @@ class TestPlanEviction:
         assert plan["fits"] is False
         assert "full" in plan.get("reason", "").lower()
 
+    def test_deploy_blocked_when_ram_cant_hold_both(self):
+        """Deploying a new model that evicts another must be rejected if the
+        RAM cache can't hold both models simultaneously (needed for a future
+        swap when the evicted model is resumed)."""
+        statuses = {"old:8000": _meta(gpu_memory_fraction=0.9, last_active_at=1.0)}
+        with mock.patch.dict(
+            client_main._node_policy, {"ram_cache_limit_mb": 6000}, clear=False
+        ), mock.patch.object(client_main, "_ram_estimate", return_value=5000.0), \
+            mock.patch.dict(client_main._statuses, statuses, clear=True), \
+            mock.patch.dict(client_main._containers, {"old:8000": object()}, clear=True):
+            plan = client_main._plan_eviction([0], 0.5, "new:9000")
+        # 5000 (victim) + 5000 (requester reserve) = 10000 > 6000 limit
+        assert plan["fits"] is False
+
+    def test_resume_allowed_when_ram_holds_both(self):
+        """Resuming a paused model succeeds when RAM can hold the paused model
+        plus the evicted victim simultaneously."""
+        statuses = {
+            "paused:8000": _meta(
+                gpu_memory_fraction=0.5, last_active_at=1.0,
+                pause_tier="ram", paused_ram_mb=5000.0, status="paused_ram",
+            ),
+            "running:8001": _meta(
+                port=8001, gpu_memory_fraction=0.5, last_active_at=2.0,
+            ),
+        }
+        with mock.patch.dict(
+            client_main._node_policy, {"ram_cache_limit_mb": 11000}, clear=False
+        ), mock.patch.object(client_main, "_ram_estimate", return_value=5000.0), \
+            mock.patch.dict(client_main._statuses, statuses, clear=True), \
+            mock.patch.dict(
+                client_main._containers,
+                {"paused:8000": object(), "running:8001": object()}, clear=True,
+            ):
+            plan = client_main._plan_eviction([0], 0.5, "paused:8000")
+        # ram_used = 5000 (paused model, already in RAM) + 5000 (victim) = 10000 <= 11000
+        assert plan["fits"] is True
+
     def test_cascade_multiple_victims(self):
         statuses = {
             "a:8000": _meta(gpu_memory_fraction=0.6, last_active_at=1.0),
