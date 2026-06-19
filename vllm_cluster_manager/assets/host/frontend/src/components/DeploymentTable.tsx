@@ -650,7 +650,7 @@ export function DeploymentTable({
                           Resume
                         </AppButton>
                       )}
-                    {(deployment.status === "running" || deployment.status === "loading") && (
+                    {(deployment.status === "running" || deployment.status === "loading" || deployment.status === "paused_ram") && (
                       <AppButton
                         type="button"
                         variant="stop"
