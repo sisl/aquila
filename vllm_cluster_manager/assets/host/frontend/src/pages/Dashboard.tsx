@@ -7,6 +7,7 @@ import {
   Box,
   Button,
   Checkbox,
+  CircularProgress,
   Divider,
   FormControlLabel,
   IconButton,
@@ -329,15 +330,45 @@ export function Dashboard() {
     placeholderData: (previous) => previous
   });
 
+  const resetForm = () => {
+    const defaults = queryClient.getQueryData<RuntimeSettings>(["settings"]);
+    setNodeId("");
+    setModelName("");
+    setPort(defaults?.default_port ?? 8001);
+    setGpuFraction(defaults?.default_gpu_fraction ?? 0.5);
+    setDurationChoice(defaults?.default_duration_choice ?? DEFAULT_DURATION_CHOICE);
+    setGpuIds([]);
+    setAdvancedArgs([]);
+    setRawArgs("");
+    setEnvVars([]);
+    setLoraModules([]);
+    setVllmVersion(defaults?.default_vllm_version ?? "");
+    setMaxModelLen("");
+    setRevision("");
+    setSeed("");
+    setDtype("");
+    setQuantization("");
+    setServedModelName("");
+    setMaxNumSeqs("");
+    setEnforceEager(false);
+    setTrustRemoteCode(false);
+    setMaxFailedRestarts(
+      defaults?.default_max_failed_restarts != null
+        ? String(defaults.default_max_failed_restarts)
+        : ""
+    );
+    setSkipResourceCheck(false);
+    setExtraPackagesText("");
+    setExpandedSection(false);
+    setConfigName("");
+  };
+
   const startMutation = useMutation({
     mutationFn: startDeployment,
     onSuccess: (deployment) => {
-      queryClient.setQueryData(["deployments"], (existing: Deployment[] | undefined) => {
-        if (!existing) {
-          return [deployment];
-        }
-        return [deployment, ...existing];
-      });
+      queryClient.setQueryData(["deployments"], (existing: Deployment[] | undefined) =>
+        existing ? [deployment, ...existing] : [deployment]
+      );
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
       const moved = pendingOffloadRef.current;
       const movedSuffix = moved.length
@@ -347,35 +378,6 @@ export function Dashboard() {
         : "";
       pendingOffloadRef.current = [];
       toast.success(`Deployment of ${deployment.model_name} started.${movedSuffix}`);
-      const defaults = queryClient.getQueryData<RuntimeSettings>(["settings"]);
-      setModelName("");
-      setPort(defaults?.default_port ?? 8001);
-      setGpuFraction(defaults?.default_gpu_fraction ?? 0.5);
-      setDurationChoice(defaults?.default_duration_choice ?? DEFAULT_DURATION_CHOICE);
-      setGpuIds([]);
-      setAdvancedArgs([]);
-      setRawArgs("");
-      setEnvVars([]);
-      setLoraModules([]);
-      setVllmVersion(defaults?.default_vllm_version ?? "");
-      setMaxModelLen("");
-      setRevision("");
-      setSeed("");
-      setDtype("");
-      setQuantization("");
-      setServedModelName("");
-      setMaxNumSeqs("");
-      setEnforceEager(false);
-      setTrustRemoteCode(false);
-      setMaxFailedRestarts(
-        defaults?.default_max_failed_restarts != null
-          ? String(defaults.default_max_failed_restarts)
-          : ""
-      );
-      setSkipResourceCheck(false);
-      setExtraPackagesText("");
-      setExpandedSection(false);
-      setConfigName("");
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Failed to deploy.");
@@ -1148,9 +1150,11 @@ export function Dashboard() {
   });
 
   const submitDeploy = () => {
-    // Remember the offload preview so onSuccess can name what moved.
     pendingOffloadRef.current = willOffload ? offloadPlan!.would_offload : [];
-    startMutation.mutate(buildStartPayload());
+    const payload = buildStartPayload();
+    resetForm();
+    startMutation.reset();
+    startMutation.mutate(payload);
   };
 
   const handleDeployClick = () => {
@@ -1775,83 +1779,87 @@ export function Dashboard() {
                   borderBottomRightRadius: "var(--radius-lg)"
                 }}
               >
-                {/* Over-allocation on a non-warm node (or when the plan lookup
-                    failed) is a hard block; on a warm node it becomes a
-                    transparent offload preview instead. */}
-                {gpuAllocationWarning &&
-                  (!isWarmSelected || (deployPlanQuery.isError && !planLoading)) && (
-                    <Alert severity="warning" sx={{ mb: 1.5 }}>
-                      {gpuAllocationWarning}
-                    </Alert>
-                  )}
-                {isWarmSelected && planLoading && (
-                  <Alert severity="info" sx={{ mb: 1.5 }}>
-                    Checking which models to offload to make room…
-                  </Alert>
-                )}
-                {isWarmSelected && willOffload && (
-                  <Alert severity="info" sx={{ mb: 1.5 }}>
-                    GPU is full — deploying will move{" "}
-                    {offloadPlan!.would_offload
-                      .map(
-                        (m) =>
-                          `${m.model_name} → RAM`
-                      )
-                      .join(", ")}{" "}
-                    to warm cache. You'll confirm first.
-                  </Alert>
-                )}
-                {isWarmSelected && offloadBlocked && (
-                  <Alert severity="warning" sx={{ mb: 1.5 }}>
-                    {offloadPlan!.blocked_reason ?? gpuAllocationWarning}
-                  </Alert>
-                )}
-                {portInUseWarning && (
-                  <Alert severity="warning" sx={{ mb: 1.5 }}>
-                    {portInUseWarning}
-                  </Alert>
-                )}
-                {servedNameConflict && (
-                  <Alert
-                    severity="warning"
-                    sx={{ mb: 1.5 }}
-                    action={
-                      <Button
-                        color="inherit"
-                        size="small"
-                        onClick={() => setServedModelName(servedNameConflict.suggestion)}
+                {!startMutation.isPending && (
+                  <>
+                    {gpuAllocationWarning &&
+                      (!isWarmSelected || (deployPlanQuery.isError && !planLoading)) && (
+                        <Alert severity="warning" sx={{ mb: 1.5 }}>
+                          {gpuAllocationWarning}
+                        </Alert>
+                      )}
+                    {isWarmSelected && planLoading && (
+                      <Alert severity="info" sx={{ mb: 1.5 }}>
+                        Checking which models to offload to make room…
+                      </Alert>
+                    )}
+                    {isWarmSelected && willOffload && (
+                      <Alert severity="info" sx={{ mb: 1.5 }}>
+                        GPU is full — deploying will move{" "}
+                        {offloadPlan!.would_offload
+                          .map(
+                            (m) =>
+                              `${m.model_name} → RAM`
+                          )
+                          .join(", ")}{" "}
+                        to warm cache. You'll confirm first.
+                      </Alert>
+                    )}
+                    {isWarmSelected && offloadBlocked && (
+                      <Alert severity="warning" sx={{ mb: 1.5 }}>
+                        {offloadPlan!.blocked_reason ?? gpuAllocationWarning}
+                      </Alert>
+                    )}
+                    {portInUseWarning && (
+                      <Alert severity="warning" sx={{ mb: 1.5 }}>
+                        {portInUseWarning}
+                      </Alert>
+                    )}
+                    {servedNameConflict && (
+                      <Alert
+                        severity="warning"
+                        sx={{ mb: 1.5 }}
+                        action={
+                          <Button
+                            color="inherit"
+                            size="small"
+                            onClick={() => setServedModelName(servedNameConflict.suggestion)}
+                          >
+                            Use "{servedNameConflict.suggestion}"
+                          </Button>
+                        }
                       >
-                        Use "{servedNameConflict.suggestion}"
-                      </Button>
-                    }
-                  >
-                    {servedNameConflict.message}
-                  </Alert>
-                )}
-                {startMutation.isError && (
-                  <Alert severity="error" sx={{ mb: 1.5 }}>
-                    {startMutation.error?.message ?? "Failed to deploy. Check backend logs."}
-                  </Alert>
+                        {servedNameConflict.message}
+                      </Alert>
+                    )}
+                    {startMutation.isError && (
+                      <Alert severity="error" sx={{ mb: 1.5 }}>
+                        {startMutation.error?.message ?? "Failed to deploy. Check backend logs."}
+                      </Alert>
+                    )}
+                  </>
                 )}
                 <Button
                   fullWidth
                   variant="contained"
                   disabled={
-                    !canDeploy ||
                     startMutation.isPending ||
+                    !canDeploy ||
                     servedNameConflict !== null ||
                     planLoading ||
-                    // Over-allocation blocks deploy unless warm-offload can fit it
-                    // (planFits is true on a warm node once the agent confirms a plan).
                     (gpuAllocationWarning !== null && !planFits)
                   }
                   onClick={handleDeployClick}
                 >
-                  {startMutation.isPending
-                    ? "Starting..."
-                    : willOffload
-                      ? "Deploy & offload…"
-                      : "Deploy Model"}
+                  {startMutation.isPending ? (
+                    <>
+                      <CircularProgress size={16} sx={{ mr: 1, color: "inherit" }} />
+                      Starting Deployment…
+                    </>
+                  ) : willOffload ? (
+                    "Deploy & offload…"
+                  ) : (
+                    "Deploy Model"
+                  )}
                 </Button>
                 <ConfirmDialog
                   open={confirmOffload}

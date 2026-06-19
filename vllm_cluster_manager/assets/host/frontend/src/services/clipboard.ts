@@ -1,5 +1,5 @@
 export async function copyToClipboard(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);
       return;
@@ -26,6 +26,11 @@ export async function copyToClipboard(text: string): Promise<void> {
   });
   document.body.appendChild(textarea);
 
+  // Temporarily suppress focusin so MUI Dialog's focus-trap doesn't steal
+  // focus back from the textarea before execCommand can read the selection.
+  const trap = (e: Event) => e.stopImmediatePropagation();
+  document.addEventListener("focusin", trap, true);
+
   textarea.focus({ preventScroll: true });
   textarea.select();
   textarea.setSelectionRange(0, textarea.value.length);
@@ -34,6 +39,7 @@ export async function copyToClipboard(text: string): Promise<void> {
   try {
     ok = document.execCommand("copy");
   } finally {
+    document.removeEventListener("focusin", trap, true);
     document.body.removeChild(textarea);
   }
 

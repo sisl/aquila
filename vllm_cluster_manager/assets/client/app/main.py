@@ -530,7 +530,7 @@ async def lifespan(_: FastAPI):
     # Rediscover deployments that survived an agent restart (containers keep
     # running independently of this process).
     try:
-        _reconcile_containers()
+        await _reconcile_containers()
     except Exception as exc:  # best effort — never block startup
         logger.warning("Container reconciliation skipped: %s", exc)
     # Drop staging leftovers from interrupted model uploads/pulls.
@@ -2520,6 +2520,13 @@ def _all_gpu_indices() -> list[int]:
     return out
 
 
+def _gpu_ids(meta: dict) -> list[int]:
+    ids = meta.get("gpu_ids")
+    if isinstance(ids, list) and ids:
+        return ids
+    return _all_gpu_indices()
+
+
 def _reserved_by_gpu() -> dict[int, float]:
     """Sum of gpu_memory_fraction across models currently occupying each GPU.
 
@@ -2531,11 +2538,10 @@ def _reserved_by_gpu() -> dict[int, float]:
             continue
         if key not in _containers:
             continue
-        if meta.get("status") not in ("starting", "loading", "running"):
+        if meta.get("status") not in ("starting", "loading", "running", "waking"):
             continue
         frac = float(meta.get("gpu_memory_fraction") or 0.0)
-        ids = meta.get("gpu_ids") or _all_gpu_indices()
-        for gid in ids:
+        for gid in _gpu_ids(meta):
             reserved[gid] = reserved.get(gid, 0.0) + frac
     return reserved
 
@@ -2574,7 +2580,7 @@ def _pick_victim(
             continue
         if not _warm_capable(meta):
             continue
-        ids = set(meta.get("gpu_ids") or _all_gpu_indices())
+        ids = set(_gpu_ids(meta))
         if not (ids & gpuset):
             continue
         if _is_busy(meta):
@@ -2607,7 +2613,7 @@ def _ram_estimate(meta: dict) -> float:
     for gid in meta.get("gpu_ids") or []:
         gpu = by_index.get(gid)
         if gpu and gpu.get("source") != "unified":
-            total = max(total, float(gpu.get("memory_total_mb") or 0.0))
+            total += float(gpu.get("memory_total_mb") or 0.0)
     return frac * total if total > 0 else 8192.0
 
 
@@ -2645,7 +2651,7 @@ def _plan_eviction(
     "over_gpus": [...], "reason": str | None}``. ``reason`` is set only when the
     request cannot be made to fit.
     """
-    gpus = list(target_gpu_ids) or _all_gpu_indices()
+    gpus = list(target_gpu_ids) if target_gpu_ids else _all_gpu_indices()
     if not gpus:
         return {"fits": True, "plan": [], "over_gpus": [], "reason": None}
 
@@ -2653,7 +2659,9 @@ def _plan_eviction(
     ram_used = _ram_used_mb()
     ram_limit = _ram_limit_mb()
     requester_meta = _statuses.get(requester_key)
-    if not (requester_meta and requester_meta.get("pause_tier") == "ram"):
+    if requester_meta and requester_meta.get("pause_tier") == "ram":
+        ram_used -= float(requester_meta.get("paused_ram_mb") or 0.0)
+    else:
         ram_used += _ram_estimate(
             {"gpu_memory_fraction": fraction, "gpu_ids": list(target_gpu_ids)}
         )
@@ -2665,11 +2673,18 @@ def _plan_eviction(
             return {"fits": True, "plan": chosen, "over_gpus": [], "reason": None}
         victim = _pick_victim(over, requester_key, exclude=chosen_keys)
         if victim is None:
+            detail_parts = [
+                f"GPU {g}: {reserved.get(g, 0.0):.2f} used + "
+                f"{fraction:.2f} requested = {reserved.get(g, 0.0) + fraction:.2f}"
+                for g in over
+            ]
             reason = (
-                f"GPU {', '.join(map(str, over))} full and no warm model is eligible "
-                "to offload — remaining models are pinned, actively serving, or were "
-                "deployed before warm cache was enabled. Pin fewer models, stop one, "
-                "lower the GPU memory fraction, or redeploy legacy models."
+                f"Cannot fit on {', '.join(f'GPU {g}' for g in over)}: "
+                f"{'; '.join(detail_parts)}. "
+                f"All models on those GPUs are either pinned, actively serving "
+                f"(busy guard {_BUSY_GUARD_SECONDS:.0f}s), or not warm-capable. "
+                f"Pin fewer models, stop one, lower the GPU memory fraction, "
+                f"or redeploy legacy models."
             )
             return {"fits": False, "plan": chosen, "over_gpus": over, "reason": reason}
         meta = _statuses[victim]
@@ -2687,7 +2702,7 @@ def _plan_eviction(
             )
             return {"fits": False, "plan": chosen, "over_gpus": over, "reason": reason}
         frac = float(meta.get("gpu_memory_fraction") or 0.0)
-        for gid in meta.get("gpu_ids") or _all_gpu_indices():
+        for gid in _gpu_ids(meta):
             if gid in reserved:
                 reserved[gid] = max(0.0, reserved[gid] - frac)
         chosen.append(
@@ -2721,16 +2736,37 @@ async def _ensure_fit(
     """
     if not _warm_enabled():
         return None
-    gpus = list(target_gpu_ids) or _all_gpu_indices()
+    gpus = list(target_gpu_ids) if target_gpu_ids else _all_gpu_indices()
     if not gpus:
         return True, []  # only unified-memory metrics — can't reason, allow
-    locks = [_gpu_lock(g) for g in sorted(set(gpus))]
-    for lock in locks:
-        await lock.acquire()
+    held_ids: set[int] = set()
+    locks: list[asyncio.Lock] = []
+    for g in sorted(set(gpus)):
+        lk = _gpu_lock(g)
+        await lk.acquire()
+        locks.append(lk)
+        held_ids.add(g)
     try:
         plan = _plan_eviction(gpus, fraction, requester_key)
         if not plan["fits"]:
             return False, []  # don't half-evict if it can't be made to fit
+        # Extend lock set to cover all victim GPUs (prevents concurrent
+        # operations from claiming space freed on unlocked victim GPUs).
+        if plan["plan"]:
+            victim_gpus: set[int] = set()
+            for step in plan["plan"]:
+                vmeta = _statuses.get(step["key"])
+                if vmeta:
+                    victim_gpus.update(_gpu_ids(vmeta))
+            for g in sorted(victim_gpus - held_ids):
+                lk = _gpu_lock(g)
+                await lk.acquire()
+                locks.append(lk)
+                held_ids.add(g)
+            # Re-validate under broader lock set.
+            plan = _plan_eviction(gpus, fraction, requester_key)
+            if not plan["fits"]:
+                return False, []
         offloaded: list[dict] = []
         for step in plan["plan"]:
             meta = _statuses.get(step["key"])
@@ -2756,6 +2792,17 @@ async def _ensure_fit(
 # ---------------------------------------------------------------------------
 # Warm cache: pause / resume
 # ---------------------------------------------------------------------------
+
+
+async def _probe_sleeping(internal_port: object) -> bool:
+    if not isinstance(internal_port, int):
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"http://127.0.0.1:{internal_port}/is_sleeping")
+            return resp.status_code == 200 and resp.json().get("is_sleeping", False)
+    except Exception:
+        return False
 
 
 async def _vllm_sleep(internal: object, level: int = 1) -> None:
@@ -2816,19 +2863,29 @@ async def _ensure_active(key: str, cap: float = _RESUME_WAIT_CAP_SECONDS) -> boo
         tier = meta.get("pause_tier")
         if not tier:
             return True  # already active
-        fit = await _ensure_fit(meta.get("gpu_ids") or [], float(meta.get("gpu_memory_fraction") or 0.0), key)
+        if tier != "ram":
+            return False
+        fit = await _ensure_fit(_gpu_ids(meta), float(meta.get("gpu_memory_fraction") or 0.0), key)
         if fit is not None and not fit[0]:
             return False
-        if tier == "ram":
+        # Claim GPU space immediately so concurrent operations see it as
+        # occupied while the model wakes (closes the race window between
+        # _ensure_fit releasing locks and the wake completing).
+        meta["pause_tier"] = None
+        meta["status"] = "waking"
+        meta["paused_ram_mb"] = 0
+        try:
             await _vllm_wake(meta.get("internal_port"))
             ok = await _wait_awake(meta.get("internal_port"), cap)
-        else:
-            return False
+        except Exception:
+            ok = False
         if ok:
-            meta["pause_tier"] = None
             meta["status"] = "running"
-            meta["paused_ram_mb"] = 0
             meta["last_active_at"] = time.monotonic()
+        else:
+            meta["pause_tier"] = "ram"
+            meta["status"] = "paused_ram"
+            meta["paused_ram_mb"] = _ram_estimate(meta)
         return ok
 
 
@@ -2912,10 +2969,10 @@ async def _monitor_container(
                 break
             continue
 
-        # RAM pause: container alive, engine offloaded.
+        # RAM pause or waking: container alive, engine offloaded/waking.
         # Skip readiness/scrape; unexpected exit → error.
         meta_snap = _statuses.get(key, {})
-        if meta_snap.get("pause_tier") == "ram":
+        if meta_snap.get("pause_tier") == "ram" or meta_snap.get("status") == "waking":
             if status in ("exited", "dead") and key in _statuses:
                 _statuses[key]["status"] = "error"
                 _statuses[key]["exit_code"] = state.get("ExitCode")
@@ -3308,7 +3365,7 @@ def _managed_containers(all_states: bool = True) -> list[tuple[str, object]]:
     return found
 
 
-def _reconcile_containers() -> None:
+async def _reconcile_containers() -> None:
     """Rebuild in-memory state from managed containers after an agent restart."""
     recovered = 0
     for runtime, container in _managed_containers():
@@ -3361,7 +3418,15 @@ def _reconcile_containers() -> None:
                 status["paused_ram_mb"] = 0
                 status["last_active_at"] = time.monotonic()
                 if warm:
-                    status["internal_port"] = manifest.get("internal_port") or port
+                    internal = manifest.get("internal_port") or port
+                    status["internal_port"] = internal
+                    # Detect models that were paused before the agent restarted
+                    # so they don't create phantom GPU reservations.
+                    if await _probe_sleeping(internal):
+                        status["pause_tier"] = "ram"
+                        status["status"] = "paused_ram"
+                        status["paused_ram_mb"] = _ram_estimate(status)
+                        logger.info("Recovered %s as paused_ram (sleeping)", key)
         _statuses[key] = status
         if status.get("warm") and isinstance(port, int) and port > 0:
             asyncio.create_task(_start_proxy(key, port))

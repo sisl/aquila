@@ -47,8 +47,17 @@ const toGb = (mb?: number) => {
   return (mb / 1024).toFixed(1);
 };
 
+const HEARTBEAT_STALE_SECONDS = 60;
+
+function isStale(node: Node): boolean {
+  if (!node.last_heartbeat_at) return true;
+  const age = (Date.now() - new Date(node.last_heartbeat_at).getTime()) / 1000;
+  return age > HEARTBEAT_STALE_SECONDS;
+}
+
 function statusColor(node: Node): "success" | "warning" | "error" | "default" {
   if (node.maintenance) return "warning";
+  if (isStale(node)) return "error";
   if (node.status === "no-runtime") return "error";
   if (node.status === "healthy") return "success";
   return "default";
@@ -305,16 +314,20 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
                           label={
                             node.maintenance
                               ? "maintenance"
-                              : node.status === "no-runtime"
-                                ? "no runtime"
-                                : node.status
+                              : isStale(node)
+                                ? "unreachable"
+                                : node.status === "no-runtime"
+                                  ? "no runtime"
+                                  : node.status
                           }
                           size="small"
                           color={statusColor(node)}
                           title={
-                            node.status === "no-runtime"
-                              ? "No container runtime detected — install Docker or enable the Podman socket."
-                              : undefined
+                            isStale(node)
+                              ? "Last heartbeat was over 60 seconds ago — node may be down."
+                              : node.status === "no-runtime"
+                                ? "No container runtime detected — install Docker or enable the Podman socket."
+                                : undefined
                           }
                         />
                         {node.rogue_container_count != null && node.rogue_container_count > 0 && (

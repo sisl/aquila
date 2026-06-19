@@ -5,6 +5,7 @@ import {
   CircularProgress,
   Divider,
   FormControlLabel,
+  IconButton,
   LinearProgress,
   MenuItem,
   Switch,
@@ -14,8 +15,10 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography
 } from "@mui/material";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -45,6 +48,7 @@ import {
   type LocalModelUploadResult,
   type Node
 } from "../services/api";
+import { copyToClipboard } from "../services/clipboard";
 import { AppButton } from "./AppButton";
 import { AppDialog } from "./AppDialog";
 import { Mono } from "./Mono";
@@ -82,6 +86,14 @@ type PendingUpload = {
 export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps) {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const copyName = async (name: string) => {
+    try {
+      await copyToClipboard(name);
+      toast.success("Model name copied.");
+    } catch {
+      toast.error("Clipboard unavailable.");
+    }
+  };
   const nodeId = node?.id ?? null;
   const enabled = open && nodeId !== null;
   const [actionError, setActionError] = useState("");
@@ -1040,11 +1052,28 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
             </TableHead>
             <TableBody>
               {localModels.map((model) => (
-                <TableRow key={model.path} hover>
+                <TableRow
+                  key={model.path}
+                  hover
+                  sx={{ "& .copy-icon": { opacity: 0, transition: "opacity 0.15s" }, "&:hover .copy-icon": { opacity: 1 } }}
+                >
                   <TableCell>
-                    <Box>
-                      {model.name}
-                      <Mono block>{model.path}</Mono>
+                    <Box sx={{ display: "flex", alignItems: "baseline", gap: 0.5 }}>
+                      <Box>
+                        {model.name}
+                        <Mono block>{model.path}</Mono>
+                      </Box>
+                      <Tooltip title="Copy model name" enterDelay={500}>
+                        <IconButton
+                          className="copy-icon"
+                          size="small"
+                          aria-label={`Copy ${model.name}`}
+                          onClick={() => void copyName(model.name)}
+                          sx={{ alignSelf: "center" }}
+                        >
+                          <ContentCopyIcon sx={{ fontSize: 14 }} />
+                        </IconButton>
+                      </Tooltip>
                     </Box>
                   </TableCell>
                   <TableCell>
@@ -1119,9 +1148,25 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
             </TableHead>
             <TableBody>
               {cachedModels.map((model) => (
-                <TableRow key={model.name} hover>
+                <TableRow
+                  key={model.name}
+                  hover
+                  sx={{ "& .copy-icon": { opacity: 0, transition: "opacity 0.15s" }, "&:hover .copy-icon": { opacity: 1 } }}
+                >
                   <TableCell>
-                    <Mono>{model.name}</Mono>
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                      <Mono>{model.name}</Mono>
+                      <Tooltip title="Copy model name" enterDelay={500}>
+                        <IconButton
+                          className="copy-icon"
+                          size="small"
+                          aria-label={`Copy ${model.name}`}
+                          onClick={() => void copyName(model.name)}
+                        >
+                          <ContentCopyIcon sx={{ fontSize: 14 }} />
+                        </IconButton>
+                      </Tooltip>
+                    </Box>
                   </TableCell>
                   <TableCell>
                     {model.in_use ? (

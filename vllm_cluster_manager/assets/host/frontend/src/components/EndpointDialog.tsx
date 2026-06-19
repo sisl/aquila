@@ -60,6 +60,8 @@ type EndpointBlockProps = {
   content: (baseUrl: string) => string;
   gatewayUrl: string | null;
   directUrl: string | null;
+  kind: UrlKind;
+  onKindChange: (kind: UrlKind) => void;
   onCopy: (label: string, text: string) => void;
 };
 
@@ -96,8 +98,7 @@ function UrlKindOption({
   );
 }
 
-function EndpointBlock({ label, content, gatewayUrl, directUrl, onCopy }: EndpointBlockProps) {
-  const [kind, setKind] = useState<UrlKind>(gatewayUrl ? "gateway" : "direct");
+function EndpointBlock({ label, content, gatewayUrl, directUrl, kind, onKindChange, onCopy }: EndpointBlockProps) {
   const baseUrl =
     kind === "direct" && directUrl ? directUrl : gatewayUrl ?? directUrl ?? "";
   const text = content(baseUrl);
@@ -128,7 +129,7 @@ function EndpointBlock({ label, content, gatewayUrl, directUrl, onCopy }: Endpoi
               <UrlKindOption
                 label="gateway"
                 active={kind === "gateway"}
-                onClick={() => setKind("gateway")}
+                onClick={() => onKindChange("gateway")}
               />
               <Typography variant="caption" className="muted" sx={{ opacity: 0.5 }}>
                 /
@@ -136,7 +137,7 @@ function EndpointBlock({ label, content, gatewayUrl, directUrl, onCopy }: Endpoi
               <UrlKindOption
                 label="direct"
                 active={kind === "direct"}
-                onClick={() => setKind("direct")}
+                onClick={() => onKindChange("direct")}
               />
             </>
           )}
@@ -167,6 +168,7 @@ export function EndpointDialog({
   onClose
 }: EndpointDialogProps) {
   const toast = useToast();
+  const [urlKind, setUrlKind] = useState<UrlKind>("gateway");
 
   if (!deployment) {
     return null;
@@ -217,6 +219,8 @@ export function EndpointDialog({
           content={(baseUrl) => baseUrl}
           gatewayUrl={gatewayUrl}
           directUrl={directUrl}
+          kind={gatewayUrl ? urlKind : "direct"}
+          onKindChange={setUrlKind}
           onCopy={copy}
         />
         <EndpointBlock
@@ -224,6 +228,8 @@ export function EndpointDialog({
           content={(baseUrl) => pythonSnippet(baseUrl, model)}
           gatewayUrl={gatewayUrl}
           directUrl={directUrl}
+          kind={gatewayUrl ? urlKind : "direct"}
+          onKindChange={setUrlKind}
           onCopy={copy}
         />
         <EndpointBlock
@@ -231,6 +237,8 @@ export function EndpointDialog({
           content={(baseUrl) => curlSnippet(baseUrl, model)}
           gatewayUrl={gatewayUrl}
           directUrl={directUrl}
+          kind={gatewayUrl ? urlKind : "direct"}
+          onKindChange={setUrlKind}
           onCopy={copy}
         />
       </Stack>
