@@ -1,29 +1,34 @@
 export async function copyToClipboard(text: string): Promise<void> {
-  // 1. Modern Clipboard API — only available on secure contexts (HTTPS / localhost).
-  if (window.isSecureContext && navigator.clipboard?.writeText) {
+  if (navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);
       return;
     } catch {
-      // Permission denied — fall through to legacy path.
+      // Permission denied or not allowed — fall through to legacy path.
     }
   }
 
-  // 2. Legacy execCommand fallback for plain-HTTP origins.
-  //    Use a *visible* offscreen textarea (opacity:0 / display:none can cause
-  //    Safari to skip the selection) and verify execCommand actually succeeded.
   const textarea = document.createElement("textarea");
   textarea.value = text;
   textarea.setAttribute("readonly", "");
   Object.assign(textarea.style, {
     position: "fixed",
-    left: "-9999px",
-    top: "-9999px",
-  } as CSSStyleDeclaration);
+    left: "0",
+    top: "0",
+    width: "1px",
+    height: "1px",
+    padding: "0",
+    border: "none",
+    outline: "none",
+    boxShadow: "none",
+    background: "transparent",
+    clip: "rect(0, 0, 0, 0)",
+  });
   document.body.appendChild(textarea);
 
   textarea.focus({ preventScroll: true });
   textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
 
   let ok = false;
   try {
