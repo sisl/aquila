@@ -201,6 +201,8 @@ export function Dashboard() {
           queryClient.invalidateQueries({ queryKey: ["nodes"] });
         } else if (message.type === "settings_changed") {
           queryClient.invalidateQueries({ queryKey: ["settings"] });
+        } else if (message.type === "api_keys_changed") {
+          queryClient.invalidateQueries({ queryKey: ["api-keys"] });
         }
       });
       socket.onopen = () => {

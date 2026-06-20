@@ -17,11 +17,11 @@ from app.core.config import settings
 from app.db.session import get_session
 from app.models.deployment import Deployment
 from app.models.node import Node
-from app.services import model_names, runtime_settings
+from app.services import api_keys, model_names, runtime_settings
 
 
-def _require_gateway() -> None:
-    """Settings-controlled kill switch for the whole /v1 surface."""
+def _require_gateway(request: Request) -> None:
+    """Settings-controlled kill switch + API-key gate for /v1."""
     if not runtime_settings.get_bool("gateway_enabled"):
         raise HTTPException(
             status_code=503,
@@ -30,6 +30,18 @@ def _require_gateway() -> None:
                 "use the node's direct URL instead."
             ),
         )
+
+    if not api_keys.has_keys():
+        return
+
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="API key required. Set Authorization: Bearer <key>.",
+        )
+    if not api_keys.validate(auth.removeprefix("Bearer ").strip()):
+        raise HTTPException(status_code=401, detail="Invalid API key.")
 
 
 router = APIRouter(dependencies=[Depends(_require_gateway)])

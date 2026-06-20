@@ -3,20 +3,30 @@ import {
   Box,
   Checkbox,
   FormControlLabel,
+  IconButton,
   MenuItem,
   Stack,
   Switch,
   TextField,
+  Tooltip,
   Typography
 } from "@mui/material";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  createApiKey,
+  deleteApiKey,
+  fetchApiKeys,
   fetchSettings,
   purgeDatabase,
   updateSettings,
+  type ApiKeyCreated,
+  type ApiKeyInfo,
   type RuntimeSettings
 } from "../services/api";
+import { copyToClipboard } from "../services/clipboard";
 import { AppButton } from "./AppButton";
 import { AppDialog } from "./AppDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -50,6 +60,17 @@ const PURGE_OPTIONS: { key: string; label: string; hint: string }[] = [
 const errorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
+function timeAgo(iso: string): string {
+  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -57,6 +78,10 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [actionError, setActionError] = useState("");
   const [purgeTargets, setPurgeTargets] = useState<string[]>([]);
   const [confirmPurge, setConfirmPurge] = useState(false);
+  const [createKeyOpen, setCreateKeyOpen] = useState(false);
+  const [newKeyLabel, setNewKeyLabel] = useState("");
+  const [createdKey, setCreatedKey] = useState<ApiKeyCreated | null>(null);
+  const [confirmDeleteKey, setConfirmDeleteKey] = useState<ApiKeyInfo | null>(null);
 
   const settingsQuery = useQuery({
     queryKey: ["settings"],
@@ -100,6 +125,34 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     onError: (error) => {
       setConfirmPurge(false);
       setActionError(errorMessage(error));
+    }
+  });
+
+  const apiKeysQuery = useQuery({
+    queryKey: ["api-keys"],
+    queryFn: fetchApiKeys,
+    enabled: open
+  });
+
+  const createKeyMutation = useMutation({
+    mutationFn: (label: string) => createApiKey(label),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+      setCreatedKey(data);
+    },
+    onError: (error) => toast.error(errorMessage(error))
+  });
+
+  const deleteKeyMutation = useMutation({
+    mutationFn: (id: number) => deleteApiKey(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+      setConfirmDeleteKey(null);
+      toast.success("API key deleted.");
+    },
+    onError: (error) => {
+      setConfirmDeleteKey(null);
+      toast.error(errorMessage(error));
     }
   });
 
@@ -186,6 +239,71 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               helperText="Non-streaming requests; streams are never read-limited."
               sx={{ width: 220 }}
             />
+          </DialogSection>
+
+          <DialogSection
+            title="API Keys"
+            hint={
+              apiKeysQuery.data && apiKeysQuery.data.length > 0
+                ? `${apiKeysQuery.data.length} active key${apiKeysQuery.data.length > 1 ? "s" : ""}. All /v1 requests require a valid key.`
+                : "No API keys — the gateway is open to all requests."
+            }
+            action={
+              <AppButton
+                type="button"
+                onClick={() => {
+                  setNewKeyLabel("");
+                  setCreatedKey(null);
+                  setCreateKeyOpen(true);
+                }}
+              >
+                Create Key
+              </AppButton>
+            }
+          >
+            {apiKeysQuery.data && apiKeysQuery.data.length > 0 ? (
+              <Stack spacing={0.5}>
+                {apiKeysQuery.data.map((k) => (
+                  <Box
+                    key={k.id}
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 1.5,
+                      py: 0.5
+                    }}
+                  >
+                    <Typography variant="body2" sx={{ fontWeight: 500, minWidth: 100 }}>
+                      {k.label}
+                    </Typography>
+                    <Typography
+                      variant="body2"
+                      className="muted"
+                      sx={{ fontFamily: "monospace", fontSize: "0.8rem" }}
+                    >
+                      {k.prefix}...
+                    </Typography>
+                    <Typography variant="caption" className="muted" sx={{ ml: "auto" }}>
+                      {k.last_used_at
+                        ? `used ${timeAgo(k.last_used_at)}`
+                        : "never used"}
+                    </Typography>
+                    <Tooltip title="Delete key">
+                      <IconButton
+                        size="small"
+                        onClick={() => setConfirmDeleteKey(k)}
+                      >
+                        <DeleteOutlineIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
+                ))}
+              </Stack>
+            ) : (
+              <Typography variant="body2" className="muted">
+                Create an API key to require authentication on /v1 gateway requests.
+              </Typography>
+            )}
           </DialogSection>
 
           <DialogSection
@@ -449,6 +567,102 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         danger
         onConfirm={() => purgeMutation.mutate()}
         onCancel={() => setConfirmPurge(false)}
+      />
+
+      <AppDialog
+        open={createKeyOpen}
+        onClose={() => setCreateKeyOpen(false)}
+        title={createdKey ? "API Key Created" : "Create API Key"}
+        actions={
+          createdKey ? (
+            <AppButton type="button" onClick={() => setCreateKeyOpen(false)}>
+              Done
+            </AppButton>
+          ) : (
+            <>
+              <AppButton type="button" ghost onClick={() => setCreateKeyOpen(false)}>
+                Cancel
+              </AppButton>
+              <AppButton
+                type="button"
+                disabled={!newKeyLabel.trim() || createKeyMutation.isPending}
+                onClick={() => createKeyMutation.mutate(newKeyLabel.trim())}
+              >
+                Create
+              </AppButton>
+            </>
+          )
+        }
+      >
+        {createdKey ? (
+          <Stack spacing={2}>
+            <Typography variant="body2">
+              Copy this key now. It will not be shown again.
+            </Typography>
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                p: 1.5,
+                borderRadius: 1,
+                bgcolor: "action.hover",
+                fontFamily: "monospace",
+                fontSize: "0.85rem",
+                wordBreak: "break-all"
+              }}
+            >
+              <Typography sx={{ fontFamily: "inherit", fontSize: "inherit", flex: 1 }}>
+                {createdKey.key}
+              </Typography>
+              <Tooltip title="Copy to clipboard">
+                <IconButton
+                  size="small"
+                  onClick={async () => {
+                    await copyToClipboard(createdKey.key);
+                    toast.success("Key copied to clipboard.");
+                  }}
+                >
+                  <ContentCopyIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          </Stack>
+        ) : (
+          <TextField
+            autoFocus
+            size="small"
+            label="Label"
+            placeholder='e.g. "laptop", "CI pipeline"'
+            value={newKeyLabel}
+            onChange={(e) => setNewKeyLabel(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && newKeyLabel.trim()) {
+                createKeyMutation.mutate(newKeyLabel.trim());
+              }
+            }}
+            fullWidth
+            helperText="A short name to identify this key."
+          />
+        )}
+      </AppDialog>
+
+      <ConfirmDialog
+        open={confirmDeleteKey !== null}
+        title="Delete API key?"
+        body={
+          confirmDeleteKey && apiKeysQuery.data && apiKeysQuery.data.length === 1
+            ? `This is the last key ("${confirmDeleteKey.label}"). Deleting it will make the gateway open to all requests.`
+            : confirmDeleteKey
+              ? `Delete key "${confirmDeleteKey.label}" (${confirmDeleteKey.prefix}...)? Clients using this key will lose access.`
+              : ""
+        }
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => {
+          if (confirmDeleteKey) deleteKeyMutation.mutate(confirmDeleteKey.id);
+        }}
+        onCancel={() => setConfirmDeleteKey(null)}
       />
     </>
   );

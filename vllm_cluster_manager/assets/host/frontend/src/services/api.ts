@@ -746,6 +746,32 @@ export function updateSettings(
 }
 
 // ---------------------------------------------------------------------------
+// API Keys
+// ---------------------------------------------------------------------------
+
+export type ApiKeyInfo = {
+  id: number;
+  label: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+};
+
+export type ApiKeyCreated = ApiKeyInfo & { key: string };
+
+export function fetchApiKeys(): Promise<ApiKeyInfo[]> {
+  return request<ApiKeyInfo[]>("/api-keys");
+}
+
+export function createApiKey(label: string): Promise<ApiKeyCreated> {
+  return requestWithDetail<ApiKeyCreated>("/api-keys", "POST", { label });
+}
+
+export function deleteApiKey(id: number): Promise<void> {
+  return requestWithDetail("/api-keys/" + id, "DELETE");
+}
+
+// ---------------------------------------------------------------------------
 // Managed local models (streamed uploads / URL pulls)
 // ---------------------------------------------------------------------------
 

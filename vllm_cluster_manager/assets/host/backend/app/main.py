@@ -12,7 +12,7 @@ from app.api.gateway import close_gateway_client, router as gateway_router
 from app.api.router import api_router
 from app.api.ws import router as ws_router
 from app.db.session import SessionLocal, engine
-from app.services import runtime_settings
+from app.services import api_keys, runtime_settings
 from app.services.client_api import close_client
 from app.services.sync import (
     sync_deployments_from_clients,
@@ -54,13 +54,16 @@ async def lifespan(_: FastAPI):
     # Load dashboard-saved setting overrides (env values are the defaults).
     async with SessionLocal() as session:
         await runtime_settings.load(session)
+        await api_keys.load(session)
     task = asyncio.create_task(sync_nodes_from_consul())
     deploy_task = asyncio.create_task(sync_deployments_from_clients())
     expiry_task = asyncio.create_task(enforce_deployment_expiry())
+    flush_task = asyncio.create_task(api_keys.flush_last_used_loop(SessionLocal))
     yield
     task.cancel()
     deploy_task.cancel()
     expiry_task.cancel()
+    flush_task.cancel()
     await close_client()
     await close_gateway_client()
 

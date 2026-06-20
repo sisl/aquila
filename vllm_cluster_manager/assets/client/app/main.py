@@ -3033,10 +3033,10 @@ async def _monitor_container(
                 break
             continue
 
-        # RAM pause or waking: container alive, engine offloaded/waking.
-        # Skip readiness/scrape; unexpected exit → error.
+        # RAM pause, offloading, or waking: container alive, engine
+        # offloaded/transitioning.  Skip readiness/scrape; unexpected exit → error.
         meta_snap = _statuses.get(key, {})
-        if meta_snap.get("pause_tier") == "ram" or meta_snap.get("status") == "waking":
+        if meta_snap.get("pause_tier") == "ram" or meta_snap.get("status") in ("waking", "offloading"):
             if status in ("exited", "dead") and key in _statuses:
                 _statuses[key]["status"] = "error"
                 _statuses[key]["exit_code"] = state.get("ExitCode")
