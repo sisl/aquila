@@ -18,3 +18,6 @@ class ApiKey(Base):
     last_used_at: Mapped[DateTime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    expires_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

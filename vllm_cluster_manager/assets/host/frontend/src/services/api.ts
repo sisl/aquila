@@ -733,6 +733,7 @@ export type RuntimeSettings = {
   expiry_check_interval_seconds: number;
   node_failure_threshold: number;
   deployment_failure_threshold: number;
+  temp_api_key_ttl_seconds: number;
 };
 
 export function fetchSettings(): Promise<RuntimeSettings> {
@@ -755,6 +756,7 @@ export type ApiKeyInfo = {
   prefix: string;
   created_at: string;
   last_used_at: string | null;
+  expires_at: string | null;
 };
 
 export type ApiKeyCreated = ApiKeyInfo & { key: string };
@@ -763,8 +765,10 @@ export function fetchApiKeys(): Promise<ApiKeyInfo[]> {
   return request<ApiKeyInfo[]>("/api-keys");
 }
 
-export function createApiKey(label: string): Promise<ApiKeyCreated> {
-  return requestWithDetail<ApiKeyCreated>("/api-keys", "POST", { label });
+export function createApiKey(label: string, ttlSeconds?: number): Promise<ApiKeyCreated> {
+  const body: Record<string, unknown> = { label };
+  if (ttlSeconds) body.ttl_seconds = ttlSeconds;
+  return requestWithDetail<ApiKeyCreated>("/api-keys", "POST", body);
 }
 
 export function deleteApiKey(id: number): Promise<void> {

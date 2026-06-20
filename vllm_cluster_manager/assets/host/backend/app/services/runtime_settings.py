@@ -49,6 +49,8 @@ _REGISTRY: dict[str, Callable[[], object]] = {
     "expiry_warning_minutes": lambda: settings.expiry_warning_minutes,
     # Data
     "node_metrics_retention_hours": lambda: settings.node_metrics_retention_hours,
+    # API keys
+    "temp_api_key_ttl_seconds": lambda: 300,
     # Warm cache
     "busy_guard_seconds": lambda: 0,
     # Advanced sync tuning

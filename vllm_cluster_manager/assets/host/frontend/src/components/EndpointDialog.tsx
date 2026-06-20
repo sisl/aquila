@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import { copyToClipboard } from "../services/clipboard";
@@ -10,8 +10,14 @@ import {
   Tooltip,
   Typography
 } from "@mui/material";
+import { useQuery } from "@tanstack/react-query";
 
-import { gatewayBaseUrl } from "../services/api";
+import {
+  createApiKey,
+  fetchApiKeys,
+  fetchSettings,
+  gatewayBaseUrl
+} from "../services/api";
 import type { Deployment, Node } from "../services/api";
 import { AppButton } from "./AppButton";
 import { AppDialog } from "./AppDialog";
@@ -21,7 +27,6 @@ import { useToast } from "./ToastProvider";
 type EndpointDialogProps = {
   deployment: Deployment | null;
   node: Node | null;
-  // Settings-controlled: when the gateway is off, only direct URLs are shown.
   gatewayEnabled?: boolean;
   open: boolean;
   onClose: () => void;
@@ -34,11 +39,11 @@ function servedName(deployment: Deployment): string {
   return typeof served === "string" && served ? served : deployment.model_name;
 }
 
-function pythonSnippet(baseUrl: string, model: string): string {
+function pythonSnippet(baseUrl: string, model: string, apiKey: string): string {
   return [
     "from openai import OpenAI",
     "",
-    `client = OpenAI(base_url="${baseUrl}", api_key="not-needed")`,
+    `client = OpenAI(base_url="${baseUrl}", api_key="${apiKey}")`,
     "resp = client.chat.completions.create(",
     `    model="${model}",`,
     '    messages=[{"role": "user", "content": "Hello"}],',
@@ -47,12 +52,18 @@ function pythonSnippet(baseUrl: string, model: string): string {
   ].join("\n");
 }
 
-function curlSnippet(baseUrl: string, model: string): string {
-  return [
+function curlSnippet(baseUrl: string, model: string, apiKey: string): string {
+  const lines = [
     `curl ${baseUrl}/chat/completions \\`,
-    '  -H "Content-Type: application/json" \\',
+    '  -H "Content-Type: application/json" \\'
+  ];
+  if (apiKey !== "not-needed") {
+    lines.push(`  -H "Authorization: Bearer ${apiKey}" \\`);
+  }
+  lines.push(
     `  -d '{"model": "${model}", "messages": [{"role": "user", "content": "Hello"}]}'`
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 
 type EndpointBlockProps = {
@@ -65,7 +76,6 @@ type EndpointBlockProps = {
   onCopy: (label: string, text: string) => void;
 };
 
-// Tiny text switch: the active kind reads in ink, the other stays muted.
 function UrlKindOption({
   label,
   active,
@@ -112,7 +122,6 @@ function EndpointBlock({ label, content, gatewayUrl, directUrl, kind, onKindChan
           borderRadius: "var(--radius)"
         }}
       >
-        {/* Controls live inside the field, top right: kind switch + copy. */}
         <Box
           sx={{
             display: "flex",
@@ -169,6 +178,37 @@ export function EndpointDialog({
 }: EndpointDialogProps) {
   const toast = useToast();
   const [urlKind, setUrlKind] = useState<UrlKind>("gateway");
+  const [tempKey, setTempKey] = useState<string | null>(null);
+  const creatingRef = useRef(false);
+
+  const settingsQuery = useQuery({
+    queryKey: ["settings"],
+    queryFn: fetchSettings,
+    enabled: open
+  });
+
+  const apiKeysQuery = useQuery({
+    queryKey: ["api-keys"],
+    queryFn: fetchApiKeys,
+    enabled: open
+  });
+
+  const ttl = settingsQuery.data?.temp_api_key_ttl_seconds ?? 300;
+  const hasPermanentKeys = (apiKeysQuery.data ?? []).some((k) => k.expires_at === null);
+
+  useEffect(() => {
+    if (!open) {
+      setTempKey(null);
+      creatingRef.current = false;
+      return;
+    }
+    if (!hasPermanentKeys || ttl <= 0 || creatingRef.current || tempKey) return;
+    creatingRef.current = true;
+    createApiKey("snippet (temp)", ttl)
+      .then((result) => setTempKey(result.key))
+      .catch(() => setTempKey(null))
+      .finally(() => { creatingRef.current = false; });
+  }, [open, hasPermanentKeys, ttl, tempKey]);
 
   if (!deployment) {
     return null;
@@ -180,6 +220,9 @@ export function EndpointDialog({
   const loraNames = (deployment.lora_modules ?? [])
     .map((module) => module.name)
     .filter(Boolean);
+
+  const apiKey = tempKey ?? "not-needed";
+  const ttlMinutes = Math.round(ttl / 60);
 
   const copy = async (label: string, text: string) => {
     try {
@@ -225,7 +268,7 @@ export function EndpointDialog({
         />
         <EndpointBlock
           label="Python (openai client)"
-          content={(baseUrl) => pythonSnippet(baseUrl, model)}
+          content={(baseUrl) => pythonSnippet(baseUrl, model, apiKey)}
           gatewayUrl={gatewayUrl}
           directUrl={directUrl}
           kind={gatewayUrl ? urlKind : "direct"}
@@ -234,13 +277,18 @@ export function EndpointDialog({
         />
         <EndpointBlock
           label="curl"
-          content={(baseUrl) => curlSnippet(baseUrl, model)}
+          content={(baseUrl) => curlSnippet(baseUrl, model, apiKey)}
           gatewayUrl={gatewayUrl}
           directUrl={directUrl}
           kind={gatewayUrl ? urlKind : "direct"}
           onKindChange={setUrlKind}
           onCopy={copy}
         />
+        {tempKey && (
+          <Typography variant="caption" className="muted">
+            Using a temporary API key valid for {ttlMinutes} min.
+          </Typography>
+        )}
       </Stack>
     </AppDialog>
   );

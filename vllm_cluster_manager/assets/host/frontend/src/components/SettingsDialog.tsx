@@ -304,6 +304,16 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 Create an API key to require authentication on /v1 gateway requests.
               </Typography>
             )}
+            <TextField
+              size="small"
+              label="Snippet key lifetime (s)"
+              type="number"
+              inputProps={{ min: 0, max: 3600 }}
+              value={draft.temp_api_key_ttl_seconds ?? ""}
+              onChange={(event) => set("temp_api_key_ttl_seconds", num(event.target.value))}
+              helperText="Temporary key lifespan for endpoint code snippets. 0 = disabled."
+              sx={{ width: 220, mt: 2 }}
+            />
           </DialogSection>
 
           <DialogSection
@@ -572,6 +582,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       <AppDialog
         open={createKeyOpen}
         onClose={() => setCreateKeyOpen(false)}
+        maxWidth="xs"
         title={createdKey ? "API Key Created" : "Create API Key"}
         actions={
           createdKey ? (
