@@ -358,6 +358,22 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           </DialogSection>
 
           <DialogSection
+            title="Warm Cache"
+            hint="Controls how GPU models are swapped in and out of VRAM."
+          >
+            <TextField
+              size="small"
+              label="Busy guard (s)"
+              type="number"
+              inputProps={{ min: 0, max: 300 }}
+              value={draft.busy_guard_seconds ?? ""}
+              onChange={(event) => set("busy_guard_seconds", num(event.target.value))}
+              helperText="Seconds after a model's last request before it can be auto-evicted. 0 = evict immediately when idle."
+              sx={{ width: 220 }}
+            />
+          </DialogSection>
+
+          <DialogSection
             title="Advanced"
             hint="Sync tuning — the defaults are sensible; changes apply live."
           >

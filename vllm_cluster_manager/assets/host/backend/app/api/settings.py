@@ -30,6 +30,7 @@ class RuntimeSettingsUpdate(BaseModel):
     webhook_url: str | None = None
     expiry_warning_minutes: int | None = Field(None, ge=1, le=1440)
     node_metrics_retention_hours: int | None = Field(None, ge=1, le=8760)
+    busy_guard_seconds: int | None = Field(None, ge=0, le=300)
     nodes_sync_interval_seconds: int | None = Field(None, ge=2, le=300)
     deployments_sync_interval_seconds: int | None = Field(None, ge=2, le=300)
     expiry_check_interval_seconds: int | None = Field(None, ge=5, le=600)

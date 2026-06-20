@@ -265,8 +265,11 @@ def _accumulate_usage(deployment, counters: dict[str, object]) -> None:
         previous = last.get(metric)
         if previous is not None and current >= previous:
             delta = current - previous
+        elif previous is not None:
+            delta = current  # counter reset (vLLM container restarted)
         else:
-            delta = current  # first sample or counter reset after restart
+            existing = int(getattr(deployment, attr) or 0)
+            delta = current if existing == 0 else 0
         if delta > 0:
             setattr(deployment, attr, int(getattr(deployment, attr) or 0) + delta)
     if seen:
@@ -444,6 +447,7 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
                                 bool(node.warm_offload_enabled),
                                 node.ram_cache_limit_mb,
                                 pins,
+                                busy_guard_seconds=runtime_settings.get_int("busy_guard_seconds"),
                             )
                         except Exception as exc:
                             logger.debug("Config push to %s failed: %s", node.hostname, exc)

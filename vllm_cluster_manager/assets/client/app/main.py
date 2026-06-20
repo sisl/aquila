@@ -92,6 +92,7 @@ _logs: dict[str, deque[str]] = {}
 _node_policy: dict[str, object] = {
     "warm_offload_enabled": False,
     "ram_cache_limit_mb": None,
+    "busy_guard_seconds": 0,
 }
 # Single-flight wake: concurrent callers for one key share one resume.
 _resume_locks: dict[str, asyncio.Lock] = {}
@@ -107,7 +108,8 @@ _INTERNAL_PORT_RANGE = range(41000, 42000)
 # compiled artifacts and orphans are attributable.
 _VLLM_CACHE_MOUNT = "/root/.cache/vllm"
 # Don't auto-evict a model with in-flight requests or used within this window.
-_BUSY_GUARD_SECONDS = 30.0
+# Configured via the host's busy_guard_seconds setting (pushed to _node_policy).
+_BUSY_GUARD_SECONDS_DEFAULT = 0.0
 # How long the proxy holds a request while resuming before returning 503.
 _RESUME_WAIT_CAP_SECONDS = 120.0
 # A vLLM process holding at least this much RSS with no/low VRAM is treated as
@@ -1857,15 +1859,13 @@ async def start_deployment(payload: StartRequest) -> dict[str, object]:
             if reason:
                 raise HTTPException(status_code=409, detail=reason)
         else:
-            ok, offloaded = fit
+            ok, offloaded, fit_reason = fit
             if not ok:
                 raise HTTPException(
                     status_code=507,
-                    detail=(
-                        "GPU is full and no model is eligible for automatic offload "
-                        "(all candidates are pinned, actively serving, or were "
-                        "deployed before warm cache was enabled). Pin fewer models, "
-                        "stop one, or lower the GPU memory fraction."
+                    detail=fit_reason or (
+                        "GPU is full and no model is eligible for automatic offload. "
+                        "Pin fewer models, stop one, or lower the GPU memory fraction."
                     ),
                 )
 
@@ -2198,15 +2198,9 @@ async def resume_deployment(payload: ResumeRequest) -> dict[str, str]:
         raise HTTPException(status_code=404, detail="Deployment not found")
     if not meta.get("pause_tier"):
         return {"status": "running", "key": payload.key}
-    ok = await _ensure_active(payload.key)
+    ok, reason = await _ensure_active(payload.key)
     if not ok:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Could not resume: the GPU is full and nothing is eligible to "
-                "offload, or the wake timed out. Try again or free a GPU."
-            ),
-        )
+        raise HTTPException(status_code=503, detail=reason)
     return {"status": "running", "key": payload.key}
 
 
@@ -2230,6 +2224,7 @@ class ConfigRequest(BaseModel):
     ram_cache_limit_mb: int | None = None
     # Authoritative set of pinned deployment keys (when provided).
     pins: list[str] | None = None
+    busy_guard_seconds: int | None = None
 
 
 @app.post("/config")
@@ -2238,6 +2233,8 @@ def set_config(payload: ConfigRequest) -> dict[str, object]:
     if payload.warm_offload_enabled is not None:
         _node_policy["warm_offload_enabled"] = bool(payload.warm_offload_enabled)
     _node_policy["ram_cache_limit_mb"] = payload.ram_cache_limit_mb
+    if payload.busy_guard_seconds is not None:
+        _node_policy["busy_guard_seconds"] = max(0, int(payload.busy_guard_seconds))
     if payload.pins is not None:
         pinned = set(payload.pins)
         for key, meta in _statuses.items():
@@ -2446,7 +2443,7 @@ async def _proxy_request(key: str, path: str, request: Request) -> Response:
     is_generation = request.method == "POST" and path in _GENERATION_PATHS
     tier = meta.get("pause_tier")
     if tier and is_generation:
-        ok = await _ensure_active(key)
+        ok, _resume_reason = await _ensure_active(key)
         if not ok:
             return _agent_openai_error(
                 503, "Model is resuming; retry shortly.", "model_resuming"
@@ -2546,14 +2543,21 @@ def _reserved_by_gpu() -> dict[int, float]:
     return reserved
 
 
+def _busy_guard_seconds() -> float:
+    val = _node_policy.get("busy_guard_seconds")
+    return float(val) if isinstance(val, (int, float)) else _BUSY_GUARD_SECONDS_DEFAULT
+
+
 def _is_busy(meta: dict) -> bool:
     """Traffic guard: a model is busy if it has in-flight or very recent work."""
     running = meta.get("requests_running")
     if isinstance(running, (int, float)) and running > 0:
         return True
-    last = meta.get("last_active_at")
-    if isinstance(last, (int, float)) and (time.monotonic() - last) < _BUSY_GUARD_SECONDS:
-        return True
+    guard = _busy_guard_seconds()
+    if guard > 0:
+        last = meta.get("last_active_at")
+        if isinstance(last, (int, float)) and (time.monotonic() - last) < guard:
+            return True
     return False
 
 
@@ -2678,13 +2682,37 @@ def _plan_eviction(
                 f"{fraction:.2f} requested = {reserved.get(g, 0.0) + fraction:.2f}"
                 for g in over
             ]
+            skip_reasons: list[str] = []
+            over_set = set(over)
+            for ckey, cmeta in _statuses.items():
+                if ckey == requester_key or ckey in chosen_keys:
+                    continue
+                if not (set(_gpu_ids(cmeta)) & over_set):
+                    continue
+                if cmeta.get("pause_tier") or ckey not in _containers:
+                    continue
+                if cmeta.get("status") != "running":
+                    continue
+                name = cmeta.get("model_name", "?")
+                if not _warm_capable(cmeta):
+                    skip_reasons.append(f"{name}: not warm-capable")
+                elif cmeta.get("pinned"):
+                    skip_reasons.append(f"{name}: pinned")
+                elif _is_busy(cmeta):
+                    skip_reasons.append(
+                        f"{name}: busy guard ({_busy_guard_seconds():.0f}s)"
+                    )
             reason = (
                 f"Cannot fit on {', '.join(f'GPU {g}' for g in over)}: "
-                f"{'; '.join(detail_parts)}. "
-                f"All models on those GPUs are either pinned, actively serving "
-                f"(busy guard {_BUSY_GUARD_SECONDS:.0f}s), or not warm-capable. "
-                f"Pin fewer models, stop one, lower the GPU memory fraction, "
-                f"or redeploy legacy models."
+                f"{'; '.join(detail_parts)}."
+            )
+            if skip_reasons:
+                reason += f" Skipped: {'; '.join(skip_reasons)}."
+            else:
+                reason += " No running warm-capable models found on those GPUs."
+            reason += (
+                " Pin fewer models, stop one, lower the GPU memory fraction, "
+                "or wait for the busy guard to expire."
             )
             return {"fits": False, "plan": chosen, "over_gpus": over, "reason": reason}
         meta = _statuses[victim]
@@ -2725,20 +2753,20 @@ def _plan_eviction(
 
 async def _ensure_fit(
     target_gpu_ids: "list[int]", fraction: float, requester_key: str
-) -> "tuple[bool, list[dict]] | None":
+) -> "tuple[bool, list[dict], str] | None":
     """Make room on the target GPUs by offloading LRU warm models.
 
     Plans the eviction (:func:`_plan_eviction`) under the per-GPU locks, then
     executes it with explicit per-victim tiers so a non-warm model is never sent
-    to RAM. Returns ``(fits, offloaded)`` where *offloaded* is the list of
-    ``{"key","model_name","tier"}`` actually paused, or ``None`` when warm-offload
-    is disabled (the caller should fall back to the plain resource pre-check).
+    to RAM. Returns ``(fits, offloaded, reason)`` where *offloaded* is the list
+    of ``{"key","model_name","tier"}`` actually paused and *reason* explains a
+    failure, or ``None`` when warm-offload is disabled.
     """
     if not _warm_enabled():
         return None
     gpus = list(target_gpu_ids) if target_gpu_ids else _all_gpu_indices()
     if not gpus:
-        return True, []  # only unified-memory metrics — can't reason, allow
+        return True, [], ""
     held_ids: set[int] = set()
     locks: list[asyncio.Lock] = []
     for g in sorted(set(gpus)):
@@ -2749,7 +2777,7 @@ async def _ensure_fit(
     try:
         plan = _plan_eviction(gpus, fraction, requester_key)
         if not plan["fits"]:
-            return False, []  # don't half-evict if it can't be made to fit
+            return False, [], plan.get("reason") or "eviction plan failed"
         # Extend lock set to cover all victim GPUs (prevents concurrent
         # operations from claiming space freed on unlocked victim GPUs).
         if plan["plan"]:
@@ -2766,7 +2794,7 @@ async def _ensure_fit(
             # Re-validate under broader lock set.
             plan = _plan_eviction(gpus, fraction, requester_key)
             if not plan["fits"]:
-                return False, []
+                return False, [], plan.get("reason") or "re-validation failed after extending locks"
         offloaded: list[dict] = []
         for step in plan["plan"]:
             meta = _statuses.get(step["key"])
@@ -2782,8 +2810,8 @@ async def _ensure_fit(
             )
         reserved = _reserved_by_gpu()
         if any(reserved.get(g, 0.0) + fraction > 1.0 + 1e-6 for g in gpus):
-            return False, offloaded
-        return True, offloaded
+            return False, offloaded, "GPU still over-committed after evictions completed"
+        return True, offloaded, ""
     finally:
         for lock in locks:
             lock.release()
@@ -2854,20 +2882,39 @@ async def _pause(key: str, tier: str | None = None) -> None:
     await _pause_to_ram(meta, key)
 
 
-async def _ensure_active(key: str, cap: float = _RESUME_WAIT_CAP_SECONDS) -> bool:
-    """Wake a paused deployment (evicting others if needed). Idempotent."""
+async def _ensure_active(key: str, cap: float = _RESUME_WAIT_CAP_SECONDS) -> "tuple[bool, str]":
+    """Wake a paused deployment (evicting others if needed). Idempotent.
+
+    Returns ``(success, reason)`` where *reason* explains a failure.
+    """
     async with _resume_lock(key):
         meta = _statuses.get(key)
         if not meta:
-            return False
+            return False, "Deployment not found in agent state."
         tier = meta.get("pause_tier")
         if not tier:
-            return True  # already active
+            return True, ""
         if tier != "ram":
-            return False
-        fit = await _ensure_fit(_gpu_ids(meta), float(meta.get("gpu_memory_fraction") or 0.0), key)
+            return False, f"Pause tier is '{tier}'; only 'ram' supports resume."
+        # Retry until the busy guard expires so explicit resumes don't fail
+        # just because the eviction target served traffic recently.
+        fit = None
+        fit_reason = ""
+        fit_deadline = time.monotonic() + _busy_guard_seconds() + 2
+        while True:
+            fit = await _ensure_fit(
+                _gpu_ids(meta), float(meta.get("gpu_memory_fraction") or 0.0), key
+            )
+            if fit is None:
+                break
+            if fit[0]:
+                break
+            fit_reason = fit[2]
+            if time.monotonic() >= fit_deadline:
+                return False, fit_reason
+            await asyncio.sleep(1.0)
         if fit is not None and not fit[0]:
-            return False
+            return False, fit_reason
         # Claim GPU space immediately so concurrent operations see it as
         # occupied while the model wakes (closes the race window between
         # _ensure_fit releasing locks and the wake completing).
@@ -2882,11 +2929,12 @@ async def _ensure_active(key: str, cap: float = _RESUME_WAIT_CAP_SECONDS) -> boo
         if ok:
             meta["status"] = "running"
             meta["last_active_at"] = time.monotonic()
+            return True, ""
         else:
             meta["pause_tier"] = "ram"
             meta["status"] = "paused_ram"
             meta["paused_ram_mb"] = _ram_estimate(meta)
-        return ok
+            return False, f"Eviction succeeded but model failed to wake within {cap:.0f}s."
 
 
 def _restart_threshold(key: str) -> int:

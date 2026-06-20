@@ -677,6 +677,7 @@ export type RuntimeSettings = {
   webhook_url: string;
   expiry_warning_minutes: number;
   node_metrics_retention_hours: number;
+  busy_guard_seconds: number;
   nodes_sync_interval_seconds: number;
   deployments_sync_interval_seconds: number;
   expiry_check_interval_seconds: number;

@@ -329,17 +329,17 @@ async def push_node_config(
     warm_offload_enabled: bool,
     ram_cache_limit_mb: int | None,
     pins: list[str] | None = None,
+    busy_guard_seconds: int | None = None,
 ) -> dict[str, object]:
     url = _satellite_url(node_ip, node_port, "/config")
-    response = await get_client().post(
-        url,
-        json={
-            "warm_offload_enabled": warm_offload_enabled,
-            "ram_cache_limit_mb": ram_cache_limit_mb,
-            "pins": pins,
-        },
-        timeout=10.0,
-    )
+    payload: dict[str, object] = {
+        "warm_offload_enabled": warm_offload_enabled,
+        "ram_cache_limit_mb": ram_cache_limit_mb,
+        "pins": pins,
+    }
+    if busy_guard_seconds is not None:
+        payload["busy_guard_seconds"] = busy_guard_seconds
+    response = await get_client().post(url, json=payload, timeout=10.0)
     response.raise_for_status()
     return response.json()
 

@@ -54,6 +54,7 @@ from app.services.client_api import (
     list_local_models,
     delete_local_model,
 )
+from app.services import runtime_settings
 from app.ws.manager import manager
 
 router = APIRouter()
@@ -194,7 +195,8 @@ async def set_node_warm_cache(
     # node still converges.
     try:
         await push_node_config(
-            node.ip_address, node.port, node.warm_offload_enabled, node.ram_cache_limit_mb
+            node.ip_address, node.port, node.warm_offload_enabled, node.ram_cache_limit_mb,
+            busy_guard_seconds=runtime_settings.get_int("busy_guard_seconds"),
         )
     except Exception as exc:
         logger.warning("Pushing warm-cache config to %s failed: %s", node.hostname, exc)
