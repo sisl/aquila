@@ -79,7 +79,11 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       toast.success("Settings saved. Changes apply immediately.");
       onClose();
     },
-    onError: (error) => setActionError(errorMessage(error))
+    onError: (error) => {
+      const msg = errorMessage(error);
+      setActionError(msg);
+      toast.error(msg);
+    }
   });
 
   const purgeMutation = useMutation({

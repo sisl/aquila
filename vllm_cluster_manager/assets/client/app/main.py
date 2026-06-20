@@ -1852,15 +1852,30 @@ async def start_deployment(payload: StartRequest) -> dict[str, object]:
     warm = _warm_for(payload)
     offloaded: list[dict] = []
     if not payload.skip_resource_check:
-        fit = await _ensure_fit(payload.gpu_ids or [], payload.gpu_memory_fraction, key)
+        _statuses[key] = {
+            "model_name": payload.model_name,
+            "port": payload.port,
+            "status": "starting",
+            "phase": "offloading models",
+            "desired_state": "running",
+            "launch_manifest": {},
+            "container_runtime": None,
+        }
+        try:
+            fit = await _ensure_fit(payload.gpu_ids or [], payload.gpu_memory_fraction, key)
+        except Exception:
+            _statuses.pop(key, None)
+            raise
         if fit is None:
             # Warm-offload disabled — fall back to the plain resource pre-check.
             reason = _check_gpu_resources(payload)
             if reason:
+                _statuses.pop(key, None)
                 raise HTTPException(status_code=409, detail=reason)
         else:
             ok, offloaded, fit_reason = fit
             if not ok:
+                _statuses.pop(key, None)
                 raise HTTPException(
                     status_code=507,
                     detail=fit_reason or (
@@ -2864,6 +2879,7 @@ async def _wait_awake(internal: object, cap: float) -> bool:
 
 
 async def _pause_to_ram(meta: dict, key: str) -> None:
+    meta["status"] = "offloading"
     await _vllm_sleep(meta.get("internal_port"), level=1)
     meta["pause_tier"] = "ram"
     meta["status"] = "paused_ram"

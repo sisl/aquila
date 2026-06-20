@@ -9,12 +9,12 @@ from app.models.base import Base
 # friendly pre-check SELECT, but only one insert wins. Paused deployments keep
 # their slot: the warm-mode agent proxy holds the public port across pauses.
 ACTIVE_STATUSES = (
-    "starting", "loading", "running", "stopping", "paused_ram"
+    "starting", "loading", "running", "stopping", "paused_ram", "offloading"
 )
 
 _ACTIVE_PREDICATE = text(
     "status IN ('starting', 'loading', 'running', 'stopping', "
-    "'paused_ram')"
+    "'paused_ram', 'offloading')"
 )
 
 

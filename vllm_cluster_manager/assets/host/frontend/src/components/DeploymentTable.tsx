@@ -118,7 +118,7 @@ function statusColor(
   if (status === "running") return "success";
   if (status === "expired") return "warning";
   if (status === "error" || status === "unreachable") return "error";
-  if (status === "paused_ram") return "info";
+  if (status === "paused_ram" || status === "offloading") return "info";
   return "default";
 }
 
@@ -192,6 +192,7 @@ function statusLabel(deployment: Deployment): string {
     return `${deployment.status} (${deployment.detail.replace(/_/g, " ")}${pull})`;
   }
   if (deployment.status === "paused_ram") return "paused (RAM)";
+  if (deployment.status === "offloading") return "offloading to RAM…";
   return deployment.status;
 }
 

@@ -501,7 +501,7 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
                             phase = client_dep.get("phase")
                             deployment.detail = (
                                 str(phase)
-                                if phase and client_status in ("starting", "loading")
+                                if phase and client_status in ("starting", "loading", "offloading")
                                 else None
                             )
                             # Transient image-pull progress (starting only).
@@ -538,7 +538,7 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
                                 deployment.expires_at = now + timedelta(
                                     seconds=deployment.duration_seconds
                                 )
-                        elif deployment.status in ("starting", "loading"):
+                        elif deployment.status in ("starting", "loading", "offloading"):
                             # The start request may still be in flight on the
                             # client (image pull etc.); only give up after the
                             # configured timeout.

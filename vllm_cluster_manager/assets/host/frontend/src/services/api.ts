@@ -176,8 +176,18 @@ export async function startDeployment(payload: DeploymentStart): Promise<Deploym
   if (!response.ok) {
     let detail = "";
     try {
-      const body = (await response.json()) as { detail?: string };
-      detail = body.detail ?? "";
+      const body = (await response.json()) as { detail?: unknown };
+      if (typeof body.detail === "string") {
+        detail = body.detail;
+      } else if (Array.isArray(body.detail)) {
+        detail = body.detail
+          .map((e: { msg?: string; loc?: string[] }) => {
+            const field = e.loc?.filter((s) => s !== "body").join(".") ?? "";
+            return field ? `${field}: ${e.msg}` : (e.msg ?? "");
+          })
+          .filter(Boolean)
+          .join("; ");
+      }
     } catch {
       detail = "";
     }
@@ -209,8 +219,18 @@ export async function restartDeployment(
   if (!response.ok) {
     let detail = "";
     try {
-      const body = (await response.json()) as { detail?: string };
-      detail = body.detail ?? "";
+      const body = (await response.json()) as { detail?: unknown };
+      if (typeof body.detail === "string") {
+        detail = body.detail;
+      } else if (Array.isArray(body.detail)) {
+        detail = body.detail
+          .map((e: { msg?: string; loc?: string[] }) => {
+            const field = e.loc?.filter((s) => s !== "body").join(".") ?? "";
+            return field ? `${field}: ${e.msg}` : (e.msg ?? "");
+          })
+          .filter(Boolean)
+          .join("; ");
+      }
     } catch {
       detail = "";
     }
@@ -233,8 +253,18 @@ export async function extendDeployment(
   if (!response.ok) {
     let detail = "";
     try {
-      const body = (await response.json()) as { detail?: string };
-      detail = body.detail ?? "";
+      const body = (await response.json()) as { detail?: unknown };
+      if (typeof body.detail === "string") {
+        detail = body.detail;
+      } else if (Array.isArray(body.detail)) {
+        detail = body.detail
+          .map((e: { msg?: string; loc?: string[] }) => {
+            const field = e.loc?.filter((s) => s !== "body").join(".") ?? "";
+            return field ? `${field}: ${e.msg}` : (e.msg ?? "");
+          })
+          .filter(Boolean)
+          .join("; ");
+      }
     } catch {
       detail = "";
     }
@@ -403,8 +433,18 @@ async function requestWithDetail<T>(
   if (!response.ok) {
     let detail = "";
     try {
-      const body = (await response.json()) as { detail?: string };
-      detail = body.detail ?? "";
+      const body = (await response.json()) as { detail?: unknown };
+      if (typeof body.detail === "string") {
+        detail = body.detail;
+      } else if (Array.isArray(body.detail)) {
+        detail = body.detail
+          .map((e: { msg?: string; loc?: string[] }) => {
+            const field = e.loc?.filter((s) => s !== "body").join(".") ?? "";
+            return field ? `${field}: ${e.msg}` : (e.msg ?? "");
+          })
+          .filter(Boolean)
+          .join("; ");
+      }
     } catch {
       detail = "";
     }
@@ -575,8 +615,18 @@ export async function setNodeMaintenance(
   if (!response.ok) {
     let detail = "";
     try {
-      const body = (await response.json()) as { detail?: string };
-      detail = body.detail ?? "";
+      const body = (await response.json()) as { detail?: unknown };
+      if (typeof body.detail === "string") {
+        detail = body.detail;
+      } else if (Array.isArray(body.detail)) {
+        detail = body.detail
+          .map((e: { msg?: string; loc?: string[] }) => {
+            const field = e.loc?.filter((s) => s !== "body").join(".") ?? "";
+            return field ? `${field}: ${e.msg}` : (e.msg ?? "");
+          })
+          .filter(Boolean)
+          .join("; ");
+      }
     } catch {
       detail = "";
     }
