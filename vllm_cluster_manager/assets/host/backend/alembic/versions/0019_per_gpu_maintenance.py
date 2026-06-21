@@ -23,7 +23,7 @@ def upgrade() -> None:
 
     conn = op.get_bind()
     rows = conn.execute(
-        sa.text("SELECT id, gpu_usage FROM nodes WHERE maintenance = 1")
+        sa.text("SELECT id, gpu_usage FROM nodes WHERE maintenance = true")
     )
     for row in rows:
         gpu_usage = row.gpu_usage
@@ -42,13 +42,13 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.add_column(
         "nodes",
-        sa.Column("maintenance", sa.Boolean, nullable=False, server_default="0"),
+        sa.Column("maintenance", sa.Boolean, nullable=False, server_default="false"),
     )
 
     conn = op.get_bind()
     conn.execute(
         sa.text(
-            "UPDATE nodes SET maintenance = 1 "
+            "UPDATE nodes SET maintenance = true "
             "WHERE maintenance_gpus != '[]' AND maintenance_gpus IS NOT NULL"
         )
     )

@@ -2171,6 +2171,11 @@ async def pause_deployment(payload: PauseRequest) -> dict[str, object]:
         )
     if meta.get("status") != "running":
         raise HTTPException(status_code=409, detail="Only a running deployment can be paused.")
+    if _is_unified_memory():
+        raise HTTPException(
+            status_code=409,
+            detail="Pause is not supported on unified-memory nodes.",
+        )
     tier = payload.tier if payload.tier in ("ram", "disk") else None
     await _pause(payload.key, tier)
     return {"status": "paused", "key": payload.key, "tier": meta.get("pause_tier")}
@@ -2521,6 +2526,10 @@ async def _stop_proxy(key: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _is_unified_memory() -> bool:
+    return any(g.get("source") == "unified" for g in _gpu_metrics())
+
+
 def _all_gpu_indices() -> list[int]:
     out: list[int] = []
     for gpu in _gpu_metrics():
@@ -2650,6 +2659,8 @@ def _lru_paused_ram() -> str | None:
 
 def _auto_tier(meta: dict) -> str | None:
     """Return ``"ram"`` when the model can be paused to RAM, else ``None``."""
+    if _is_unified_memory():
+        return None
     if not _warm_capable(meta):
         return None
     limit = _ram_limit_mb()
@@ -2890,6 +2901,8 @@ async def _pause_to_ram(meta: dict, key: str) -> None:
 async def _pause(key: str, tier: str | None = None) -> None:
     meta = _statuses.get(key)
     if not meta or meta.get("pause_tier"):
+        return
+    if _is_unified_memory():
         return
     if tier is None:
         tier = _auto_tier(meta)

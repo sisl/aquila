@@ -51,6 +51,7 @@ type DeploymentTableProps = {
   onResume?: (deployment: Deployment) => void;
   onPin?: (deployment: Deployment, pinned: boolean) => void;
   isWarmNode?: (nodeId: number) => boolean;
+  isUnifiedNode?: (nodeId: number) => boolean;
   nodeNameById: Record<number, string>;
 };
 
@@ -211,6 +212,7 @@ export function DeploymentTable({
   onResume,
   onPin,
   isWarmNode,
+  isUnifiedNode,
   nodeNameById
 }: DeploymentTableProps) {
   const [extendMenu, setExtendMenu] = useState<{
@@ -588,6 +590,7 @@ export function DeploymentTable({
                   <DeploymentActions
                     deployment={deployment}
                     isWarmNode={isWarmNode}
+                    isUnifiedMemory={isUnifiedNode?.(deployment.node_id)}
                     onSettings={() => onSettings(deployment)}
                     onLogs={() => onLogs(deployment.id)}
                     onEndpoint={onEndpoint ? () => onEndpoint(deployment) : undefined}

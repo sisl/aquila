@@ -156,6 +156,9 @@ async def sync_nodes_from_consul(interval_seconds: int = 10) -> None:
                             available_runtimes=available_runtimes
                             if isinstance(available_runtimes, list)
                             else [],
+                            warm_offload_enabled=runtime_settings.get_bool(
+                                "default_warm_offload_enabled"
+                            ),
                         )
                         session.add(node)
                         nodes_changed = True

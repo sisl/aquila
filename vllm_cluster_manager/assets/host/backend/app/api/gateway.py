@@ -32,6 +32,7 @@ def _require_gateway(request: Request) -> None:
         )
 
     if not api_keys.has_keys():
+        request.state.allowed_deployment_ids = None
         return
 
     auth = request.headers.get("authorization", "")
@@ -40,8 +41,10 @@ def _require_gateway(request: Request) -> None:
             status_code=401,
             detail="API key required. Set Authorization: Bearer <key>.",
         )
-    if not api_keys.validate(auth.removeprefix("Bearer ").strip()):
+    raw = auth.removeprefix("Bearer ").strip()
+    if not api_keys.validate(raw):
         raise HTTPException(status_code=401, detail="Invalid API key.")
+    request.state.allowed_deployment_ids = api_keys.get_allowed_deployments(raw)
 
 
 router = APIRouter(dependencies=[Depends(_require_gateway)])
@@ -138,14 +141,18 @@ def _openai_error(
 _ROUTABLE_STATUSES = ("running", "paused_ram")
 
 
-async def _resolve(session: AsyncSession, model: str):
+async def _resolve(
+    session: AsyncSession, model: str, allowed_ids: set[int] | None = None
+):
     """Return (deployment, node) for *model*, or a JSONResponse error."""
     result = await session.execute(select(Deployment))
     deployments = list(result.scalars().all())
 
-    outcome, value = _choose(
-        [d for d in deployments if d.status in _ROUTABLE_STATUSES], model
-    )
+    routable = [d for d in deployments if d.status in _ROUTABLE_STATUSES]
+    if allowed_ids is not None:
+        routable = [d for d in routable if d.id in allowed_ids]
+
+    outcome, value = _choose(routable, model)
     if outcome == "ambiguous":
         return _openai_error(
             400,
@@ -155,13 +162,14 @@ async def _resolve(session: AsyncSession, model: str):
             "model_ambiguous",
         )
     if outcome == "none":
-        pending_outcome, pending = _choose(
-            [d for d in deployments if d.status in ("starting", "loading")], model
-        )
+        pending = [d for d in deployments if d.status in ("starting", "loading")]
+        if allowed_ids is not None:
+            pending = [d for d in pending if d.id in allowed_ids]
+        pending_outcome, pending_match = _choose(pending, model)
         if pending_outcome == "ok":
             return _openai_error(
                 503,
-                f"Model '{model}' is still loading (deployment {pending.id}); retry shortly.",
+                f"Model '{model}' is still loading (deployment {pending_match.id}); retry shortly.",
                 "upstream_error",
                 "model_loading",
             )
@@ -175,8 +183,7 @@ async def _resolve(session: AsyncSession, model: str):
         available = sorted(
             {
                 alias
-                for d in deployments
-                if d.status in _ROUTABLE_STATUSES
+                for d in routable
                 for alias in _model_aliases(d)
             }
         )
@@ -220,7 +227,8 @@ async def _proxy(request: Request, endpoint_path: str, session: AsyncSession) ->
             400, "Missing required 'model' field.", "invalid_request_error", "missing_model"
         )
 
-    resolved = await _resolve(session, model)
+    allowed = getattr(request.state, "allowed_deployment_ids", None)
+    resolved = await _resolve(session, model, allowed_ids=allowed)
     if isinstance(resolved, JSONResponse):
         return resolved
     deployment, node = resolved
@@ -311,12 +319,17 @@ async def embeddings(
 
 
 @router.get("/models")
-async def list_models(session: AsyncSession = Depends(get_session)) -> dict[str, object]:
+async def list_models(
+    request: Request, session: AsyncSession = Depends(get_session)
+) -> dict[str, object]:
     result = await session.execute(
         select(Deployment).where(Deployment.status.in_(_ROUTABLE_STATUSES))
     )
+    allowed = getattr(request.state, "allowed_deployment_ids", None)
     data: list[dict[str, object]] = []
     for deployment in result.scalars().all():
+        if allowed is not None and deployment.id not in allowed:
+            continue
         served = _served_name(deployment) or deployment.model_name
         created = (
             int(deployment.created_at.timestamp()) if deployment.created_at else 0

@@ -18,6 +18,7 @@ import { useToast } from "./ToastProvider";
 type DeploymentActionsProps = {
   deployment: Deployment;
   isWarmNode?: (nodeId: number) => boolean;
+  isUnifiedMemory?: boolean;
   onSettings: () => void;
   onLogs: () => void;
   onEndpoint?: () => void;
@@ -29,19 +30,22 @@ type DeploymentActionsProps = {
   onDeleteClick: () => void;
 };
 
-const ICON_SX = { fontSize: 16, opacity: 0.45, transition: "opacity 120ms ease" } as const;
-const ICON_ERR_SX = { fontSize: 16, opacity: 0.55, transition: "opacity 120ms ease" } as const;
+const ICON_SX = { fontSize: 16, opacity: 0.45 } as const;
+const ICON_ERR_SX = { fontSize: 16, opacity: 0.55 } as const;
 
 const BTN_SX = {
   minWidth: "unset",
   px: 0.75,
-  py: 0.5,
+  pt: 0.5,
+  pb: 0.25,
   position: "relative",
+  "&:hover": { backgroundColor: "transparent" },
   "@media (hover: hover)": {
-    "&:hover .MuiSvgIcon-root": { opacity: 1 },
+    "&:hover .MuiSvgIcon-root": { opacity: 1, transform: "translateY(-4px)" },
+    "& .MuiSvgIcon-root": { transition: "opacity 120ms ease, transform 120ms ease" },
     "& .act-label": {
       position: "absolute",
-      top: "calc(100% + 2px)",
+      top: "calc(100% - 2px)",
       left: "50%",
       transform: "translateX(-50%)",
       fontSize: "0.55rem",
@@ -106,6 +110,7 @@ function canRestart(status: string) {
 export function DeploymentActions({
   deployment,
   isWarmNode,
+  isUnifiedMemory,
   onSettings,
   onLogs,
   onEndpoint,
@@ -156,7 +161,7 @@ export function DeploymentActions({
           />
         )}
 
-      {onPause && status === "running" && warm && (
+      {onPause && status === "running" && warm && !isUnifiedMemory && (
         <ActionBtn
           tooltip="Pause"
           icon={<PauseCircleOutline sx={ICON_SX} />}

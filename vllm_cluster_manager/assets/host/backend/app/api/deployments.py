@@ -23,7 +23,8 @@ from app.schemas.deployment import (
     DeploymentRestart,
     OffloadItem,
 )
-from app.services import model_names
+from app.models.api_key import ApiKey
+from app.services import api_keys, model_names
 from app.services import runtime_settings
 from app.services import sync as sync_service
 from app.services.client_api import (
@@ -614,7 +615,18 @@ async def delete_deployment(
         raise HTTPException(status_code=404, detail="Deployment not found")
 
     await session.delete(deployment)
+
+    # Remove this deployment from any scoped API keys.
+    result = await session.execute(
+        select(ApiKey).where(ApiKey.allowed_deployment_ids.isnot(None))
+    )
+    for key_row in result.scalars().all():
+        ids = key_row.allowed_deployment_ids or []
+        if deployment_id in ids:
+            key_row.allowed_deployment_ids = [i for i in ids if i != deployment_id]
+
     await session.commit()
+    api_keys.remove_deployment_from_scope(deployment_id)
     await _broadcast_change(deployment_id)
     return {"status": "deleted"}
 

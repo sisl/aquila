@@ -52,6 +52,7 @@ _REGISTRY: dict[str, Callable[[], object]] = {
     # API keys
     "temp_api_key_ttl_seconds": lambda: 300,
     # Warm cache
+    "default_warm_offload_enabled": lambda: True,
     "busy_guard_seconds": lambda: 0,
     # Advanced sync tuning
     "nodes_sync_interval_seconds": lambda: 10,

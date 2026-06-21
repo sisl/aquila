@@ -202,9 +202,9 @@ export function EndpointDialog({
       creatingRef.current = false;
       return;
     }
-    if (!hasPermanentKeys || ttl <= 0 || creatingRef.current || tempKey) return;
+    if (!deployment || !hasPermanentKeys || ttl <= 0 || creatingRef.current || tempKey) return;
     creatingRef.current = true;
-    createApiKey("snippet (temp)", ttl)
+    createApiKey("snippet (temp)", ttl, [deployment.id])
       .then((result) => setTempKey(result.key))
       .catch((err) => {
         setTempKey(null);

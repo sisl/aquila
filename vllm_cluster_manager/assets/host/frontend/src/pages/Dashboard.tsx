@@ -695,6 +695,14 @@ export function Dashboard() {
     return ids;
   }, [nodesQuery.data]);
 
+  const unifiedNodeIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const node of nodesQuery.data ?? []) {
+      if (node.gpu_usage?.some((g) => g.source === "unified")) ids.add(node.id);
+    }
+    return ids;
+  }, [nodesQuery.data]);
+
   const selectedNode = useMemo(() => {
     const parsedId = Number(nodeId);
     if (Number.isNaN(parsedId)) {
@@ -1964,6 +1972,7 @@ export function Dashboard() {
                 pinMutation.mutate({ id: deployment.id, pinned })
               }
               isWarmNode={(id) => warmNodeIds.has(id)}
+              isUnifiedNode={(id) => unifiedNodeIds.has(id)}
               nodeNameById={nodeNameById}
             />
           </Paper>

@@ -1,4 +1,4 @@
-from sqlalchemy import DateTime, Integer, String
+from sqlalchemy import DateTime, Integer, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -20,4 +20,7 @@ class ApiKey(Base):
     )
     expires_at: Mapped[DateTime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    allowed_deployment_ids: Mapped[list[int] | None] = mapped_column(
+        JSON, nullable=True, default=None
     )

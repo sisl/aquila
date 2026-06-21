@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import {
+  Autocomplete,
   Box,
   Checkbox,
+  Chip,
   Collapse,
   FormControlLabel,
   IconButton,
@@ -16,6 +18,7 @@ import {
 } from "@mui/material";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import EditOutlined from "@mui/icons-material/EditOutlined";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import RocketLaunchOutlined from "@mui/icons-material/RocketLaunchOutlined";
 import TuneOutlined from "@mui/icons-material/TuneOutlined";
@@ -27,11 +30,14 @@ import {
   createApiKey,
   deleteApiKey,
   fetchApiKeys,
+  fetchDeployments,
   fetchSettings,
   purgeDatabase,
+  updateApiKey,
   updateSettings,
   type ApiKeyCreated,
   type ApiKeyInfo,
+  type Deployment,
   type RuntimeSettings
 } from "../services/api";
 import { copyToClipboard } from "../services/clipboard";
@@ -90,6 +96,29 @@ function timeRemaining(iso: string): string {
   return `${hours}h ${minutes % 60}m`;
 }
 
+function deploymentDisplayName(d: Deployment): string {
+  const served = d.engine_args?.served_model_name;
+  const name = typeof served === "string" && served ? served : d.model_name;
+  const short = name.split("/").pop() ?? name;
+  return `${short} (#${d.id})`;
+}
+
+function scopeLabel(
+  ids: number[] | null,
+  deployments: Deployment[],
+): string {
+  if (ids === null) return "all";
+  if (ids.length === 0) return "none";
+  const names = ids.map((id) => {
+    const d = deployments.find((dep) => dep.id === id);
+    if (!d) return `#${id}`;
+    const served = d.engine_args?.served_model_name;
+    const name = typeof served === "string" && served ? served : d.model_name;
+    return name.split("/").pop() ?? name;
+  });
+  return names.join(", ");
+}
+
 export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -100,14 +129,26 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [confirmPurge, setConfirmPurge] = useState(false);
   const [createKeyOpen, setCreateKeyOpen] = useState(false);
   const [newKeyLabel, setNewKeyLabel] = useState("");
+  const [newKeyScopeAll, setNewKeyScopeAll] = useState(true);
+  const [newKeyScopeIds, setNewKeyScopeIds] = useState<Deployment[]>([]);
   const [createdKey, setCreatedKey] = useState<ApiKeyCreated | null>(null);
   const [confirmDeleteKey, setConfirmDeleteKey] = useState<ApiKeyInfo | null>(null);
   const [deleteAck, setDeleteAck] = useState(false);
   const [tempKeysOpen, setTempKeysOpen] = useState(false);
+  const [editKey, setEditKey] = useState<ApiKeyInfo | null>(null);
+  const [editLabel, setEditLabel] = useState("");
+  const [editScopeAll, setEditScopeAll] = useState(true);
+  const [editScopeIds, setEditScopeIds] = useState<Deployment[]>([]);
 
   const settingsQuery = useQuery({
     queryKey: ["settings"],
     queryFn: fetchSettings,
+    enabled: open
+  });
+
+  const deploymentsQuery = useQuery({
+    queryKey: ["deployments"],
+    queryFn: fetchDeployments,
     enabled: open
   });
 
@@ -156,12 +197,26 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   });
 
   const createKeyMutation = useMutation({
-    mutationFn: (label: string) => createApiKey(label),
+    mutationFn: (args: { label: string; deploymentIds?: number[] }) =>
+      createApiKey(args.label, undefined, args.deploymentIds),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["api-keys"] });
       setCreatedKey(data);
     },
     onError: (error) => toast.error(errorMessage(error))
+  });
+
+  const updateKeyMutation = useMutation({
+    mutationFn: (args: { id: number; label?: string; deployment_ids?: number[] | null }) =>
+      updateApiKey(args.id, { label: args.label, deployment_ids: args.deployment_ids }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+      setEditKey(null);
+      toast.success("API key updated.");
+    },
+    onError: (error) => {
+      toast.error(errorMessage(error));
+    }
   });
 
   const deleteKeyMutation = useMutation({
@@ -214,6 +269,49 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     confirmDeleteKey !== null &&
     !confirmDeleteKey.expires_at &&
     permanentKeys.length === 1;
+
+  const allDeployments = deploymentsQuery.data ?? [];
+
+  const openCreateDialog = () => {
+    setNewKeyLabel("");
+    setNewKeyScopeAll(true);
+    setNewKeyScopeIds([]);
+    setCreatedKey(null);
+    setCreateKeyOpen(true);
+  };
+
+  const openEditDialog = (k: ApiKeyInfo) => {
+    setEditKey(k);
+    setEditLabel(k.label);
+    if (k.allowed_deployment_ids === null) {
+      setEditScopeAll(true);
+      setEditScopeIds([]);
+    } else {
+      setEditScopeAll(false);
+      setEditScopeIds(
+        allDeployments.filter((d) => k.allowed_deployment_ids!.includes(d.id))
+      );
+    }
+  };
+
+  const handleCreateSubmit = () => {
+    const deploymentIds = newKeyScopeAll
+      ? undefined
+      : newKeyScopeIds.map((d) => d.id);
+    createKeyMutation.mutate({ label: newKeyLabel.trim(), deploymentIds });
+  };
+
+  const handleEditSubmit = () => {
+    if (!editKey) return;
+    const deploymentIds = editScopeAll
+      ? null
+      : editScopeIds.map((d) => d.id);
+    updateKeyMutation.mutate({
+      id: editKey.id,
+      label: editLabel.trim() || undefined,
+      deployment_ids: deploymentIds,
+    });
+  };
 
   return (
     <>
@@ -302,14 +400,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     : "No API keys — the gateway is open to all requests.";
                 })()}
                 action={
-                  <AppButton
-                    type="button"
-                    onClick={() => {
-                      setNewKeyLabel("");
-                      setCreatedKey(null);
-                      setCreateKeyOpen(true);
-                    }}
-                  >
+                  <AppButton type="button" onClick={openCreateDialog}>
                     Create Key
                   </AppButton>
                 }
@@ -343,11 +434,22 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                               >
                                 {k.prefix}...
                               </Typography>
+                              <Typography variant="caption" className="muted">
+                                {scopeLabel(k.allowed_deployment_ids, allDeployments)}
+                              </Typography>
                               <Typography variant="caption" className="muted" sx={{ ml: "auto" }}>
                                 {k.last_used_at
                                   ? `used ${timeAgo(k.last_used_at)}`
                                   : "never used"}
                               </Typography>
+                              <Tooltip title="Edit key">
+                                <IconButton
+                                  size="small"
+                                  onClick={() => openEditDialog(k)}
+                                >
+                                  <EditOutlined fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
                               <Tooltip title="Delete key">
                                 <IconButton
                                   size="small"
@@ -412,6 +514,11 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                                   >
                                     {k.prefix}...
                                   </Typography>
+                                  {k.allowed_deployment_ids !== null && (
+                                    <Typography variant="caption" className="muted">
+                                      {scopeLabel(k.allowed_deployment_ids, allDeployments)}
+                                    </Typography>
+                                  )}
                                   <Typography variant="caption" className="muted" sx={{ ml: "auto" }}>
                                     {timeRemaining(k.expires_at!)} left
                                   </Typography>
@@ -594,6 +701,17 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 title="Warm Cache"
                 hint="Controls how GPU models are swapped in and out of VRAM."
               >
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={Boolean(draft.default_warm_offload_enabled)}
+                      onChange={(event) =>
+                        set("default_warm_offload_enabled", event.target.checked)
+                      }
+                    />
+                  }
+                  label="Enable warm cache by default on new nodes"
+                />
                 <TextField
                   size="small"
                   label="Busy guard (s)"
@@ -729,6 +847,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         onCancel={() => setConfirmPurge(false)}
       />
 
+      {/* ── Create Key Dialog ── */}
       <AppDialog
         open={createKeyOpen}
         onClose={() => setCreateKeyOpen(false)}
@@ -747,7 +866,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               <AppButton
                 type="button"
                 disabled={!newKeyLabel.trim() || createKeyMutation.isPending}
-                onClick={() => createKeyMutation.mutate(newKeyLabel.trim())}
+                onClick={handleCreateSubmit}
               >
                 Create
               </AppButton>
@@ -788,26 +907,146 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </IconButton>
               </Tooltip>
             </Box>
+            {createdKey.allowed_deployment_ids !== null && (
+              <Typography variant="caption" className="muted">
+                Scoped to: {scopeLabel(createdKey.allowed_deployment_ids, allDeployments)}
+              </Typography>
+            )}
           </Stack>
         ) : (
+          <Stack spacing={2}>
+            <TextField
+              autoFocus
+              size="small"
+              label="Label"
+              placeholder='e.g. "laptop", "CI pipeline"'
+              value={newKeyLabel}
+              onChange={(e) => setNewKeyLabel(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newKeyLabel.trim()) {
+                  handleCreateSubmit();
+                }
+              }}
+              fullWidth
+              helperText="A short name to identify this key."
+            />
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={newKeyScopeAll}
+                  onChange={(e) => setNewKeyScopeAll(e.target.checked)}
+                />
+              }
+              label="Access all deployments"
+            />
+            {!newKeyScopeAll && (
+              <Autocomplete
+                multiple
+                size="small"
+                options={allDeployments}
+                getOptionLabel={deploymentDisplayName}
+                value={newKeyScopeIds}
+                onChange={(_, value) => setNewKeyScopeIds(value)}
+                renderTags={(value, getTagProps) =>
+                  value.map((d, index) => {
+                    const { key, ...rest } = getTagProps({ index });
+                    return (
+                      <Chip
+                        key={key}
+                        label={deploymentDisplayName(d)}
+                        size="small"
+                        {...rest}
+                      />
+                    );
+                  })
+                }
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Allowed deployments"
+                    placeholder="Select deployments"
+                  />
+                )}
+              />
+            )}
+          </Stack>
+        )}
+      </AppDialog>
+
+      {/* ── Edit Key Dialog ── */}
+      <AppDialog
+        open={editKey !== null}
+        onClose={() => setEditKey(null)}
+        maxWidth="xs"
+        title="Edit API Key"
+        actions={
+          <>
+            <AppButton type="button" ghost onClick={() => setEditKey(null)}>
+              Cancel
+            </AppButton>
+            <AppButton
+              type="button"
+              disabled={!editLabel.trim() || updateKeyMutation.isPending}
+              onClick={handleEditSubmit}
+            >
+              Save
+            </AppButton>
+          </>
+        }
+      >
+        <Stack spacing={2}>
           <TextField
             autoFocus
             size="small"
             label="Label"
-            placeholder='e.g. "laptop", "CI pipeline"'
-            value={newKeyLabel}
-            onChange={(e) => setNewKeyLabel(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && newKeyLabel.trim()) {
-                createKeyMutation.mutate(newKeyLabel.trim());
-              }
-            }}
+            value={editLabel}
+            onChange={(e) => setEditLabel(e.target.value)}
             fullWidth
-            helperText="A short name to identify this key."
           />
-        )}
+          <FormControlLabel
+            control={
+              <Switch
+                checked={editScopeAll}
+                onChange={(e) => setEditScopeAll(e.target.checked)}
+              />
+            }
+            label="Access all deployments"
+          />
+          {!editScopeAll && (
+            <Autocomplete
+              multiple
+              size="small"
+              options={allDeployments}
+              getOptionLabel={deploymentDisplayName}
+              value={editScopeIds}
+              onChange={(_, value) => setEditScopeIds(value)}
+              isOptionEqualToValue={(option, value) => option.id === value.id}
+              renderTags={(value, getTagProps) =>
+                value.map((d, index) => {
+                  const { key, ...rest } = getTagProps({ index });
+                  return (
+                    <Chip
+                      key={key}
+                      label={deploymentDisplayName(d)}
+                      size="small"
+                      {...rest}
+                    />
+                  );
+                })
+              }
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Allowed deployments"
+                  placeholder="Select deployments"
+                />
+              )}
+            />
+          )}
+        </Stack>
       </AppDialog>
 
+      {/* ── Delete Key Confirm ── */}
       <AppDialog
         open={confirmDeleteKey !== null}
         onClose={() => { setConfirmDeleteKey(null); setDeleteAck(false); }}

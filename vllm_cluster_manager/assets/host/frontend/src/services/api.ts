@@ -420,7 +420,7 @@ export type ImagePruneResult = {
 
 async function requestWithDetail<T>(
   path: string,
-  method: "GET" | "POST" | "PUT" | "DELETE" = "GET",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" = "GET",
   jsonBody?: unknown
 ): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
@@ -452,6 +452,7 @@ async function requestWithDetail<T>(
     }
     throw new Error(detail || `Request failed: ${response.status}`);
   }
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
@@ -730,6 +731,7 @@ export type RuntimeSettings = {
   webhook_url: string;
   expiry_warning_minutes: number;
   node_metrics_retention_hours: number;
+  default_warm_offload_enabled: boolean;
   busy_guard_seconds: number;
   nodes_sync_interval_seconds: number;
   deployments_sync_interval_seconds: number;
@@ -760,6 +762,7 @@ export type ApiKeyInfo = {
   created_at: string;
   last_used_at: string | null;
   expires_at: string | null;
+  allowed_deployment_ids: number[] | null;
 };
 
 export type ApiKeyCreated = ApiKeyInfo & { key: string };
@@ -768,10 +771,22 @@ export function fetchApiKeys(): Promise<ApiKeyInfo[]> {
   return request<ApiKeyInfo[]>("/api-keys");
 }
 
-export function createApiKey(label: string, ttlSeconds?: number): Promise<ApiKeyCreated> {
+export function createApiKey(
+  label: string,
+  ttlSeconds?: number,
+  deploymentIds?: number[],
+): Promise<ApiKeyCreated> {
   const body: Record<string, unknown> = { label };
   if (ttlSeconds) body.ttl_seconds = ttlSeconds;
+  if (deploymentIds) body.deployment_ids = deploymentIds;
   return requestWithDetail<ApiKeyCreated>("/api-keys", "POST", body);
+}
+
+export function updateApiKey(
+  id: number,
+  data: { label?: string; deployment_ids?: number[] | null },
+): Promise<ApiKeyInfo> {
+  return requestWithDetail<ApiKeyInfo>("/api-keys/" + id, "PATCH", data);
 }
 
 export function deleteApiKey(id: number): Promise<void> {
