@@ -92,7 +92,7 @@ const HOUR_MS = 60 * 60 * 1000;
 
 function formatRemaining(deployment: Deployment, now: number): Remaining {
   const status = deployment.status;
-  if (status !== "running" && status !== "loading") {
+  if (status !== "running" && status !== "loading" && status !== "paused_ram") {
     return { text: "—", urgent: false };
   }
   if (deployment.duration_seconds == null) {
@@ -280,8 +280,10 @@ export function DeploymentTable({
 
   const sortValue = (deployment: Deployment): string | number => {
     switch (sortBy) {
-      case "model":
-        return deployment.model_name.toLowerCase();
+      case "model": {
+        const served = deployment.engine_args?.served_model_name;
+        return (typeof served === "string" && served ? served : deployment.model_name).toLowerCase();
+      }
       case "owner":
         return (deployment.owner ?? "").toLowerCase();
       case "node":
@@ -316,6 +318,7 @@ export function DeploymentTable({
     if (!query) return true;
     const haystack = [
       deployment.model_name,
+      (typeof deployment.engine_args?.served_model_name === "string" && deployment.engine_args.served_model_name) || "",
       deployment.owner ?? "",
       nodeNameById[deployment.node_id] ?? String(deployment.node_id),
       deployment.status,
@@ -524,7 +527,8 @@ export function DeploymentTable({
                       {onExtend &&
                         deployment.duration_seconds != null &&
                         (deployment.status === "running" ||
-                          deployment.status === "loading") && (
+                          deployment.status === "loading" ||
+                          deployment.status === "paused_ram") && (
                           <Tooltip title="Extend serve time" enterDelay={500}>
                             <IconButton
                               size="small"

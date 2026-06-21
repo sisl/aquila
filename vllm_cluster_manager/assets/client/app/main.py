@@ -25,7 +25,7 @@ import httpx
 import psutil
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from urllib.request import Request as UrllibRequest, urlopen
@@ -2122,7 +2122,7 @@ class StopRequest(BaseModel):
 
 
 @app.post("/deployments/stop")
-async def stop_deployment(payload: StopRequest) -> dict[str, str]:
+async def stop_deployment(payload: StopRequest, background_tasks: BackgroundTasks) -> dict[str, str]:
     key = payload.key
     meta = _statuses.get(key)
     container = _containers.get(key)
@@ -2135,20 +2135,21 @@ async def stop_deployment(payload: StopRequest) -> dict[str, str]:
         meta["desired_state"] = "stopped"
         meta["pause_tier"] = None
 
+    background_tasks.add_task(_stop_deployment_bg, key, container, meta)
+    return {"status": "stopping", "key": key}
+
+
+async def _stop_deployment_bg(key: str, container, meta) -> None:
+    """Run the slow container teardown in the background."""
     if container is not None:
         await asyncio.to_thread(_remove_container, container)
         _containers.pop(key, None)
-    # Tear down the warm-mode public-port proxy, if any.
     await _stop_proxy(key)
-    # Delete this deployment's compiled artifacts (including the sleep-swap
-    # sidecar marker); HF weights + image stay cached for a fast redeploy.
     _delete_compile_cache(key)
     if meta is not None:
         meta["status"] = "stopped"
         meta["paused_ram_mb"] = 0
-    # The log file stays on disk (age-based GC); just release the handle.
     _close_log_file(key)
-    return {"status": "stopped", "key": key}
 
 
 class PauseRequest(BaseModel):

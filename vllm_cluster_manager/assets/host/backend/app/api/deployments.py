@@ -653,7 +653,7 @@ async def extend_deployment(
     deployment = await session.get(Deployment, deployment_id)
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
-    if deployment.status not in ("running", "loading", "starting"):
+    if deployment.status not in ("running", "loading", "starting", "paused_ram"):
         raise HTTPException(
             status_code=409,
             detail=f"Deployment is '{deployment.status}'; only an active deployment can be extended.",
