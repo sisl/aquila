@@ -4,7 +4,6 @@ export type ColumnDef = {
   key: string;
   label: string;
   alwaysVisible?: boolean;
-  compactHidden?: boolean;
 };
 
 function loadHidden(storageKey: string, validKeys: Set<string>): Set<string> {

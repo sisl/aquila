@@ -2,6 +2,10 @@
 
 ## Global settings (dashboard)
 
+<div class="screenshot">
+  <img alt="Settings dialog showing Gateway & Keys, Deployments, System, and Danger Zone tabs" src="../assets/img/settings-dialog.png" />
+</div>
+
 Most operational knobs live in the dashboard: **gear icon → Settings**. Saved values are stored in the database, override the backend's env defaults, and **apply live** — no restart needed. Sections:
 
 - **Gateway** — enable/disable the [OpenAI gateway](gateway.md) (disabled → `/v1` returns 503; direct node URLs keep working) and its request timeout. API key management (permanent and temporary keys, per-deployment scoping) also lives here — see [Gateway → Authentication](gateway.md#authentication).
@@ -96,6 +100,10 @@ To remove a **single** stale node instead of purging everything, open the node's
     Deployment environment variable values (e.g. `HF_TOKEN`) are stored on the vLLM container itself — in its Docker `Env` and in the launch-manifest label — and are reported by the client agent's unauthenticated LAN API during re-adoption. This is the same trust domain as the rest of the satellite API (logs, metrics); keep client ports restricted to your cluster network.
 
 ## Container runtimes (Docker / Podman)
+
+<div class="screenshot screenshot-narrow">
+  <img alt="Node manage dialog showing container runtime, warm cache, and vLLM containers" src="../assets/img/node-manage-dialog.png" />
+</div>
 
 Client nodes can run deployments via **Docker** or **Podman** (Podman exposes a Docker-compatible API socket and runs the same official images — useful on clusters that disallow the Docker daemon; rootless Podman is supported). Each agent detects which runtimes are available and reports them; the node's Manage dialog shows them and lets you pick.
 
@@ -212,7 +220,7 @@ An optional **RAM cache limit** (MB) per node caps how much host RAM paused mode
 When a new deployment needs GPU memory on a warm-cache node, the agent automatically pauses idle models to make room:
 
 1. Models are ranked by **last request time** (LRU).
-2. A model is considered **busy** (and skipped) if it received a request within the last `BUSY_GUARD_SECONDS` (default 60, configurable in Settings → System) or has requests currently in flight.
+2. A model is considered **busy** (and skipped) if it received a request within the last `BUSY_GUARD_SECONDS` (default 0, configurable in Settings → System) or has requests currently in flight.
 3. **Pinned** deployments are never auto-evicted — use the pin button on a running deployment to protect it.
 4. The eviction planner simulates freeing GPU memory until the new deployment fits, then executes the plan.
 
@@ -230,6 +238,10 @@ On unified-memory nodes (e.g. DGX Spark), GPU and CPU share the same physical me
 
 ## Node maintenance mode
 
+<div class="screenshot">
+  <img alt="Node table with status badges and action icons" src="../assets/img/node-table.png" />
+</div>
+
 Maintenance mode lets you cordon GPUs on a node so they are excluded from new deployments. You can cordon **individual GPUs** or all GPUs at once — partial maintenance is shown as a warning badge with the specific GPU indices (e.g. `maint. GPU 0, 2`), while full maintenance marks the entire node.
 
 Use the **Maintenance** button on a node to open the GPU selector:
@@ -244,6 +256,11 @@ New deployments cannot use cordoned GPUs — the deploy form's GPU selector hide
 The API equivalent is `POST /api/nodes/{id}/maintenance` with `{"gpu_ids": [0, 2], "enabled": true, "drain": true}`.
 
 ## Node metrics history
+
+<div class="screenshot">
+  <img alt="Node table with expanded utilization history charts" src="../assets/img/node-metrics.png" />
+</div>
+
 The backend samples GPU/CPU/memory/disk metrics from each node and keeps them for `NODE_METRICS_RETENTION_HOURS` (default 48). Expand a node row in the dashboard to see the charts; the raw data is available at `GET /api/nodes/{id}/metrics/history`.
 
 On unified-memory devices (e.g. DGX Spark), the GPU's dedicated-VRAM fields aren't reported by `nvidia-smi`/NVML: the **compute** percentage is still the real GPU utilization, while the **memory** figures come from system RAM (the shared pool) and are marked `(unified)` in the node table. Compute shows `n/a` only when the node has no NVIDIA tooling at all. Warm cache (pause/resume) is disabled on unified-memory nodes because GPU and CPU share the same physical memory — `cudaFree` releases the CUDA allocation but no capacity is actually freed.

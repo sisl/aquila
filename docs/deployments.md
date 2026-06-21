@@ -4,6 +4,10 @@ This page covers how to deploy models through the dashboard, including vLLM vers
 
 ## Creating a deployment
 
+<div class="screenshot screenshot-narrow">
+  <img alt="Deploy form" src="../assets/img/deploy-form.png" />
+</div>
+
 From the dashboard, select a target node, fill in the deployment form, and click **Deploy**. The required fields are:
 
 | Field | Description |
@@ -156,6 +160,10 @@ Add environment variables for the deployment under the **Env Vars** section. Com
 
 ## Deployment lifecycle
 
+<div class="screenshot">
+  <img alt="Deployment table showing models, status, and actions" src="../assets/img/deployment-table.png" />
+</div>
+
 A deployment goes through these states:
 
 | Status | Meaning |
@@ -224,6 +232,10 @@ Click **Endpoint** on any running deployment to get copy-paste connection detail
 You can save and load deployment configurations from the dashboard. A saved config stores all deployment settings (model, port, GPU selection, version, packages, extra args, env vars, LoRA adapters) so you can redeploy with one click.
 
 ## Reproducibility manifests
+
+<div class="screenshot">
+  <img alt="Deployment settings dialog with Manifest button" src="../assets/img/deployment-settings-dialog.png" />
+</div>
 
 Every deployment can be exported as a self-contained JSON manifest — open the deployment's settings dialog and click **Manifest** (copy, download, or load it back into the launch form). It records everything needed to cite and reproduce the serving setup:
 

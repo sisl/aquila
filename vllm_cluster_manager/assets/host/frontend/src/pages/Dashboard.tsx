@@ -1596,7 +1596,7 @@ export function Dashboard() {
                   </AccordionSummary>
                   <AccordionDetails>
                     <Stack spacing={1.5}>
-                      <Stack direction="row" spacing={1.5}>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
                         <TextField
                           fullWidth
                           label="HF revision"
@@ -1613,7 +1613,7 @@ export function Dashboard() {
                           onChange={(event) => setSeed(event.target.value)}
                         />
                       </Stack>
-                      <Stack direction="row" spacing={1.5}>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
                         <TextField
                           fullWidth
                           label="Max model len"
@@ -1633,7 +1633,7 @@ export function Dashboard() {
                           onChange={(event) => setMaxNumSeqs(event.target.value)}
                         />
                       </Stack>
-                      <Stack direction="row" spacing={1.5}>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
                         <TextField
                           fullWidth
                           select
@@ -1674,7 +1674,7 @@ export function Dashboard() {
                             : "Defaults to the model name. Must be unique — clients address this at the gateway."
                         }
                       />
-                      <Stack direction="row" spacing={2}>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
                         <FormControlLabel
                           control={
                             <Checkbox
@@ -1694,7 +1694,7 @@ export function Dashboard() {
                           label="Trust remote code"
                         />
                       </Stack>
-                      <Stack direction="row" spacing={2} alignItems="center">
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ xs: "stretch", sm: "center" }}>
                         <TextField
                           label="Max failed restarts"
                           placeholder="3"
@@ -1702,7 +1702,7 @@ export function Dashboard() {
                           inputProps={{ min: 1 }}
                           value={maxFailedRestarts}
                           onChange={(event) => setMaxFailedRestarts(event.target.value)}
-                          sx={{ maxWidth: 220 }}
+                          sx={{ maxWidth: { xs: "100%", sm: 220 } }}
                         />
                         <FormControlLabel
                           control={
@@ -1792,16 +1792,13 @@ export function Dashboard() {
               <Box
                 sx={{
                   position: "sticky",
-                  // Compensates the -20px bottom margin: sticky pins the
-                  // margin box, so without this the footer floats 20px up
-                  // and form rows peek out beneath it.
-                  bottom: "-20px",
+                  bottom: { xs: "-16px", sm: "-20px" },
                   zIndex: 2,
                   bgcolor: "var(--panel)",
                   borderTop: "1px solid var(--line)",
-                  mx: "-24px",
-                  mb: "-20px",
-                  px: "24px",
+                  mx: { xs: "-14px", sm: "-24px" },
+                  mb: { xs: "-16px", sm: "-20px" },
+                  px: { xs: "14px", sm: "24px" },
                   py: 2,
                   borderBottomLeftRadius: "var(--radius-lg)",
                   borderBottomRightRadius: "var(--radius-lg)"

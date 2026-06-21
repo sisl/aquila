@@ -1,9 +1,13 @@
 import { Fragment, useState } from "react";
+import BarChartOutlined from "@mui/icons-material/BarChartOutlined";
+import BuildOutlined from "@mui/icons-material/BuildOutlined";
 import ClearIcon from "@mui/icons-material/Clear";
 import DnsOutlined from "@mui/icons-material/DnsOutlined";
+import EngineeringOutlined from "@mui/icons-material/EngineeringOutlined";
 import SearchIcon from "@mui/icons-material/Search";
 import WarningAmberRounded from "@mui/icons-material/WarningAmberRounded";
 import {
+  Button,
   Chip,
   Collapse,
   IconButton,
@@ -20,13 +24,10 @@ import {
   Box,
   Tooltip,
   Typography,
-  useMediaQuery,
-  useTheme
 } from "@mui/material";
 
 import type { Node } from "../services/api";
 import { useColumnVisibility, type ColumnDef } from "../hooks/useColumnVisibility";
-import { AppButton } from "./AppButton";
 import { ColumnPicker } from "./ColumnPicker";
 import { EmptyState } from "./EmptyState";
 import { NodeMetricsPanel } from "./NodeMetricsPanel";
@@ -75,7 +76,7 @@ function gpuLine(nodeId: number, gpu: GpuUsage) {
     <Typography
       key={`${nodeId}-gpu-${gpu.index}`}
       variant="body2"
-      sx={{ whiteSpace: "nowrap" }}
+      sx={{ whiteSpace: { xs: "normal", md: "nowrap" } }}
     >
       GPU{gpu.index}
       {/* Opacity-based muting so the labels read on the light cell AND the
@@ -126,7 +127,7 @@ function GpuCell({ nodeId, gpus }: { nodeId: number; gpus: GpuUsage[] }) {
       }
       enterDelay={300}
     >
-      <Typography variant="body2" sx={{ whiteSpace: "nowrap" }}>
+      <Typography variant="body2" sx={{ whiteSpace: { xs: "normal", md: "nowrap" } }}>
         {gpus.length} GPUs
         <Box component="span" sx={{ opacity: 0.65 }}>
           {" "}· compute{" "}
@@ -141,25 +142,91 @@ function GpuCell({ nodeId, gpus }: { nodeId: number; gpus: GpuUsage[] }) {
   );
 }
 
+const NODE_ICON_SX = {
+  fontSize: 16,
+  opacity: 0.45,
+  "@media (hover: none)": { fontSize: 20 },
+} as const;
+
+const NODE_BTN_SX = {
+  minWidth: "unset",
+  px: 0.75,
+  pt: 0.5,
+  pb: 0.25,
+  position: "relative",
+  "&:hover": { backgroundColor: "transparent" },
+  "@media (hover: hover)": {
+    "&:hover .MuiSvgIcon-root": { opacity: 1, transform: "translateY(-4px)" },
+    "& .MuiSvgIcon-root": { transition: "opacity 120ms ease, transform 120ms ease" },
+    "& .act-label": {
+      position: "absolute",
+      top: "calc(100% - 2px)",
+      left: "50%",
+      transform: "translateX(-50%)",
+      fontSize: "0.55rem",
+      lineHeight: 1,
+      letterSpacing: "0.02em",
+      opacity: 0,
+      whiteSpace: "nowrap",
+      pointerEvents: "none",
+      transition: "opacity 100ms ease 80ms",
+    },
+    "&:hover .act-label": {
+      opacity: 0.7,
+      transition: "opacity 120ms ease-out",
+    },
+  },
+  "@media (hover: none)": {
+    minWidth: 36,
+    minHeight: 36,
+    px: 0.75,
+    "& .act-label": { display: "none" },
+  },
+} as const;
+
+function NodeActionBtn({
+  tooltip,
+  label,
+  icon,
+  onClick,
+}: {
+  tooltip: string;
+  label?: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip title={tooltip} enterDelay={2000}>
+      <Button
+        variant="text"
+        size="small"
+        color="primary"
+        aria-label={tooltip}
+        onClick={onClick}
+        sx={NODE_BTN_SX}
+      >
+        {icon}
+        <span className="act-label" aria-hidden>{label ?? tooltip}</span>
+      </Button>
+    </Tooltip>
+  );
+}
+
 type SortKey = "hostname" | "ip" | "port" | "status" | "heartbeat";
 
 const NODE_COLUMNS: ColumnDef[] = [
   { key: "hostname",  label: "Hostname",       alwaysVisible: true },
   { key: "ip",        label: "IP Address" },
-  { key: "port",      label: "Client Port",    compactHidden: true },
+  { key: "port",      label: "Client Port" },
   { key: "gpus",      label: "GPUs" },
   { key: "status",    label: "Status" },
-  { key: "heartbeat", label: "Last Heartbeat", compactHidden: true },
+  { key: "heartbeat", label: "Last Heartbeat" },
   { key: "actions",   label: "Actions",        alwaysVisible: true },
 ];
 
 export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenance }: NodeTableProps) {
   const [expandedNodeId, setExpandedNodeId] = useState<number | null>(null);
 
-  // Collapse low-priority columns below "lg" so the table fits without
-  // horizontal scrolling on tablets/laptops.
-  const muiTheme = useTheme();
-  const compact = useMediaQuery(muiTheme.breakpoints.down("lg"));
   const { visibleKeys, userHidden, toggle: toggleColumn, reset: resetColumns, isCustomized } =
     useColumnVisibility("vcm:columns:nodes", NODE_COLUMNS);
   const columnCount = visibleKeys.size;
@@ -239,7 +306,7 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
 
   return (
     <>
-    <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 1, mb: 1.5 }}>
+    <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 1, mb: 1.5, flexWrap: "wrap" }}>
       <ColumnPicker
         columns={NODE_COLUMNS}
         userHidden={userHidden}
@@ -278,7 +345,7 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
       className="scroll-thin"
       sx={{ minHeight: 200, maxHeight: "70vh", overflowX: "auto" }}
     >
-      <Table size="small" stickyHeader sx={{ minWidth: compact ? 560 : 820 }}>
+      <Table size="small" stickyHeader sx={{ minWidth: 820 }}>
         <TableHead>
           <TableRow>
             {sortableHeader("hostname", "Hostname")}
@@ -404,35 +471,26 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
                     <TableCell align="right">{node.last_heartbeat_at ?? "-"}</TableCell>
                   )}
                   <TableCell align="right">
-                    <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-                      <AppButton
-                        type="button"
-                        className="app-button--small"
-                        ghost
-                        onClick={() =>
-                          setExpandedNodeId(expanded ? null : node.id)
-                        }
-                      >
-                        {expanded ? "Hide Metrics" : "Metrics"}
-                      </AppButton>
+                    <Box sx={{ display: "flex", gap: 0.5, justifyContent: "flex-end", alignItems: "center" }}>
+                      <NodeActionBtn
+                        tooltip={expanded ? "Hide Metrics" : "Metrics"}
+                        label="Metrics"
+                        icon={<BarChartOutlined sx={NODE_ICON_SX} />}
+                        onClick={() => setExpandedNodeId(expanded ? null : node.id)}
+                      />
                       {onToggleMaintenance && (
-                        <AppButton
-                          type="button"
-                          className="app-button--small"
-                          ghost
+                        <NodeActionBtn
+                          tooltip={node.maintenance || node.partial_maintenance ? "Edit Maintenance" : "Maintenance"}
+                          label="Maint."
+                          icon={<EngineeringOutlined sx={NODE_ICON_SX} />}
                           onClick={() => onToggleMaintenance(node)}
-                        >
-                          {node.maintenance || node.partial_maintenance ? "Edit Maintenance" : "Maintenance"}
-                        </AppButton>
+                        />
                       )}
-                      <AppButton
-                        type="button"
-                        className="app-button--small"
-                        ghost
+                      <NodeActionBtn
+                        tooltip="Manage"
+                        icon={<BuildOutlined sx={NODE_ICON_SX} />}
                         onClick={() => onManage?.(node)}
-                      >
-                        Manage
-                      </AppButton>
+                      />
                     </Box>
                   </TableCell>
                 </TableRow>

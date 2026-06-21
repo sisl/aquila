@@ -553,7 +553,8 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
             {errorMessage(containersQuery.error)}
           </Typography>
         ) : (
-          <Table size="small">
+          <Box sx={{ overflowX: "auto" }} className="scroll-thin">
+          <Table size="small" sx={{ minWidth: 480 }}>
             <TableHead>
               <TableRow>
                 <TableCell>Name</TableCell>
@@ -614,6 +615,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
               )}
             </TableBody>
           </Table>
+          </Box>
         )}
         </DialogSection>
 
@@ -630,7 +632,8 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
             {errorMessage(gpuProcessesQuery.error)}
           </Typography>
         ) : (
-          <Table size="small">
+          <Box sx={{ overflowX: "auto" }} className="scroll-thin">
+          <Table size="small" sx={{ minWidth: 480 }}>
             <TableHead>
               <TableRow>
                 <TableCell>PID</TableCell>
@@ -694,6 +697,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
               )}
             </TableBody>
           </Table>
+          </Box>
         )}
         </DialogSection>
 
@@ -717,7 +721,8 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
                 No orphaned warm-cache artifacts on this node.
               </Typography>
             ) : (
-              <Table size="small">
+              <Box sx={{ overflowX: "auto" }} className="scroll-thin">
+              <Table size="small" sx={{ minWidth: 360 }}>
                 <TableHead>
                   <TableRow>
                     <TableCell>Artifact</TableCell>
@@ -777,6 +782,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
                   ))}
                 </TableBody>
               </Table>
+              </Box>
             )}
           </DialogSection>
         )}
@@ -814,7 +820,8 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
             {errorMessage(imagesQuery.error)}
           </Typography>
         ) : (
-          <Table size="small">
+          <Box sx={{ overflowX: "auto" }} className="scroll-thin">
+          <Table size="small" sx={{ minWidth: 360 }}>
             <TableHead>
               <TableRow>
                 <TableCell>Tags</TableCell>
@@ -859,6 +866,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
               )}
             </TableBody>
           </Table>
+          </Box>
         )}
         </DialogSection>
 
@@ -934,7 +942,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
               onChange={(event) =>
                 setPendingUpload({ ...pendingUpload, name: event.target.value })
               }
-              sx={{ minWidth: 260 }}
+              sx={{ minWidth: { xs: 180, sm: 260 } }}
             />
             <AppButton
               type="button"
@@ -961,7 +969,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
               label="Archive or file URL (http/https)"
               value={pullUrl}
               onChange={(event) => setPullUrl(event.target.value)}
-              sx={{ flex: 1, minWidth: 280 }}
+              sx={{ flex: 1, minWidth: { xs: 180, sm: 280 } }}
             />
             <TextField
               size="small"
@@ -1040,7 +1048,8 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
             {errorMessage(localModelsQuery.error)}
           </Typography>
         ) : (
-          <Table size="small">
+          <Box sx={{ overflowX: "auto" }} className="scroll-thin">
+          <Table size="small" sx={{ minWidth: 480 }}>
             <TableHead>
               <TableRow>
                 <TableCell>Model</TableCell>
@@ -1121,6 +1130,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
               )}
             </TableBody>
           </Table>
+          </Box>
         )}
         </DialogSection>
 
@@ -1137,7 +1147,8 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
             {errorMessage(modelCacheQuery.error)}
           </Typography>
         ) : (
-          <Table size="small">
+          <Box sx={{ overflowX: "auto" }} className="scroll-thin">
+          <Table size="small" sx={{ minWidth: 360 }}>
             <TableHead>
               <TableRow>
                 <TableCell>Model</TableCell>
@@ -1207,6 +1218,7 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
               )}
             </TableBody>
           </Table>
+          </Box>
         )}
         </DialogSection>
       </AppDialog>

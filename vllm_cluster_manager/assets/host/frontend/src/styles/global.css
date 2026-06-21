@@ -37,7 +37,7 @@ body {
 .app {
   width: min(2200px, 100%);
   margin: 0 auto;
-  padding: clamp(16px, 2.5vw, 32px) clamp(16px, 3vw, 64px) 64px;
+  padding: clamp(16px, 2.5vw, 32px) clamp(12px, 2.5vw, 64px) 64px;
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -79,7 +79,7 @@ body {
 
 /* No text-transform: the literal "vLLM" casing must survive. */
 .brand-title {
-  font-size: clamp(40px, 4vw, 64px);
+  font-size: clamp(26px, 4vw, 64px);
   font-weight: 300;
   letter-spacing: 0.08em;
   line-height: 1.05;
@@ -103,6 +103,24 @@ body {
   box-shadow: none;
   width: 100%;
   min-width: 0;
+}
+
+@media (max-width: 599px) {
+  .app {
+    gap: 16px;
+  }
+
+  .app-shell {
+    gap: 16px;
+  }
+
+  .stage {
+    gap: 16px;
+  }
+
+  .panel {
+    padding: 16px 14px;
+  }
 }
 
 .panel-header {

@@ -55,7 +55,7 @@ export function AppDialog({
       maxWidth={maxWidth}
       PaperProps={{ className: paperClassName ? `panel ${paperClassName}` : "panel" }}
     >
-      <DialogTitle sx={{ p: "20px 24px 12px" }}>
+      <DialogTitle sx={{ p: { xs: "16px 14px 10px", sm: "20px 24px 12px" } }}>
         {title}
         {meta && (
           <Typography variant="caption" className="muted" sx={{ display: "block", mt: 0.25 }}>
@@ -66,7 +66,7 @@ export function AppDialog({
       <DialogContent dividers sx={contentSx}>
         {children}
       </DialogContent>
-      {actions && <DialogActions sx={{ p: "12px 24px 16px", gap: 1 }}>{actions}</DialogActions>}
+      {actions && <DialogActions sx={{ p: { xs: "10px 14px 12px", sm: "12px 24px 16px" }, gap: 1 }}>{actions}</DialogActions>}
     </Dialog>
   );
 }

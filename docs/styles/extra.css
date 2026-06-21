@@ -252,3 +252,24 @@
   gap: 1rem;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
+
+/* ---------------------------------------------------------- screenshots */
+
+.screenshot {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin: 1.25rem 0;
+}
+
+.screenshot img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.screenshot-narrow {
+  max-width: 480px;
+  margin-left: auto;
+  margin-right: auto;
+}

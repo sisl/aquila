@@ -21,9 +21,7 @@ import {
   Tooltip,
   Box,
   Skeleton,
-  Typography,
-  useMediaQuery,
-  useTheme
+  Typography
 } from "@mui/material";
 
 import type { Deployment, DeploymentExtension } from "../services/api";
@@ -74,18 +72,18 @@ type SortKey =
   | "status";
 
 const DEPLOYMENT_COLUMNS: ColumnDef[] = [
-  { key: "model",     label: "Model",        alwaysVisible: true },
+  { key: "model",     label: "Model",       alwaysVisible: true },
   { key: "owner",     label: "Owner" },
   { key: "node",      label: "Node" },
   { key: "port",      label: "Port" },
-  { key: "vllm",      label: "vLLM",         compactHidden: true },
-  { key: "fraction",  label: "GPU Fraction",  compactHidden: true },
+  { key: "vllm",      label: "vLLM" },
+  { key: "fraction",  label: "GPU Fraction" },
   { key: "gpus",      label: "GPUs" },
-  { key: "args",      label: "Args",          compactHidden: true },
-  { key: "usage",     label: "Usage",         compactHidden: true },
+  { key: "args",      label: "Args" },
+  { key: "usage",     label: "Usage" },
   { key: "remaining", label: "Remaining" },
   { key: "status",    label: "Status" },
-  { key: "actions",   label: "Actions",       alwaysVisible: true },
+  { key: "actions",   label: "Actions",     alwaysVisible: true },
 ];
 
 type Remaining = { text: string; urgent: boolean };
@@ -228,10 +226,6 @@ export function DeploymentTable({
   const [confirmStop, setConfirmStop] = useState<Deployment | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Deployment | null>(null);
 
-  // Below "xl" the low-priority columns collapse so the table stays readable
-  // without horizontal scrolling (the side rail eats ~400px of the viewport).
-  const muiTheme = useTheme();
-  const compact = useMediaQuery(muiTheme.breakpoints.down("xl"));
   const { visibleKeys, userHidden, toggle: toggleColumn, reset: resetColumns, isCustomized } =
     useColumnVisibility("vcm:columns:deployments", DEPLOYMENT_COLUMNS);
   const columnCount = visibleKeys.size;
@@ -358,7 +352,7 @@ export function DeploymentTable({
 
   return (
     <>
-    <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 1, mb: 1.5 }}>
+    <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 1, mb: 1.5, flexWrap: "wrap" }}>
       <ColumnPicker
         columns={DEPLOYMENT_COLUMNS}
         userHidden={userHidden}
@@ -397,7 +391,7 @@ export function DeploymentTable({
       className="scroll-thin"
       sx={{ minHeight: 200, maxHeight: "70vh", overflowX: "auto" }}
     >
-      <Table size="small" stickyHeader sx={{ minWidth: compact ? 720 : 1040 }}>
+      <Table size="small" stickyHeader sx={{ minWidth: 1040 }}>
         <TableHead>
           <TableRow>
             {sortableHeader("model", "Model")}
@@ -424,7 +418,7 @@ export function DeploymentTable({
                   <Tooltip title={deployment.model_name} enterDelay={500}>
                     <Box
                       sx={{
-                        maxWidth: 240,
+                        maxWidth: { xs: 140, sm: 240 },
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap"

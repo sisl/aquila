@@ -387,7 +387,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   value={draft.gateway_timeout_seconds ?? ""}
                   onChange={(event) => set("gateway_timeout_seconds", num(event.target.value))}
                   helperText="Non-streaming requests; streams are never read-limited."
-                  sx={{ width: 220 }}
+                  sx={{ width: { xs: "100%", sm: 220 } }}
                 />
               </DialogSection>
 
@@ -421,10 +421,11 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                                 display: "flex",
                                 alignItems: "center",
                                 gap: 1.5,
-                                py: 0.5
+                                py: 0.5,
+                                flexWrap: "wrap"
                               }}
                             >
-                              <Typography variant="body2" sx={{ fontWeight: 500, minWidth: 100 }}>
+                              <Typography variant="body2" sx={{ fontWeight: 500, minWidth: { xs: "auto", sm: 100 } }}>
                                 {k.label}
                               </Typography>
                               <Typography
@@ -437,7 +438,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                               <Typography variant="caption" className="muted">
                                 {scopeLabel(k.allowed_deployment_ids, allDeployments)}
                               </Typography>
-                              <Typography variant="caption" className="muted" sx={{ ml: "auto" }}>
+                              <Typography variant="caption" className="muted" sx={{ ml: { xs: 0, sm: "auto" } }}>
                                 {k.last_used_at
                                   ? `used ${timeAgo(k.last_used_at)}`
                                   : "never used"}
@@ -501,10 +502,11 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                                     display: "flex",
                                     alignItems: "center",
                                     gap: 1.5,
-                                    py: 0.25
+                                    py: 0.25,
+                                    flexWrap: "wrap"
                                   }}
                                 >
-                                  <Typography variant="caption" sx={{ minWidth: 80 }}>
+                                  <Typography variant="caption" sx={{ minWidth: { xs: "auto", sm: 80 } }}>
                                     {k.label}
                                   </Typography>
                                   <Typography
@@ -519,7 +521,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                                       {scopeLabel(k.allowed_deployment_ids, allDeployments)}
                                     </Typography>
                                   )}
-                                  <Typography variant="caption" className="muted" sx={{ ml: "auto" }}>
+                                  <Typography variant="caption" className="muted" sx={{ ml: { xs: 0, sm: "auto" } }}>
                                     {timeRemaining(k.expires_at!)} left
                                   </Typography>
                                   <Tooltip title="Delete key">
@@ -546,7 +548,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                         value={draft.temp_api_key_ttl_seconds ?? ""}
                         onChange={(event) => set("temp_api_key_ttl_seconds", num(event.target.value))}
                         helperText="Temporary key lifespan for endpoint code snippets. 0 = disabled."
-                        sx={{ width: 220, mt: 2 }}
+                        sx={{ width: { xs: "100%", sm: 220 }, mt: 2 }}
                       />
                     </>
                   );
@@ -571,7 +573,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     value={draft.start_timeout_seconds ?? ""}
                     onChange={(event) => set("start_timeout_seconds", num(event.target.value))}
                     helperText="Mark a deployment as errored if it isn't running by then."
-                    sx={{ width: 220 }}
+                    sx={{ width: { xs: "100%", sm: 220 } }}
                   />
                   <TextField
                     size="small"
@@ -582,7 +584,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       set("preferred_container_runtime", event.target.value)
                     }
                     helperText="Used when a node has both and no per-node override."
-                    sx={{ width: 200 }}
+                    sx={{ width: { xs: "100%", sm: 200 } }}
                   >
                     <MenuItem value="docker">Docker</MenuItem>
                     <MenuItem value="podman">Podman</MenuItem>
@@ -598,7 +600,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     type="number"
                     value={draft.default_port ?? ""}
                     onChange={(event) => set("default_port", num(event.target.value))}
-                    sx={{ width: 130 }}
+                    sx={{ width: { xs: "100%", sm: 130 } }}
                   />
                   <TextField
                     size="small"
@@ -607,7 +609,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     inputProps={{ step: 0.05, min: 0.05, max: 1 }}
                     value={draft.default_gpu_fraction ?? ""}
                     onChange={(event) => set("default_gpu_fraction", num(event.target.value))}
-                    sx={{ width: 130 }}
+                    sx={{ width: { xs: "100%", sm: 130 } }}
                   />
                   <TextField
                     size="small"
@@ -615,7 +617,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     label="Serve for"
                     value={draft.default_duration_choice ?? "43200"}
                     onChange={(event) => set("default_duration_choice", event.target.value)}
-                    sx={{ width: 150 }}
+                    sx={{ width: { xs: "100%", sm: 150 } }}
                   >
                     {DURATION_OPTIONS.map((option) => (
                       <MenuItem key={option.value} value={option.value}>
@@ -631,7 +633,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     placeholder="empty = latest stable"
                     value={draft.default_vllm_version ?? ""}
                     onChange={(event) => set("default_vllm_version", event.target.value)}
-                    sx={{ width: 220 }}
+                    sx={{ width: { xs: "100%", sm: 220 } }}
                   />
                   <TextField
                     size="small"
@@ -645,7 +647,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                         event.target.value === "" ? null : num(event.target.value)
                       )
                     }
-                    sx={{ width: 180 }}
+                    sx={{ width: { xs: "100%", sm: 180 } }}
                   />
                 </Stack>
               </DialogSection>
@@ -662,7 +664,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     value={draft.webhook_url ?? ""}
                     onChange={(event) => set("webhook_url", event.target.value)}
                     helperText="Slack webhook URLs get Slack formatting automatically."
-                    sx={{ flex: 1, minWidth: 260 }}
+                    sx={{ flex: 1, minWidth: { xs: 180, sm: 260 } }}
                   />
                   <TextField
                     size="small"
@@ -670,7 +672,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     type="number"
                     value={draft.expiry_warning_minutes ?? ""}
                     onChange={(event) => set("expiry_warning_minutes", num(event.target.value))}
-                    sx={{ width: 180 }}
+                    sx={{ width: { xs: "100%", sm: 180 } }}
                   />
                 </Stack>
               </DialogSection>
@@ -693,7 +695,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   onChange={(event) =>
                     set("node_metrics_retention_hours", num(event.target.value))
                   }
-                  sx={{ width: 220 }}
+                  sx={{ width: { xs: "100%", sm: 220 } }}
                 />
               </DialogSection>
 
@@ -720,7 +722,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   value={draft.busy_guard_seconds ?? ""}
                   onChange={(event) => set("busy_guard_seconds", num(event.target.value))}
                   helperText="Seconds after a model's last request before it can be auto-evicted. 0 = evict immediately when idle."
-                  sx={{ width: 220 }}
+                  sx={{ width: { xs: "100%", sm: 220 } }}
                 />
               </DialogSection>
 
@@ -737,7 +739,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     onChange={(event) =>
                       set("nodes_sync_interval_seconds", num(event.target.value))
                     }
-                    sx={{ width: 150 }}
+                    sx={{ width: { xs: "100%", sm: 150 } }}
                   />
                   <TextField
                     size="small"
@@ -747,7 +749,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     onChange={(event) =>
                       set("deployments_sync_interval_seconds", num(event.target.value))
                     }
-                    sx={{ width: 170 }}
+                    sx={{ width: { xs: "100%", sm: 170 } }}
                   />
                   <TextField
                     size="small"
@@ -757,7 +759,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     onChange={(event) =>
                       set("expiry_check_interval_seconds", num(event.target.value))
                     }
-                    sx={{ width: 150 }}
+                    sx={{ width: { xs: "100%", sm: 150 } }}
                   />
                 </Stack>
                 <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
@@ -770,7 +772,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       set("node_failure_threshold", num(event.target.value))
                     }
                     helperText="Consecutive failures before a node turns critical."
-                    sx={{ width: 220 }}
+                    sx={{ width: { xs: "100%", sm: 220 } }}
                   />
                   <TextField
                     size="small"
@@ -781,7 +783,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       set("deployment_failure_threshold", num(event.target.value))
                     }
                     helperText="Unreachable polls before deployments degrade."
-                    sx={{ width: 250 }}
+                    sx={{ width: { xs: "100%", sm: 250 } }}
                   />
                 </Stack>
               </DialogSection>

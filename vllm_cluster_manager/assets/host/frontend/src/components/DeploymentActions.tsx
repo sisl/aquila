@@ -30,8 +30,16 @@ type DeploymentActionsProps = {
   onDeleteClick: () => void;
 };
 
-const ICON_SX = { fontSize: 16, opacity: 0.45 } as const;
-const ICON_ERR_SX = { fontSize: 16, opacity: 0.55 } as const;
+const ICON_SX = {
+  fontSize: 16,
+  opacity: 0.45,
+  "@media (hover: none)": { fontSize: 20 },
+} as const;
+const ICON_ERR_SX = {
+  fontSize: 16,
+  opacity: 0.55,
+  "@media (hover: none)": { fontSize: 20 },
+} as const;
 
 const BTN_SX = {
   minWidth: "unset",
@@ -62,6 +70,9 @@ const BTN_SX = {
     },
   },
   "@media (hover: none)": {
+    minWidth: 36,
+    minHeight: 36,
+    px: 0.75,
     "& .act-label": { display: "none" },
   },
 } as const;

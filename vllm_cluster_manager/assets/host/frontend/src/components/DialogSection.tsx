@@ -30,7 +30,8 @@ export function DialogSection({
           display: "flex",
           alignItems: "flex-start",
           justifyContent: "space-between",
-          gap: 1.5
+          gap: 1.5,
+          flexWrap: "wrap"
         }}
       >
         <Box sx={{ minWidth: 0 }}>
