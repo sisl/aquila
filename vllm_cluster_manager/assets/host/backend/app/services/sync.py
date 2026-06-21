@@ -620,7 +620,8 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
 
 
 # Statuses considered "live" — eligible for expiry once past expires_at.
-_LIVE_STATUSES = ("running", "loading")
+# paused_ram counts: the model is still served (first request wakes it).
+_LIVE_STATUSES = ("running", "loading", "paused_ram")
 
 
 def _as_aware(dt: datetime) -> datetime:

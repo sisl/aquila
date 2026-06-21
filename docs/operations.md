@@ -228,7 +228,7 @@ When a new deployment needs GPU memory on a warm-cache node, the agent automatic
 
 Running deployments on warm-cache nodes show **Pause** and **Resume** buttons in the deployment actions:
 
-- **Pause** puts the model to sleep (frees VRAM, keeps weights in RAM). A paused deployment shows status `paused_ram` and remains routable through the gateway — the first request wakes it automatically.
+- **Pause** puts the model to sleep (frees VRAM, keeps weights in RAM). A paused deployment shows status `paused_ram` and remains routable through the gateway — the first request wakes it automatically. The serve-duration countdown continues while paused.
 - **Resume** explicitly wakes a paused model without waiting for a request.
 - Pinned deployments cannot be paused (unpin first).
 

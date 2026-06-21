@@ -92,6 +92,23 @@ async def test_expire_due_deployments():
 
 
 @pytest.mark.anyio
+async def test_expire_paused_deployment():
+    """Paused deployments still count down and expire."""
+    now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    paused_due = _dep(1, "paused_ram", now - timedelta(minutes=5), port=8000)
+    paused_not_due = _dep(2, "paused_ram", now + timedelta(hours=1), port=8001)
+    node = SimpleNamespace(ip_address="10.0.0.1", port=9000)
+    session = _FakeSession([paused_due, paused_not_due], node)
+
+    with mock.patch.object(deployment_stop, "stop_model", new=mock.AsyncMock()):
+        expired_ids = await sync.expire_due_deployments(session, now=now)
+
+    assert expired_ids == [1]
+    assert paused_due.status == "expired"
+    assert paused_not_due.status == "paused_ram"
+
+
+@pytest.mark.anyio
 async def test_expire_naive_timestamp_treated_as_utc():
     # Some DB backends return naive datetimes; they must be treated as UTC.
     now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)

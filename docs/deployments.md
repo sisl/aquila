@@ -171,7 +171,7 @@ A deployment goes through these states:
 | **starting** | The client is preparing the vLLM image and starting the container. While a new image version is being pulled (20+ GB on first use), the status chip shows live progress inline, e.g. `starting (pulling image · 3.5/21.6 GB)`; warm starts of cached versions skip this entirely. |
 | **loading** | The vLLM container is starting up. The status shows the current engine phase (downloading weights, loading weights, compiling). |
 | **running** | The vLLM server is healthy and responding to requests. |
-| **paused_ram** | The model is paused (warm cache): GPU VRAM freed, weights held in CPU RAM. The deployment remains routable — the first inference request wakes it automatically. |
+| **paused_ram** | The model is paused (warm cache): GPU VRAM freed, weights held in CPU RAM. The deployment remains routable — the first inference request wakes it automatically. The serve-duration countdown continues while paused. |
 | **stopping** | A stop was requested and the process is shutting down. |
 | **stopped** | The process has exited cleanly (or its serve duration expired). |
 | **error** | The process exited unexpectedly. The table shows a classified cause; check logs for details. |
@@ -205,7 +205,7 @@ Extensions apply only to active deployments and re-arm the expiry warning [notif
 
 On nodes with **warm cache** enabled, running deployments show additional actions:
 
-- **Pause** — puts the model to sleep, freeing GPU VRAM while keeping weights in RAM. The deployment status changes to `paused_ram` and remains routable through the gateway — the first request transparently wakes it (a few seconds, no re-download). Pinned deployments cannot be paused.
+- **Pause** — puts the model to sleep, freeing GPU VRAM while keeping weights in RAM. The deployment status changes to `paused_ram` and remains routable through the gateway — the first request transparently wakes it (a few seconds, no re-download). The serve-duration countdown continues while paused, so a paused deployment still expires on schedule. Pinned deployments cannot be paused.
 - **Resume** — explicitly wakes a paused model without waiting for a request.
 - **Pin** — protects a deployment from automatic eviction by the warm cache. A pinned model is never paused by the auto-evictor, even if it is the least recently used. Unpin to allow eviction again.
 
