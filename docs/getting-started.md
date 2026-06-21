@@ -80,5 +80,8 @@ Common first-run checks:
 - The host shows up as healthy.
 - The client appears under Nodes within ~30 seconds.
 
+!!! note
+    On first run the backend creates a default **admin** API key and prints it to the startup log. Store this key — it is required for gateway requests (`Authorization: Bearer vcm-...`) and will not be shown again. You can manage keys later in Settings → Gateway & Keys.
+
 ## Next steps
 Once a client node appears in the dashboard, you are ready to deploy models. See the [Deployments](deployments.md) page for details on vLLM version selection, engine options, GPU assignment, local checkpoints, and LoRA adapters. When a model is running, the **Endpoint** button gives you copy-paste connection snippets — see [Gateway & Usage](gateway.md) for the cluster-wide OpenAI-compatible API and token accounting.

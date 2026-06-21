@@ -1,3 +1,5 @@
+"""Top-level API router that aggregates all route modules."""
+
 from fastapi import APIRouter
 
 from app.api import admin, api_keys, configs, deployments, health, nodes, settings as settings_api

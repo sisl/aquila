@@ -42,6 +42,9 @@
 - Monitor node health, GPU utilization, disk usage, and deployment status in real time, with 48-hour metric history charts.
 - Put nodes into maintenance mode (optionally draining their deployments) for safe servicing.
 - Stream timestamped logs from running processes — the full per-run log is persisted on the node (monitoring noise filtered) and downloadable — with classified failure causes and crash-loop protection.
+- Pause idle models to RAM and resume them on demand — the **warm cache** frees GPU VRAM while keeping weights ready for near-instant restart, with LRU auto-eviction, busy guards, and per-deployment pinning.
+- Protect the gateway with **API keys** — permanent keys with optional per-deployment scoping, plus auto-expiring snippet keys for the Endpoint dialog.
+- Cordon individual GPUs for **per-GPU maintenance** — partial maintenance excludes specific GPUs from new deployments while the rest of the node keeps serving.
 - Automatic deployment recovery after backend restarts; schema migrations run automatically on upgrade.
 
 ## Supported platforms

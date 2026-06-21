@@ -19,6 +19,12 @@ _ACTIVE_PREDICATE = text(
 
 
 class Deployment(Base):
+    """A vLLM model deployment running on a node.
+
+    Tracks the full lifecycle from creation through running to stopped/error,
+    including cumulative usage counters scraped from the vLLM container.
+    """
+
     __tablename__ = "deployments"
     __table_args__ = (
         Index(

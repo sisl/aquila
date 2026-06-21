@@ -15,20 +15,21 @@ router = APIRouter()
 
 
 class CreateApiKeyRequest(BaseModel):
-    label: str = Field(..., min_length=1, max_length=128)
-    ttl_seconds: int | None = Field(None, ge=1, le=86400)
-    deployment_ids: list[int] | None = None
+    label: str = Field(..., min_length=1, max_length=128, description="Human-readable name for this key.")
+    ttl_seconds: int | None = Field(None, ge=1, le=86400, description="Key lifetime in seconds; omit for a permanent key.")
+    deployment_ids: list[int] | None = Field(None, description="Restrict this key to specific deployment IDs. NULL = all deployments. Required for temporary keys.")
 
 
 class UpdateApiKeyRequest(BaseModel):
-    label: str | None = Field(None, min_length=1, max_length=128)
-    deployment_ids: list[int] | None = None
+    label: str | None = Field(None, min_length=1, max_length=128, description="Updated label.")
+    deployment_ids: list[int] | None = Field(None, description="Updated deployment scope. NULL = all deployments.")
 
 
 @router.post("")
 async def create_api_key(
     payload: CreateApiKeyRequest, session: AsyncSession = Depends(get_session)
 ):
+    """Create a new API key (permanent or temporary)."""
     if payload.ttl_seconds is not None and payload.deployment_ids is None:
         raise HTTPException(
             status_code=422,
@@ -65,6 +66,7 @@ async def create_api_key(
 
 @router.get("")
 async def list_api_keys(session: AsyncSession = Depends(get_session)):
+    """List all active (non-expired) API keys."""
     result = await session.execute(
         select(ApiKey)
         .where(or_(ApiKey.expires_at.is_(None), ApiKey.expires_at > func.now()))
@@ -90,6 +92,7 @@ async def update_api_key(
     payload: UpdateApiKeyRequest,
     session: AsyncSession = Depends(get_session),
 ):
+    """Update a permanent key's label or deployment scope."""
     row = await session.get(ApiKey, key_id)
     if not row:
         raise HTTPException(status_code=404, detail="API key not found.")
@@ -119,6 +122,7 @@ async def update_api_key(
 async def delete_api_key(
     key_id: int, session: AsyncSession = Depends(get_session)
 ):
+    """Revoke and delete an API key."""
     row = await session.get(ApiKey, key_id)
     if not row:
         raise HTTPException(status_code=404, detail="API key not found.")

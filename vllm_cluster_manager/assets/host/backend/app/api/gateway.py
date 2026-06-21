@@ -301,6 +301,7 @@ async def _proxy(request: Request, endpoint_path: str, session: AsyncSession) ->
 async def chat_completions(
     request: Request, session: AsyncSession = Depends(get_session)
 ) -> Response:
+    """Proxy an OpenAI-compatible chat completion request to the appropriate vLLM instance."""
     return await _proxy(request, "chat/completions", session)
 
 
@@ -308,6 +309,7 @@ async def chat_completions(
 async def completions(
     request: Request, session: AsyncSession = Depends(get_session)
 ) -> Response:
+    """Proxy an OpenAI-compatible text completion request to the appropriate vLLM instance."""
     return await _proxy(request, "completions", session)
 
 
@@ -315,6 +317,7 @@ async def completions(
 async def embeddings(
     request: Request, session: AsyncSession = Depends(get_session)
 ) -> Response:
+    """Proxy an embeddings request to the appropriate vLLM instance."""
     return await _proxy(request, "embeddings", session)
 
 
@@ -322,6 +325,7 @@ async def embeddings(
 async def list_models(
     request: Request, session: AsyncSession = Depends(get_session)
 ) -> dict[str, object]:
+    """Return available models in OpenAI /v1/models format, filtered by API key scope."""
     result = await session.execute(
         select(Deployment).where(Deployment.status.in_(_ROUTABLE_STATUSES))
     )

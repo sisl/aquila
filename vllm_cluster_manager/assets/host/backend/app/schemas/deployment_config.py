@@ -1,10 +1,10 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DeploymentConfigBase(BaseModel):
-    name: str
-    payload: dict[str, object]
+    name: str = Field(description="Unique name for this saved configuration.")
+    payload: dict[str, object] = Field(description="Deployment parameters snapshot (model_name, port, gpu_memory_fraction, etc.).")
 
 
 class DeploymentConfigCreate(DeploymentConfigBase):

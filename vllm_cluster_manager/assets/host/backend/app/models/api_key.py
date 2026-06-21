@@ -6,6 +6,13 @@ from app.models.base import Base
 
 
 class ApiKey(Base):
+    """Gateway API key stored as a SHA-256 hash (zero-knowledge).
+
+    Permanent keys (expires_at=NULL) protect the gateway; temporary keys
+    are auto-created for endpoint code snippets and expire after a TTL.
+    Keys can be scoped to specific deployments via allowed_deployment_ids.
+    """
+
     __tablename__ = "api_keys"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

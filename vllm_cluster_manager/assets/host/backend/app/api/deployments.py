@@ -174,6 +174,7 @@ async def _check_served_name_conflict(
 
 @router.get("/", response_model=list[DeploymentRead])
 async def list_deployments(session: AsyncSession = Depends(get_session)) -> list[DeploymentRead]:
+    """Return all deployments, newest first, with live metrics and pull progress attached."""
     result = await session.execute(select(Deployment).order_by(Deployment.id.desc()))
     reads: list[DeploymentRead] = []
     for deployment in result.scalars().all():
@@ -237,6 +238,7 @@ async def check_served_name(
 async def create_deployment(
     payload: DeploymentCreate, session: AsyncSession = Depends(get_session)
 ) -> DeploymentRead:
+    """Create a deployment record in the database without launching a container."""
     deployment = Deployment(**payload.model_dump())
     session.add(deployment)
     await session.commit()
@@ -338,6 +340,7 @@ async def _launch(payload: DeploymentStart, session: AsyncSession) -> Deployment
 async def start_deployment(
     payload: DeploymentStart, session: AsyncSession = Depends(get_session)
 ) -> DeploymentRead:
+    """Create a deployment and launch its vLLM container on the target node."""
     return await _launch(payload, session)
 
 
@@ -408,6 +411,7 @@ async def plan_deployment_preview(
 async def stop_deployment(
     deployment_id: int, session: AsyncSession = Depends(get_session)
 ) -> DeploymentRead:
+    """Stop the deployment's container on its node and mark the deployment as stopped."""
     deployment = await session.get(Deployment, deployment_id)
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
@@ -429,6 +433,7 @@ async def restart_deployment(
     payload: DeploymentRestart,
     session: AsyncSession = Depends(get_session),
 ) -> DeploymentRead:
+    """Re-launch a stopped, expired, or errored deployment on its original node."""
     deployment = await session.get(Deployment, deployment_id)
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
@@ -550,6 +555,7 @@ async def pin_deployment(
     payload: DeploymentPin,
     session: AsyncSession = Depends(get_session),
 ) -> DeploymentRead:
+    """Toggle the pin flag, protecting the deployment from warm-cache auto-eviction."""
     deployment, node = await _deployment_and_node(deployment_id, session)
     deployment.pinned = payload.pinned
     # Best-effort push to the live agent; the sync loop re-pushes pins anyway,
@@ -570,6 +576,7 @@ async def pause_deployment(
     payload: DeploymentPause,
     session: AsyncSession = Depends(get_session),
 ) -> DeploymentRead:
+    """Pause a running model by offloading it from GPU to RAM via vLLM sleep mode."""
     deployment, node = await _deployment_and_node(deployment_id, session)
     if deployment.status not in ("running", "paused_ram"):
         raise HTTPException(
@@ -590,6 +597,7 @@ async def pause_deployment(
 async def resume_deployment(
     deployment_id: int, session: AsyncSession = Depends(get_session)
 ) -> DeploymentRead:
+    """Wake a paused model back to GPU and resume serving."""
     deployment, node = await _deployment_and_node(deployment_id, session)
     if deployment.status == "running":
         return deployment
@@ -610,6 +618,7 @@ async def resume_deployment(
 async def delete_deployment(
     deployment_id: int, session: AsyncSession = Depends(get_session)
 ) -> dict[str, str]:
+    """Delete the deployment record and remove it from scoped API keys. Does not stop a running container -- call stop first."""
     deployment = await session.get(Deployment, deployment_id)
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
@@ -791,6 +800,7 @@ async def deploy_from_manifest(
 async def deployment_logs(
     deployment_id: int, tail: int = 200, session: AsyncSession = Depends(get_session)
 ) -> dict[str, object]:
+    """Return the last N lines of the deployment's container log (default 200)."""
     deployment = await session.get(Deployment, deployment_id)
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")

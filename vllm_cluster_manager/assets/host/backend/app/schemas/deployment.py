@@ -3,32 +3,32 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class DeploymentBase(BaseModel):
-    node_id: int
-    model_name: str
-    port: int
-    gpu_memory_fraction: float
-    gpu_ids: list[int] | None = None
-    tensor_parallel_size: int | None = None
-    extra_args: list[str] | None = None
-    env_vars: list[dict[str, str]] | None = None
-    pip_packages: list[str] | None = None
-    vllm_version: str | None = None
+    node_id: int = Field(description="ID of the node to deploy on.")
+    model_name: str = Field(description="HuggingFace model identifier (e.g. meta-llama/Meta-Llama-3-8B).")
+    port: int = Field(description="Port the vLLM server listens on.")
+    gpu_memory_fraction: float = Field(description="Fraction of each GPU's memory to allocate (0.0-1.0).")
+    gpu_ids: list[int] | None = Field(None, description="Specific GPU indices to use; omit for automatic selection.")
+    tensor_parallel_size: int | None = Field(None, description="Number of GPUs for tensor parallelism.")
+    extra_args: list[str] | None = Field(None, description="Additional CLI arguments passed to the vLLM server.")
+    env_vars: list[dict[str, str]] | None = Field(None, description="Environment variables injected into the container.")
+    pip_packages: list[str] | None = Field(None, description="Python packages to pip-install before starting vLLM.")
+    vllm_version: str | None = Field(None, description="vLLM Docker image tag to use.")
     # Which container runtime (docker/podman) runs this deployment; resolved
     # by the host at launch (per-node override > preferred > available).
-    container_runtime: str | None = None
-    extra_packages: list[str] | None = None
+    container_runtime: str | None = Field(None, description="Container runtime for this deployment (docker/podman); auto-resolved if omitted.")
+    extra_packages: list[str] | None = Field(None, description="Additional OS packages to install in the container.")
     # Structured vLLM engine flags (max_model_len, dtype, quantization, ...).
-    engine_args: dict[str, object] | None = None
+    engine_args: dict[str, object] | None = Field(None, description="Structured vLLM engine flags (max_model_len, dtype, quantization, etc.).")
     # LoRA adapters served alongside the base model: [{name, path}].
-    lora_modules: list[dict[str, str]] | None = None
+    lora_modules: list[dict[str, str]] | None = Field(None, description="LoRA adapters served alongside the base model; each entry has name and path.")
     # Per-deployment crash-loop threshold; None uses the client default.
-    max_failed_restarts: int | None = None
-    owner: str | None = None
+    max_failed_restarts: int | None = Field(None, description="Crash-loop restart threshold; omit to use the cluster default.")
+    owner: str | None = Field(None, description="User or team who owns this deployment.")
     # Requested serve duration in seconds; None means serve indefinitely.
-    duration_seconds: int | None = None
+    duration_seconds: int | None = Field(None, description="Serve duration in seconds; omit for indefinite serving.")
     # Warm cache: protect this deployment from automatic eviction.
-    pinned: bool = False
-    status: str = "stopped"
+    pinned: bool = Field(False, description="Pin this deployment to prevent automatic warm-cache eviction.")
+    status: str = Field("stopped", description="Current lifecycle status (stopped, loading, running, error, paused).")
 
 
 class DeploymentCreate(DeploymentBase):
@@ -38,19 +38,19 @@ class DeploymentCreate(DeploymentBase):
 class DeploymentRead(DeploymentBase):
     id: int
     # Set when serving starts; None while loading or for an infinite duration.
-    expires_at: datetime | None = None
+    expires_at: datetime | None = Field(None, description="When this deployment will auto-stop; None for indefinite.")
     created_at: datetime | None = None
     # Exact image identity reported by the client (provenance).
-    image_digest: str | None = None
+    image_digest: str | None = Field(None, description="Docker image digest reported by the client.")
     # Last failure reason (client error or watchdog timeout).
-    last_error: str | None = None
+    last_error: str | None = Field(None, description="Last failure reason (client error or watchdog timeout).")
     # Load phase while status is "loading" (downloading/loading_weights/compiling).
-    detail: str | None = None
+    detail: str | None = Field(None, description="Load phase while status is loading (downloading/loading_weights/compiling).")
     status_changed_at: datetime | None = None
     # Cumulative usage from the vLLM instance's Prometheus counters.
-    total_prompt_tokens: int = 0
-    total_completion_tokens: int = 0
-    total_requests: int = 0
+    total_prompt_tokens: int = Field(0, description="Cumulative prompt tokens processed.")
+    total_completion_tokens: int = Field(0, description="Cumulative completion tokens generated.")
+    total_requests: int = Field(0, description="Cumulative requests served.")
     # Live metrics from the latest scrape (not persisted; attached to running
     # deployments by the list endpoint). Speeds are split read (prefill) vs
     # generation (decode): *_tps are per-request, idle-free (token deltas over
@@ -71,23 +71,29 @@ class DeploymentRead(DeploymentBase):
 
 
 class DeploymentStart(DeploymentBase):
-    owner: str  # required when launching a deployment
+    owner: str = Field(description="User or team launching this deployment (required).")
     # Bypass the client's GPU memory pre-check (not persisted).
-    skip_resource_check: bool = False
+    skip_resource_check: bool = Field(False, description="Bypass the client's GPU memory pre-check.")
 
 
 class DeploymentRestart(BaseModel):
-    owner: str
-    duration_seconds: int | None = None
+    """Parameters for restarting a stopped, expired, or errored deployment."""
+
+    owner: str = Field(description="User or team taking ownership of the restarted deployment.")
+    duration_seconds: int | None = Field(None, description="Serve duration in seconds for the new run; omit for indefinite.")
 
 
 class DeploymentPin(BaseModel):
-    pinned: bool
+    """Toggle the pin flag on a deployment."""
+
+    pinned: bool = Field(description="True to pin (protect from warm-cache eviction), False to unpin.")
 
 
 class DeploymentPause(BaseModel):
+    """Pause a running deployment by offloading its model weights from GPU."""
+
     # "ram" | "disk"; omit for auto (RAM if it fits the budget, else disk).
-    tier: str | None = None
+    tier: str | None = Field(None, description="Offload target: 'ram' or 'disk'; omit for automatic selection.")
 
 
 class DeploymentPlanRequest(BaseModel):

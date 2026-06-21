@@ -1,3 +1,10 @@
+"""vLLM Cluster Manager host backend.
+
+FastAPI application that orchestrates multi-node vLLM deployments.
+Manages the deployment lifecycle, syncs node state via Consul, serves
+the OpenAI-compatible gateway, and pushes live updates over WebSocket.
+"""
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 import asyncio

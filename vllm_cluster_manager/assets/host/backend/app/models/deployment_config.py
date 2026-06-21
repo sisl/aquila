@@ -1,3 +1,5 @@
+"""Saved deployment configurations for one-click redeployment."""
+
 from sqlalchemy import DateTime, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func

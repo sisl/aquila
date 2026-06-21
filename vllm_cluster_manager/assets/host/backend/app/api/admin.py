@@ -92,6 +92,7 @@ async def purge(
     payload: PurgeRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """Delete database records by category (deployments, nodes, metrics, configs); running containers are untouched."""
     targets = payload.targets if payload else None
     counts = await purge_database(session, targets)
     selected = _normalize_targets(targets)

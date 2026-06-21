@@ -1,3 +1,5 @@
+"""Alembic migration environment -- runs migrations against the async engine."""
+
 from logging.config import fileConfig
 
 from alembic import context

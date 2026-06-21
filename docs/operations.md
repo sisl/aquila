@@ -4,11 +4,11 @@
 
 Most operational knobs live in the dashboard: **gear icon → Settings**. Saved values are stored in the database, override the backend's env defaults, and **apply live** — no restart needed. Sections:
 
-- **Gateway** — enable/disable the [OpenAI gateway](gateway.md) (disabled → `/v1` returns 503; direct node URLs keep working) and its request timeout.
+- **Gateway** — enable/disable the [OpenAI gateway](gateway.md) (disabled → `/v1` returns 503; direct node URLs keep working) and its request timeout. API key management (permanent and temporary keys, per-deployment scoping) also lives here — see [Gateway → Authentication](gateway.md#authentication).
 - **Deployments** — the start-timeout watchdog, plus the deploy form's pre-filled defaults: port, GPU fraction, serve duration, vLLM version, max failed restarts.
 - **Notifications** — webhook URL (Slack-aware) and the expiry-warning lead time.
-- **Data** — metric-history retention, and the granular purge (select any of: deployment records, nodes, metric history, saved configurations; purging nodes includes their deployments and metrics).
-- **Advanced** — sync-loop intervals and node/deployment failure thresholds.
+- **System** — metric-history retention, warm-cache defaults (enable by default on new nodes, busy guard seconds), sync-loop intervals, and node/deployment failure thresholds.
+- **Danger Zone** — granular purge (select any of: deployment records, nodes, metric history, saved configurations; purging nodes includes their deployments and metrics).
 
 The env variables below remain the *defaults* for these settings (used until a value is saved in the UI); infrastructure values (Postgres, Consul, bind addresses) are env-only.
 
@@ -32,6 +32,8 @@ These act as defaults for the corresponding [dashboard settings](#global-setting
 | `START_TIMEOUT_SECONDS` | `1800` | Watchdog: mark deployments errored if stuck in `starting`/`loading` this long. |
 | `GATEWAY_TIMEOUT_SECONDS` | `600` | Read timeout for non-streaming gateway requests (streams have none). |
 | `NODE_METRICS_RETENTION_HOURS` | `48` | How long node metric samples are kept for the history charts. |
+| `BUSY_GUARD_SECONDS` | `60` | Seconds after a model's last request before it can be auto-evicted by the warm cache. 0 = evict immediately when idle. |
+| `TEMP_API_KEY_TTL_SECONDS` | `300` | Lifespan (seconds) of temporary API keys auto-created for endpoint code snippets. 0 = disabled. |
 
 ### Client settings (`client/.env`)
 
@@ -191,13 +193,60 @@ Uploaded files (`.py`, `.whl`, `.tar.gz`, `.zip`) are stored under `~/.vllm-clie
 - `GET /packages` — list uploaded packages.
 - `DELETE /packages/<id>` — remove a specific package.
 
+## Warm cache (pause & resume)
+
+The warm cache lets the cluster keep more models ready than GPU VRAM can hold at once by pausing idle models to RAM and resuming them on demand — the first inference request after a pause transparently wakes the model (a few seconds, no re-download).
+
+### How it works
+
+When warm cache is enabled on a node, the client agent runs a local proxy in front of each deployment. Pausing a model calls vLLM's sleep mode (`cudaFree`), which releases the CUDA memory allocation while keeping the model weights in CPU RAM. Resuming calls wake, which re-allocates GPU memory and restores the model — much faster than a cold start.
+
+### Enabling warm cache
+
+Warm cache is controlled **per node** in the node's Manage dialog (toggle **Warm offload**). The global default for newly discovered nodes is set in **Settings → System → Warm Cache** (`default_warm_offload_enabled`, default on).
+
+An optional **RAM cache limit** (MB) per node caps how much host RAM paused models may occupy. When the limit would be exceeded, the oldest paused model is stopped entirely rather than kept in RAM.
+
+### Auto-eviction
+
+When a new deployment needs GPU memory on a warm-cache node, the agent automatically pauses idle models to make room:
+
+1. Models are ranked by **last request time** (LRU).
+2. A model is considered **busy** (and skipped) if it received a request within the last `BUSY_GUARD_SECONDS` (default 60, configurable in Settings → System) or has requests currently in flight.
+3. **Pinned** deployments are never auto-evicted — use the pin button on a running deployment to protect it.
+4. The eviction planner simulates freeing GPU memory until the new deployment fits, then executes the plan.
+
+### Manual pause and resume
+
+Running deployments on warm-cache nodes show **Pause** and **Resume** buttons in the deployment actions:
+
+- **Pause** puts the model to sleep (frees VRAM, keeps weights in RAM). A paused deployment shows status `paused_ram` and remains routable through the gateway — the first request wakes it automatically.
+- **Resume** explicitly wakes a paused model without waiting for a request.
+- Pinned deployments cannot be paused (unpin first).
+
+### Unified memory
+
+On unified-memory nodes (e.g. DGX Spark), GPU and CPU share the same physical memory pool. Pausing would call `cudaFree` but free no actual capacity, breaking the eviction chain. The pause button is therefore **hidden** on unified-memory nodes, and the agent rejects manual pause requests with HTTP 409.
+
 ## Node maintenance mode
-Use the **Maintenance** button on a node to cordon it: the node is marked as in maintenance and excluded from new deployments until you end maintenance. Optionally, active deployments on the node can be drained (stopped) when entering maintenance. The API equivalent is `POST /api/nodes/{id}/maintenance` with `{"enabled": true, "drain": true}`.
+
+Maintenance mode lets you cordon GPUs on a node so they are excluded from new deployments. You can cordon **individual GPUs** or all GPUs at once — partial maintenance is shown as a warning badge with the specific GPU indices (e.g. `maint. GPU 0, 2`), while full maintenance marks the entire node.
+
+Use the **Maintenance** button on a node to open the GPU selector:
+
+- **Toggle individual GPUs** to cordon or uncordon them.
+- **Select All / Clear** to quickly switch all GPUs.
+- **Drain** (optional checkbox): stop active deployments whose GPUs overlap with the newly cordoned set.
+- **Cordon** adds the selected GPUs to the maintenance set; **Uncordon** removes them.
+
+New deployments cannot use cordoned GPUs — the deploy form's GPU selector hides them, and the API rejects launches that overlap. Existing deployments on cordoned GPUs keep running unless explicitly drained.
+
+The API equivalent is `POST /api/nodes/{id}/maintenance` with `{"gpu_ids": [0, 2], "enabled": true, "drain": true}`.
 
 ## Node metrics history
 The backend samples GPU/CPU/memory/disk metrics from each node and keeps them for `NODE_METRICS_RETENTION_HOURS` (default 48). Expand a node row in the dashboard to see the charts; the raw data is available at `GET /api/nodes/{id}/metrics/history`.
 
-On unified-memory devices (e.g. DGX Spark), the GPU's dedicated-VRAM fields aren't reported by `nvidia-smi`/NVML: the **compute** percentage is still the real GPU utilization, while the **memory** figures come from system RAM (the shared pool) and are marked `(unified)` in the node table. Compute shows `n/a` only when the node has no NVIDIA tooling at all.
+On unified-memory devices (e.g. DGX Spark), the GPU's dedicated-VRAM fields aren't reported by `nvidia-smi`/NVML: the **compute** percentage is still the real GPU utilization, while the **memory** figures come from system RAM (the shared pool) and are marked `(unified)` in the node table. Compute shows `n/a` only when the node has no NVIDIA tooling at all. Warm cache (pause/resume) is disabled on unified-memory nodes because GPU and CPU share the same physical memory — `cudaFree` releases the CUDA allocation but no capacity is actually freed.
 
 ## Database migrations
 The backend manages its schema with Alembic and runs `upgrade head` automatically at startup, so upgrades never require manual migration steps. Databases created by older versions are absorbed by the baseline migration and upgraded in place. If you need to inspect or run migrations manually, the Alembic environment lives in the backend's install directory and reads the same `.env` as the API service.

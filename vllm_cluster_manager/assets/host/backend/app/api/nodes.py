@@ -72,6 +72,7 @@ def _attach_derived(node: Node) -> None:
 
 @router.get("/", response_model=list[NodeRead])
 async def list_nodes(session: AsyncSession = Depends(get_session)) -> list[NodeRead]:
+    """List all registered nodes with GPU metrics, status, and derived state."""
     result = await session.execute(select(Node).order_by(Node.hostname))
     nodes = list(result.scalars().all())
     for node in nodes:
@@ -81,6 +82,7 @@ async def list_nodes(session: AsyncSession = Depends(get_session)) -> list[NodeR
 
 @router.post("/", response_model=NodeRead)
 async def create_node(payload: NodeCreate, session: AsyncSession = Depends(get_session)) -> NodeRead:
+    """Manually register a new node. Nodes are normally auto-registered via Consul."""
     node = Node(**payload.model_dump())
     session.add(node)
     await session.commit()
@@ -300,6 +302,7 @@ async def list_node_model_cache(
     node_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, object]]:
+    """List HuggingFace model cache entries on the node."""
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -312,6 +315,7 @@ async def delete_node_model_cache(
     name: str,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """Delete a cached model from the node's HuggingFace cache."""
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -334,6 +338,7 @@ async def begin_node_local_model_upload(
     payload: dict,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """Start a streamed multi-file model upload session on the node."""
     node = await _node_or_404(session, node_id)
     return await begin_local_model_upload(node.ip_address, node.port, payload)
 
@@ -346,6 +351,7 @@ async def upload_node_local_model_file(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """Upload a single file within an active model upload session."""
     node = await _node_or_404(session, node_id)
     return await upload_local_model_file(
         node.ip_address,
@@ -364,6 +370,7 @@ async def finish_node_local_model_upload(
     payload: dict | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """Finalize a model upload session, committing all uploaded files."""
     node = await _node_or_404(session, node_id)
     return await finish_local_model_upload(node.ip_address, node.port, session_id, payload)
 
@@ -374,6 +381,7 @@ async def abort_node_local_model_upload(
     session_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """Abort an upload session and clean up any partially uploaded files."""
     node = await _node_or_404(session, node_id)
     return await abort_local_model_upload(node.ip_address, node.port, session_id)
 
@@ -386,6 +394,7 @@ async def upload_node_local_model_archive(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """Upload a model as a single archive file (tar/zip) to the node."""
     node = await _node_or_404(session, node_id)
     return await upload_local_model_archive(
         node.ip_address,
@@ -403,6 +412,7 @@ async def pull_node_local_model(
     payload: dict,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """Pull a model from a URL to the node's local model storage."""
     node = await _node_or_404(session, node_id)
     return await pull_local_model(node.ip_address, node.port, payload)
 
@@ -412,6 +422,7 @@ async def list_node_local_model_transfers(
     node_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, object]]:
+    """List active download and upload transfers on the node."""
     node = await _node_or_404(session, node_id)
     return await get_local_model_transfers(node.ip_address, node.port)
 
@@ -421,6 +432,7 @@ async def list_node_local_models(
     node_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, object]]:
+    """List models stored in the node's local model directory."""
     node = await _node_or_404(session, node_id)
     return await list_local_models(node.ip_address, node.port)
 
@@ -431,12 +443,14 @@ async def delete_node_local_model(
     name: str,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """Delete a model from the node's local storage."""
     node = await _node_or_404(session, node_id)
     return await delete_local_model(node.ip_address, node.port, name)
 
 
 @router.get("/discovered", response_model=dict[str, list[DiscoveredNode]])
 async def discovered_nodes() -> dict[str, list[DiscoveredNode]]:
+    """Return nodes discovered via Consul that have not been registered yet."""
     services = consul_service.list_service("vllm-satellite")
     cleaned = [
         {
@@ -454,6 +468,7 @@ async def discovered_nodes() -> dict[str, list[DiscoveredNode]]:
 async def check_node_port(
     node_id: int, port: int, session: AsyncSession = Depends(get_session)
 ) -> dict[str, object]:
+    """Check whether a port is available on the node."""
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -466,6 +481,7 @@ async def upload_node_package(
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """Upload a pip package to the node's package cache."""
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -478,6 +494,7 @@ async def list_node_packages(
     node_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, object]]:
+    """List pip packages in the node's package cache."""
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -489,6 +506,7 @@ async def list_node_containers(
     node_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, object]]:
+    """List vLLM containers running on the node."""
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -501,6 +519,7 @@ async def stop_node_container(
     container_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """Stop a specific container on the node."""
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -512,6 +531,7 @@ async def list_node_gpu_processes(
     node_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, object]]:
+    """List processes currently using GPUs on the node."""
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -524,6 +544,7 @@ async def kill_node_gpu_process(
     pid: int,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """Kill a GPU process by PID on the node."""
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -535,6 +556,7 @@ async def list_node_warm_artifacts(
     node_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """List orphaned warm-cache artifacts (RAM sleepers, disk caches) on the node."""
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -547,6 +569,7 @@ async def kill_node_ram_sleeper(
     pid: int,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """Kill an orphaned RAM sleeper process by PID on the node."""
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -559,6 +582,7 @@ async def delete_node_warm_cache(
     name: str,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """Delete an orphaned warm-cache compile artifact from the node."""
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -570,6 +594,7 @@ async def list_node_images(
     node_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, object]]:
+    """List container images on the node."""
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -582,6 +607,7 @@ async def delete_node_image(
     image_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """Delete a container image from the node."""
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -593,6 +619,7 @@ async def prune_node_images(
     node_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    """Prune unused container images on the node."""
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")

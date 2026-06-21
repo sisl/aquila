@@ -2638,7 +2638,7 @@ def _ram_estimate(meta: dict) -> float:
     frac = float(meta.get("gpu_memory_fraction") or 0.0)
     by_index = {g.get("index"): g for g in _gpu_metrics()}
     total = 0.0
-    for gid in meta.get("gpu_ids") or []:
+    for gid in _gpu_ids(meta):
         gpu = by_index.get(gid)
         if gpu and gpu.get("source") != "unified":
             total += float(gpu.get("memory_total_mb") or 0.0)

@@ -13,6 +13,7 @@ router = APIRouter()
 async def list_configs(
     session: AsyncSession = Depends(get_session),
 ) -> list[DeploymentConfigRead]:
+    """List all saved deployment configurations."""
     result = await session.execute(select(DeploymentConfig).order_by(DeploymentConfig.name))
     return list(result.scalars().all())
 
@@ -21,6 +22,7 @@ async def list_configs(
 async def create_config(
     payload: DeploymentConfigCreate, session: AsyncSession = Depends(get_session)
 ) -> DeploymentConfigRead:
+    """Save a deployment configuration for later reuse."""
     existing = await session.execute(
         select(DeploymentConfig).where(DeploymentConfig.name == payload.name)
     )
@@ -38,6 +40,7 @@ async def create_config(
 async def delete_config(
     config_id: int, session: AsyncSession = Depends(get_session)
 ) -> dict[str, str]:
+    """Delete a saved deployment configuration."""
     config = await session.get(DeploymentConfig, config_id)
     if not config:
         raise HTTPException(status_code=404, detail="Config not found")

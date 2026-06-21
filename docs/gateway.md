@@ -41,8 +41,10 @@ Errors come back in OpenAI's error format:
 | Status | Meaning |
 | --- | --- |
 | 400 | The model name maps to several deployments (`model_ambiguous`); the message lists the served names to choose from. |
+| 401 | Missing or invalid API key. |
+| 403 | The API key is valid but not authorized for the requested deployment (scoped key). |
 | 404 | No deployment serves that model; the message lists the available model names. |
-| 503 | A deployment matches but is still starting/loading — retry shortly. |
+| 503 | A deployment matches but is still starting/loading — retry shortly. Also returned when the gateway is disabled. |
 | 502 | The deployment's node did not respond. |
 
 ## Usage example
@@ -50,14 +52,27 @@ Errors come back in OpenAI's error format:
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://my-host:5173/v1", api_key="not-needed")
+client = OpenAI(base_url="http://my-host:5173/v1", api_key="vcm-abc123...")
 resp = client.chat.completions.create(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Hello"}],
 )
 ```
 
-There is no authentication (the tool targets small trusted environments); any `api_key` value is accepted.
+## Authentication
+
+The gateway is protected by API keys. When at least one **permanent** API key exists, every `/v1` request must include a valid key in the `Authorization` header:
+
+```
+Authorization: Bearer vcm-abc123...
+```
+
+Keys are managed in **Settings → Gateway & Keys**:
+
+- **Permanent keys** authenticate long-lived clients (scripts, notebooks, CI pipelines). They can be scoped to **all deployments** (default) or restricted to **specific deployments** — a scoped key can only reach the deployments it is assigned to, and `/v1/models` only lists those models. Scopes can be changed after creation.
+- **Temporary keys** are auto-created when you open a deployment's **Endpoint** dialog (the code snippets embed one). They expire after a configurable TTL (default 5 minutes, adjustable in Settings) and are always scoped to the single deployment whose dialog created them.
+
+If **no** permanent keys exist, the gateway is open — any request is accepted without a key. The first time the host starts it creates a default `admin` key and prints it to the log (store it; it is shown only once). Deleting the last permanent key requires an explicit acknowledgment that the gateway will become unprotected.
 
 The gateway can be turned off entirely in **Settings → Gateway**: `/v1` requests then return `503` with a clear message, while direct node URLs keep working (the Endpoint dialog switches to direct-only automatically). The non-streaming request timeout is configurable in the same section.
 

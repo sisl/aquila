@@ -46,6 +46,7 @@ nav:
   - Getting Started: getting-started.md
   - Deployments: deployments.md
   - Gateway & Usage: gateway.md
+  - API Reference: api-reference.md
   - CLI Reference: cli.md
   - Architecture: architecture.md
   - Operations: operations.md

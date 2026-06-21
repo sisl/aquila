@@ -16,11 +16,13 @@ _LATEST_VERSION_TTL: float = 3600.0
 
 @router.get("/health")
 async def health() -> dict[str, str]:
+    """Backend health check."""
     return {"status": "ok"}
 
 
 @router.get("/vllm-version")
 async def latest_vllm_version() -> dict[str, str]:
+    """Return the latest stable vLLM release tag from GitHub."""
     global _latest_vllm_version, _latest_vllm_version_fetched_at
     now = time.monotonic()
     if _latest_vllm_version and (now - _latest_vllm_version_fetched_at) < _LATEST_VERSION_TTL:

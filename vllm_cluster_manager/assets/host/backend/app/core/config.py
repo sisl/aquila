@@ -1,3 +1,10 @@
+"""Backend configuration loaded from environment variables.
+
+These values are the *defaults* for runtime settings -- once a value is
+saved in the dashboard's Settings dialog, it takes precedence.  Infra
+values (Postgres, Consul, bind addresses) are env-only.
+"""
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 

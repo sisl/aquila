@@ -7,6 +7,12 @@ logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
+    """Manages active WebSocket connections and broadcasts state-change events.
+
+    The broadcast method sends a JSON message to all connected clients,
+    silently dropping connections that have gone away.
+    """
+
     def __init__(self) -> None:
         self.active: set[WebSocket] = set()
 

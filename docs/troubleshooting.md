@@ -126,3 +126,30 @@ Two preconditions must hold for GPUs to reach a Podman container; the agent veri
 
 - **Podman ≥ 5.4.** Podman's Docker-compatible API ignores Docker's native GPU request mechanism (`DeviceRequests` with GPU capabilities) — the container starts without any GPU and vLLM crash-loops on `Failed to infer device type`. The manager therefore requests GPUs as **CDI device requests** (`nvidia.com/gpu=...`), which Podman's compat API only honors from 5.4 on. There is no working GPU path over the compat API in older versions — upgrade Podman or switch the node's runtime to Docker.
 - **NVIDIA CDI specs generated.** Install the NVIDIA Container Toolkit (≥ 1.12) and generate the specs once (and again after driver updates): `sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`, then redeploy.
+
+## Gateway returns 401 "API key required"
+**Symptoms**: Requests to `/v1/...` fail with 401 even though deployments are running.
+
+Checks:
+- At least one permanent API key exists (check Settings → Gateway & Keys). When keys exist, every gateway request must include `Authorization: Bearer <key>`.
+- Verify the key hasn't expired (temporary keys have a short TTL).
+- Confirm the `Authorization` header uses the `Bearer` prefix.
+
+## Gateway returns 403 on a valid key
+**Symptoms**: The API key is accepted for some models but returns 403 for others.
+
+Explanation:
+- The key is **scoped** to specific deployments and cannot access the requested model. Edit the key's scope in Settings → Gateway & Keys → Edit, or use a key with "all deployments" access.
+
+## Pause button missing on a running deployment
+**Symptoms**: A running deployment on a warm-cache node does not show a Pause button.
+
+Checks:
+- **Warm cache** must be enabled on the node (Manage dialog → Warm offload toggle).
+- On **unified-memory** nodes (e.g. DGX Spark), pause is intentionally disabled — GPU and CPU share the same memory, so freeing CUDA memory has no effect.
+
+## Deployment rejected on a cordoned GPU
+**Symptoms**: Deploying fails with a message about maintenance GPUs.
+
+Explanation:
+- One or more of the selected GPUs are in maintenance mode. Check the node's status — partial maintenance is shown as `maint. GPU 0, 2` etc. Uncordon the GPUs in the Maintenance dialog, or select different GPUs.

@@ -6,6 +6,12 @@ from app.models.base import Base
 
 
 class Node(Base):
+    """A registered GPU node discovered via Consul.
+
+    Stores hardware info, runtime capabilities, and health state.
+    Transient metrics (GPU load, temperature) are updated by the sync loop.
+    """
+
     __tablename__ = "nodes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
