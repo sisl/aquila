@@ -307,6 +307,27 @@ export const theme = createTheme({
         }
       }
     },
+    MuiTabs: {
+      styleOverrides: {
+        root: { minHeight: 42 },
+        indicator: { backgroundColor: tokens.accent, height: 2 }
+      }
+    },
+    MuiTab: {
+      styleOverrides: {
+        root: {
+          minHeight: 42,
+          textTransform: "none",
+          fontSize: "0.8125rem",
+          fontWeight: 500,
+          letterSpacing: "0.01em",
+          color: tokens.muted,
+          transition: hoverTransition,
+          "&.Mui-selected": { color: tokens.ink },
+          "&.Mui-focusVisible": focusRing
+        }
+      }
+    },
     MuiTextField: {
       defaultProps: {
         size: "small"

@@ -206,7 +206,10 @@ export function EndpointDialog({
     creatingRef.current = true;
     createApiKey("snippet (temp)", ttl)
       .then((result) => setTempKey(result.key))
-      .catch(() => setTempKey(null))
+      .catch((err) => {
+        setTempKey(null);
+        toast.error("Could not create temporary API key: " + (err instanceof Error ? err.message : String(err)));
+      })
       .finally(() => { creatingRef.current = false; });
   }, [open, hasPermanentKeys, ttl, tempKey]);
 

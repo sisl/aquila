@@ -34,6 +34,7 @@ import { ColumnPicker } from "./ColumnPicker";
 import { EmptyState } from "./EmptyState";
 import { Mono } from "./Mono";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { DeploymentActions } from "./DeploymentActions";
 
 type DeploymentTableProps = {
   deployments: Deployment[];
@@ -583,106 +584,20 @@ export function DeploymentTable({
                     </Tooltip>
                   </TableCell>
                 )}
-                <TableCell align="right">
-                  <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-                    <AppButton
-                      type="button"
-                      className="app-button--small"
-                      ghost
-                      onClick={() => onSettings(deployment)}
-                    >
-                      Settings
-                    </AppButton>
-                    <AppButton
-                      type="button"
-                      className="app-button--small"
-                      ghost
-                      onClick={() => onLogs(deployment.id)}
-                    >
-                      Logs
-                    </AppButton>
-                    {onEndpoint &&
-                      ["running", "paused_ram"].includes(
-                        deployment.status
-                      ) && (
-                        <AppButton
-                          type="button"
-                          className="app-button--small"
-                          ghost
-                          onClick={() => onEndpoint(deployment)}
-                        >
-                          Endpoint
-                        </AppButton>
-                      )}
-                    {onPin &&
-                      (deployment.status === "running" ||
-                        deployment.status === "paused_ram") &&
-                      (deployment.status !== "running" ||
-                        isWarmNode?.(deployment.node_id)) && (
-                        <AppButton
-                          type="button"
-                          className="app-button--small"
-                          ghost
-                          onClick={() => onPin(deployment, !deployment.pinned)}
-                        >
-                          {deployment.pinned ? "Unpin" : "Pin"}
-                        </AppButton>
-                      )}
-                    {onPause &&
-                      deployment.status === "running" &&
-                      isWarmNode?.(deployment.node_id) && (
-                        <AppButton
-                          type="button"
-                          className="app-button--small"
-                          ghost
-                          onClick={() => onPause(deployment)}
-                        >
-                          Pause
-                        </AppButton>
-                      )}
-                    {onResume &&
-                      deployment.status === "paused_ram" && (
-                        <AppButton
-                          type="button"
-                          className="app-button--small"
-                          ghost
-                          onClick={() => onResume(deployment)}
-                        >
-                          Resume
-                        </AppButton>
-                      )}
-                    {(deployment.status === "running" || deployment.status === "loading" || deployment.status === "paused_ram") && (
-                      <AppButton
-                        type="button"
-                        variant="stop"
-                        className="app-button--small"
-                        ghost
-                        onClick={() => setConfirmStop(deployment)}
-                      >
-                        Stop
-                      </AppButton>
-                    )}
-                    {canRestart(deployment.status) && (
-                      <AppButton
-                        type="button"
-                        className="app-button--small"
-                        ghost
-                        onClick={() => onRestart(deployment)}
-                      >
-                        Start
-                      </AppButton>
-                    )}
-                    {canRestart(deployment.status) && (
-                      <AppButton
-                        type="button"
-                        className="app-button--small"
-                        ghost
-                        onClick={() => setConfirmDelete(deployment)}
-                      >
-                        Delete
-                      </AppButton>
-                    )}
-                  </Box>
+                <TableCell align="right" sx={{ py: 0.5 }}>
+                  <DeploymentActions
+                    deployment={deployment}
+                    isWarmNode={isWarmNode}
+                    onSettings={() => onSettings(deployment)}
+                    onLogs={() => onLogs(deployment.id)}
+                    onEndpoint={onEndpoint ? () => onEndpoint(deployment) : undefined}
+                    onPin={onPin}
+                    onPause={onPause ? () => onPause(deployment) : undefined}
+                    onResume={onResume ? () => onResume(deployment) : undefined}
+                    onStopClick={() => setConfirmStop(deployment)}
+                    onRestart={() => onRestart(deployment)}
+                    onDeleteClick={() => setConfirmDelete(deployment)}
+                  />
                 </TableCell>
               </TableRow>
             );

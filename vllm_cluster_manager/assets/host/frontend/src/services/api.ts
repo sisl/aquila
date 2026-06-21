@@ -9,7 +9,9 @@ export type Node = {
   hostname: string;
   ip_address: string;
   status: string;
+  maintenance_gpus?: number[];
   maintenance?: boolean;
+  partial_maintenance?: boolean;
   port?: number | null;
   gpu_usage?: {
     index: number;
@@ -605,12 +607,13 @@ export function pruneNodeImages(nodeId: number): Promise<ImagePruneResult> {
 export async function setNodeMaintenance(
   nodeId: number,
   enabled: boolean,
-  drain: boolean
+  drain: boolean,
+  gpuIds?: number[]
 ): Promise<Node> {
   const response = await fetch(`${baseUrl}/nodes/${nodeId}/maintenance`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enabled, drain })
+    body: JSON.stringify({ gpu_ids: gpuIds ?? [], enabled, drain })
   });
   if (!response.ok) {
     let detail = "";

@@ -16,7 +16,7 @@ router = APIRouter()
 
 class CreateApiKeyRequest(BaseModel):
     label: str = Field(..., min_length=1, max_length=128)
-    ttl_seconds: int | None = Field(None, ge=60, le=86400)
+    ttl_seconds: int | None = Field(None, ge=1, le=86400)
 
 
 @router.post("")

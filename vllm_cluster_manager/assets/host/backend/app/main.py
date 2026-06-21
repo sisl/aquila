@@ -55,6 +55,7 @@ async def lifespan(_: FastAPI):
     async with SessionLocal() as session:
         await runtime_settings.load(session)
         await api_keys.load(session)
+        await api_keys.ensure_default_key(session)
     task = asyncio.create_task(sync_nodes_from_consul())
     deploy_task = asyncio.create_task(sync_deployments_from_clients())
     expiry_task = asyncio.create_task(enforce_deployment_expiry())

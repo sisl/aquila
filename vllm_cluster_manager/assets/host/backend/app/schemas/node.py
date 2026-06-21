@@ -7,7 +7,7 @@ class NodeBase(BaseModel):
     ip_address: str
     port: int | None = None
     status: str = "unknown"
-    maintenance: bool = False
+    maintenance_gpus: list[int] = []
     gpu_usage: list[dict[str, object]] | None = None
     # {total_gb, free_gb, hf_cache_gb} as reported by the client agent.
     disk_usage: dict[str, object] | None = None
@@ -28,6 +28,8 @@ class NodeCreate(NodeBase):
 
 class NodeRead(NodeBase):
     id: int
+    maintenance: bool = False
+    partial_maintenance: bool = False
     # Derived (not persisted): rogue/untracked vLLM containers seen on the node.
     rogue_container_count: int | None = None
     # Derived (not persisted): orphaned vLLM GPU processes (no live container).
@@ -49,8 +51,8 @@ class NodeWarmCacheRequest(BaseModel):
 
 
 class NodeMaintenanceRequest(BaseModel):
+    gpu_ids: list[int] = []
     enabled: bool
-    # Also stop all active deployments on the node when cordoning.
     drain: bool = False
 
 

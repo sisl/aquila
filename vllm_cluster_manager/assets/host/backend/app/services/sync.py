@@ -106,11 +106,14 @@ async def sync_nodes_from_consul(interval_seconds: int = 10) -> None:
                     )
                     node = result.scalar_one_or_none()
 
-                    # A cordoned node reports "maintenance" regardless of
-                    # Consul health so expected downtime doesn't read as an
-                    # outage.
+                    # A fully-cordoned node reports "maintenance" regardless
+                    # of Consul health so expected downtime doesn't read as
+                    # an outage.  Partial cordon suppresses flap counts but
+                    # keeps the real health status.
                     if node is not None and node.maintenance:
                         consul_status = "maintenance"
+                        _node_fail_counts.pop(service_id, None)
+                    elif node is not None and node.maintenance_gpus:
                         _node_fail_counts.pop(service_id, None)
 
                     metrics: dict[str, object] | None = None
@@ -480,9 +483,14 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
                         key = f"{deployment.model_name}:{deployment.port}"
                         if not reachable:
                             # Expected downtime on a cordoned node: keep the
-                            # last known status instead of flapping.
+                            # last known status instead of flapping.  For
+                            # partial maintenance, suppress only deployments
+                            # whose GPUs are all in maintenance.
                             if not node.maintenance:
-                                set_status(deployment, "unreachable")
+                                dep_gpus = set(deployment.gpu_ids) if deployment.gpu_ids else None
+                                maint = set(node.maintenance_gpus or [])
+                                if dep_gpus is None or not (dep_gpus <= maint):
+                                    set_status(deployment, "unreachable")
                             if (deployment.status, deployment.detail) != before:
                                 changed_ids.append(deployment.id)
                                 event = _transition_event(deployment, before[0], node)

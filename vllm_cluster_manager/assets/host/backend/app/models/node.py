@@ -13,9 +13,22 @@ class Node(Base):
     ip_address: Mapped[str] = mapped_column(String(64))
     port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="unknown")
-    # Cordoned for maintenance: no new deployments, health flaps ignored.
-    maintenance: Mapped[bool] = mapped_column(Boolean, default=False)
+    maintenance_gpus: Mapped[list[int]] = mapped_column(JSON, default=list)
     gpu_usage: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
+
+    @property
+    def maintenance(self) -> bool:
+        """True when every GPU on this node is cordoned."""
+        if not self.maintenance_gpus:
+            return False
+        if not self.gpu_usage:
+            return bool(self.maintenance_gpus)
+        all_indices = {g.get("index", i) for i, g in enumerate(self.gpu_usage)}
+        return all_indices <= set(self.maintenance_gpus)
+
+    @property
+    def has_partial_maintenance(self) -> bool:
+        return bool(self.maintenance_gpus) and not self.maintenance
     # {total_gb, free_gb, hf_cache_gb} as reported by the client agent.
     disk_usage: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     default_pip_packages: Mapped[list[str]] = mapped_column(JSON, default=list)

@@ -2,17 +2,25 @@ import { useEffect, useState } from "react";
 import {
   Box,
   Checkbox,
+  Collapse,
   FormControlLabel,
   IconButton,
   MenuItem,
   Stack,
   Switch,
+  Tab,
+  Tabs,
   TextField,
   Tooltip,
   Typography
 } from "@mui/material";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import RocketLaunchOutlined from "@mui/icons-material/RocketLaunchOutlined";
+import TuneOutlined from "@mui/icons-material/TuneOutlined";
+import VpnKeyOutlined from "@mui/icons-material/VpnKeyOutlined";
+import WarningAmber from "@mui/icons-material/WarningAmber";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -38,7 +46,6 @@ type SettingsDialogProps = {
   onClose: () => void;
 };
 
-// Mirrors the deploy form's options minus "custom" (a default must be concrete).
 const DURATION_OPTIONS: { value: string; label: string }[] = [
   { value: "3600", label: "1 hour" },
   { value: "7200", label: "2 hours" },
@@ -57,6 +64,8 @@ const PURGE_OPTIONS: { key: string; label: string; hint: string }[] = [
   { key: "configs", label: "Saved configurations", hint: "" }
 ];
 
+const TAB_ICON_SX = { fontSize: 18 } as const;
+
 const errorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
@@ -71,17 +80,30 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
+function timeRemaining(iso: string): string {
+  const seconds = Math.floor((new Date(iso).getTime() - Date.now()) / 1000);
+  if (seconds <= 0) return "expired";
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
 export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const [draft, setDraft] = useState<Partial<RuntimeSettings>>({});
   const [actionError, setActionError] = useState("");
+  const [activeTab, setActiveTab] = useState(0);
   const [purgeTargets, setPurgeTargets] = useState<string[]>([]);
   const [confirmPurge, setConfirmPurge] = useState(false);
   const [createKeyOpen, setCreateKeyOpen] = useState(false);
   const [newKeyLabel, setNewKeyLabel] = useState("");
   const [createdKey, setCreatedKey] = useState<ApiKeyCreated | null>(null);
   const [confirmDeleteKey, setConfirmDeleteKey] = useState<ApiKeyInfo | null>(null);
+  const [deleteAck, setDeleteAck] = useState(false);
+  const [tempKeysOpen, setTempKeysOpen] = useState(false);
 
   const settingsQuery = useQuery({
     queryKey: ["settings"],
@@ -89,7 +111,6 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     enabled: open
   });
 
-  // Re-seed the draft each time the dialog opens with fresh data.
   useEffect(() => {
     if (open && settingsQuery.data) {
       setDraft(settingsQuery.data);
@@ -166,8 +187,6 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       let next = checked
         ? [...current, key]
         : current.filter((item) => item !== key);
-      // Nodes can't outlive their children: force-select what the backend
-      // will delete anyway so the confirmation is honest.
       if (key === "nodes" && checked) {
         next = Array.from(new Set([...next, "deployments", "metrics"]));
       }
@@ -182,12 +201,19 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     setActionError("");
     setPurgeTargets([]);
     setConfirmPurge(false);
+    setActiveTab(0);
     onClose();
   };
 
   const selectedPurgeLabels = PURGE_OPTIONS.filter((option) =>
     purgeTargets.includes(option.key)
   ).map((option) => option.label.toLowerCase());
+
+  const permanentKeys = (apiKeysQuery.data ?? []).filter((k) => !k.expires_at);
+  const isLastPermanentKey =
+    confirmDeleteKey !== null &&
+    !confirmDeleteKey.expires_at &&
+    permanentKeys.length === 1;
 
   return (
     <>
@@ -196,6 +222,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         onClose={handleClose}
         title="Settings"
         meta="Saved values override the backend's environment defaults and apply live — no restart needed."
+        contentSx={{ pt: 0 }}
         actions={
           <>
             <AppButton type="button" ghost onClick={handleClose}>
@@ -212,360 +239,483 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         }
       >
         {actionError && (
-          <Typography variant="body2" color="error" sx={{ mb: 2 }}>
+          <Typography variant="body2" color="error" sx={{ mt: 2, mb: -1 }}>
             {actionError}
           </Typography>
         )}
 
-        <Box>
-          <DialogSection
-            first
-            title="Gateway"
-            hint="When disabled, /v1 requests get a 503; direct node URLs keep working."
-            action={
-              <Switch
-                checked={draft.gateway_enabled ?? true}
-                onChange={(event) => set("gateway_enabled", event.target.checked)}
-                inputProps={{ "aria-label": "OpenAI gateway enabled" }}
-              />
-            }
-          >
-            <TextField
-              size="small"
-              label="Request timeout (s)"
-              type="number"
-              value={draft.gateway_timeout_seconds ?? ""}
-              onChange={(event) => set("gateway_timeout_seconds", num(event.target.value))}
-              helperText="Non-streaming requests; streams are never read-limited."
-              sx={{ width: 220 }}
-            />
-          </DialogSection>
+        <Tabs
+          value={activeTab}
+          onChange={(_, v) => setActiveTab(v)}
+          variant="scrollable"
+          scrollButtons="auto"
+          sx={{
+            borderBottom: "1px solid var(--line)",
+            mx: -3,
+            px: 3,
+          }}
+        >
+          <Tab icon={<VpnKeyOutlined sx={TAB_ICON_SX} />} iconPosition="start" label="Gateway & Keys" />
+          <Tab icon={<RocketLaunchOutlined sx={TAB_ICON_SX} />} iconPosition="start" label="Deployments" />
+          <Tab icon={<TuneOutlined sx={TAB_ICON_SX} />} iconPosition="start" label="System" />
+          <Tab
+            icon={<WarningAmber sx={TAB_ICON_SX} />}
+            iconPosition="start"
+            label="Danger Zone"
+            sx={{ color: "error.main", "&.Mui-selected": { color: "error.main" } }}
+          />
+        </Tabs>
 
-          <DialogSection
-            title="API Keys"
-            hint={
-              apiKeysQuery.data && apiKeysQuery.data.length > 0
-                ? `${apiKeysQuery.data.length} active key${apiKeysQuery.data.length > 1 ? "s" : ""}. All /v1 requests require a valid key.`
-                : "No API keys — the gateway is open to all requests."
-            }
-            action={
-              <AppButton
-                type="button"
-                onClick={() => {
-                  setNewKeyLabel("");
-                  setCreatedKey(null);
-                  setCreateKeyOpen(true);
-                }}
-              >
-                Create Key
-              </AppButton>
-            }
-          >
-            {apiKeysQuery.data && apiKeysQuery.data.length > 0 ? (
-              <Stack spacing={0.5}>
-                {apiKeysQuery.data.map((k) => (
-                  <Box
-                    key={k.id}
-                    sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 1.5,
-                      py: 0.5
-                    }}
-                  >
-                    <Typography variant="body2" sx={{ fontWeight: 500, minWidth: 100 }}>
-                      {k.label}
-                    </Typography>
-                    <Typography
-                      variant="body2"
-                      className="muted"
-                      sx={{ fontFamily: "monospace", fontSize: "0.8rem" }}
-                    >
-                      {k.prefix}...
-                    </Typography>
-                    <Typography variant="caption" className="muted" sx={{ ml: "auto" }}>
-                      {k.last_used_at
-                        ? `used ${timeAgo(k.last_used_at)}`
-                        : "never used"}
-                    </Typography>
-                    <Tooltip title="Delete key">
-                      <IconButton
-                        size="small"
-                        onClick={() => setConfirmDeleteKey(k)}
-                      >
-                        <DeleteOutlineIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </Box>
-                ))}
-              </Stack>
-            ) : (
-              <Typography variant="body2" className="muted">
-                Create an API key to require authentication on /v1 gateway requests.
-              </Typography>
-            )}
-            <TextField
-              size="small"
-              label="Snippet key lifetime (s)"
-              type="number"
-              inputProps={{ min: 0, max: 3600 }}
-              value={draft.temp_api_key_ttl_seconds ?? ""}
-              onChange={(event) => set("temp_api_key_ttl_seconds", num(event.target.value))}
-              helperText="Temporary key lifespan for endpoint code snippets. 0 = disabled."
-              sx={{ width: 220, mt: 2 }}
-            />
-          </DialogSection>
-
-          <DialogSection
-            title="Deployments"
-            hint="Start watchdog, runtime preference, and the deploy form's pre-filled defaults."
-          >
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 2 }}>
-              <TextField
-                size="small"
-                label="Start timeout (s)"
-                type="number"
-                value={draft.start_timeout_seconds ?? ""}
-                onChange={(event) => set("start_timeout_seconds", num(event.target.value))}
-                helperText="Mark a deployment as errored if it isn't running by then."
-                sx={{ width: 220 }}
-              />
-              <TextField
-                size="small"
-                select
-                label="Preferred runtime"
-                value={draft.preferred_container_runtime ?? "docker"}
-                onChange={(event) =>
-                  set("preferred_container_runtime", event.target.value)
+        <Box sx={{ pt: 2 }}>
+          {/* ── Tab 0: Gateway & Keys ── */}
+          {activeTab === 0 && (
+            <Box>
+              <DialogSection
+                first
+                title="Gateway"
+                hint="When disabled, /v1 requests get a 503; direct node URLs keep working."
+                action={
+                  <Switch
+                    checked={draft.gateway_enabled ?? true}
+                    onChange={(event) => set("gateway_enabled", event.target.checked)}
+                    inputProps={{ "aria-label": "OpenAI gateway enabled" }}
+                  />
                 }
-                helperText="Used when a node has both and no per-node override."
-                sx={{ width: 200 }}
               >
-                <MenuItem value="docker">Docker</MenuItem>
-                <MenuItem value="podman">Podman</MenuItem>
-              </TextField>
-            </Stack>
-            <Typography variant="body2" className="muted" sx={{ mb: 1 }}>
-              Defaults pre-filled in the deploy form:
-            </Typography>
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 2 }}>
-              <TextField
-                size="small"
-                label="Port"
-                type="number"
-                value={draft.default_port ?? ""}
-                onChange={(event) => set("default_port", num(event.target.value))}
-                sx={{ width: 130 }}
-              />
-              <TextField
-                size="small"
-                label="GPU fraction"
-                type="number"
-                inputProps={{ step: 0.05, min: 0.05, max: 1 }}
-                value={draft.default_gpu_fraction ?? ""}
-                onChange={(event) => set("default_gpu_fraction", num(event.target.value))}
-                sx={{ width: 130 }}
-              />
-              <TextField
-                size="small"
-                select
-                label="Serve for"
-                value={draft.default_duration_choice ?? "43200"}
-                onChange={(event) => set("default_duration_choice", event.target.value)}
-                sx={{ width: 150 }}
-              >
-                {DURATION_OPTIONS.map((option) => (
-                  <MenuItem key={option.value} value={option.value}>
-                    {option.label}
-                  </MenuItem>
-                ))}
-              </TextField>
-            </Stack>
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-              <TextField
-                size="small"
-                label="vLLM version"
-                placeholder="empty = latest stable"
-                value={draft.default_vllm_version ?? ""}
-                onChange={(event) => set("default_vllm_version", event.target.value)}
-                sx={{ width: 220 }}
-              />
-              <TextField
-                size="small"
-                label="Max failed restarts"
-                type="number"
-                placeholder="client default"
-                value={draft.default_max_failed_restarts ?? ""}
-                onChange={(event) =>
-                  set(
-                    "default_max_failed_restarts",
-                    event.target.value === "" ? null : num(event.target.value)
-                  )
-                }
-                sx={{ width: 180 }}
-              />
-            </Stack>
-          </DialogSection>
-
-          <DialogSection
-            title="Notifications"
-            hint="Webhook messages for ready / failed / expiring deployments. Slack URLs get Slack formatting automatically."
-          >
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-              <TextField
-                size="small"
-                label="Webhook URL"
-                placeholder="empty = notifications off"
-                value={draft.webhook_url ?? ""}
-                onChange={(event) => set("webhook_url", event.target.value)}
-                helperText="Slack webhook URLs get Slack formatting automatically."
-                sx={{ flex: 1, minWidth: 260 }}
-              />
-              <TextField
-                size="small"
-                label="Expiry warning (min)"
-                type="number"
-                value={draft.expiry_warning_minutes ?? ""}
-                onChange={(event) => set("expiry_warning_minutes", num(event.target.value))}
-                sx={{ width: 180 }}
-              />
-            </Stack>
-          </DialogSection>
-
-          <DialogSection
-            title="Data"
-            hint="How long node metric history is kept for the charts."
-          >
-            <TextField
-              size="small"
-              label="Metric history retention (h)"
-              type="number"
-              value={draft.node_metrics_retention_hours ?? ""}
-              onChange={(event) =>
-                set("node_metrics_retention_hours", num(event.target.value))
-              }
-              sx={{ width: 220 }}
-            />
-          </DialogSection>
-
-          <DialogSection
-            title="Danger Zone"
-            hint="Purge selected records. Running models are not stopped — active nodes re-register and their deployments are re-adopted automatically."
-          >
-            <Box sx={{ display: "flex", flexDirection: "column", mb: 1 }}>
-              {PURGE_OPTIONS.map((option) => (
-                <FormControlLabel
-                  key={option.key}
-                  control={
-                    <Checkbox
-                      size="small"
-                      checked={purgeTargets.includes(option.key)}
-                      onChange={(event) =>
-                        togglePurgeTarget(option.key, event.target.checked)
-                      }
-                    />
-                  }
-                  label={
-                    <Typography variant="body2">
-                      {option.label}
-                      {option.hint && (
-                        <Typography component="span" variant="caption" className="muted">
-                          {" "}
-                          — {option.hint}
-                        </Typography>
-                      )}
-                    </Typography>
-                  }
-                />
-              ))}
-            </Box>
-            <AppButton
-              type="button"
-              variant="stop"
-              disabled={purgeTargets.length === 0 || purgeMutation.isPending}
-              onClick={() => setConfirmPurge(true)}
-            >
-              Purge Selected
-            </AppButton>
-          </DialogSection>
-
-          <DialogSection
-            title="Warm Cache"
-            hint="Controls how GPU models are swapped in and out of VRAM."
-          >
-            <TextField
-              size="small"
-              label="Busy guard (s)"
-              type="number"
-              inputProps={{ min: 0, max: 300 }}
-              value={draft.busy_guard_seconds ?? ""}
-              onChange={(event) => set("busy_guard_seconds", num(event.target.value))}
-              helperText="Seconds after a model's last request before it can be auto-evicted. 0 = evict immediately when idle."
-              sx={{ width: 220 }}
-            />
-          </DialogSection>
-
-          <DialogSection
-            title="Advanced"
-            hint="Sync tuning — the defaults are sensible; changes apply live."
-          >
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 2 }}>
                 <TextField
                   size="small"
-                  label="Node sync (s)"
+                  label="Request timeout (s)"
                   type="number"
-                  value={draft.nodes_sync_interval_seconds ?? ""}
-                  onChange={(event) =>
-                    set("nodes_sync_interval_seconds", num(event.target.value))
-                  }
-                  sx={{ width: 150 }}
-                />
-                <TextField
-                  size="small"
-                  label="Deployment sync (s)"
-                  type="number"
-                  value={draft.deployments_sync_interval_seconds ?? ""}
-                  onChange={(event) =>
-                    set("deployments_sync_interval_seconds", num(event.target.value))
-                  }
-                  sx={{ width: 170 }}
-                />
-                <TextField
-                  size="small"
-                  label="Expiry check (s)"
-                  type="number"
-                  value={draft.expiry_check_interval_seconds ?? ""}
-                  onChange={(event) =>
-                    set("expiry_check_interval_seconds", num(event.target.value))
-                  }
-                  sx={{ width: 150 }}
-                />
-              </Stack>
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-                <TextField
-                  size="small"
-                  label="Node failure threshold"
-                  type="number"
-                  value={draft.node_failure_threshold ?? ""}
-                  onChange={(event) =>
-                    set("node_failure_threshold", num(event.target.value))
-                  }
-                  helperText="Consecutive failures before a node turns critical."
+                  value={draft.gateway_timeout_seconds ?? ""}
+                  onChange={(event) => set("gateway_timeout_seconds", num(event.target.value))}
+                  helperText="Non-streaming requests; streams are never read-limited."
                   sx={{ width: 220 }}
                 />
+              </DialogSection>
+
+              <DialogSection
+                title="API Keys"
+                hint={(() => {
+                  const permanent = (apiKeysQuery.data ?? []).filter((k) => !k.expires_at);
+                  return permanent.length > 0
+                    ? `${permanent.length} active key${permanent.length > 1 ? "s" : ""}. All /v1 requests require a valid key.`
+                    : "No API keys — the gateway is open to all requests.";
+                })()}
+                action={
+                  <AppButton
+                    type="button"
+                    onClick={() => {
+                      setNewKeyLabel("");
+                      setCreatedKey(null);
+                      setCreateKeyOpen(true);
+                    }}
+                  >
+                    Create Key
+                  </AppButton>
+                }
+              >
+                {(() => {
+                  const allKeys = apiKeysQuery.data ?? [];
+                  const permanent = allKeys.filter((k) => !k.expires_at);
+                  const temporary = allKeys.filter((k) => !!k.expires_at);
+
+                  return (
+                    <>
+                      {permanent.length > 0 ? (
+                        <Stack spacing={0.5}>
+                          {permanent.map((k) => (
+                            <Box
+                              key={k.id}
+                              sx={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 1.5,
+                                py: 0.5
+                              }}
+                            >
+                              <Typography variant="body2" sx={{ fontWeight: 500, minWidth: 100 }}>
+                                {k.label}
+                              </Typography>
+                              <Typography
+                                variant="body2"
+                                className="muted"
+                                sx={{ fontFamily: "monospace", fontSize: "0.8rem" }}
+                              >
+                                {k.prefix}...
+                              </Typography>
+                              <Typography variant="caption" className="muted" sx={{ ml: "auto" }}>
+                                {k.last_used_at
+                                  ? `used ${timeAgo(k.last_used_at)}`
+                                  : "never used"}
+                              </Typography>
+                              <Tooltip title="Delete key">
+                                <IconButton
+                                  size="small"
+                                  onClick={() => setConfirmDeleteKey(k)}
+                                >
+                                  <DeleteOutlineIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            </Box>
+                          ))}
+                        </Stack>
+                      ) : (
+                        <Typography variant="body2" className="muted">
+                          Create an API key to require authentication on /v1 gateway requests.
+                        </Typography>
+                      )}
+
+                      {temporary.length > 0 && (
+                        <Box sx={{ mt: 1.5 }}>
+                          <Box
+                            onClick={() => setTempKeysOpen((v) => !v)}
+                            sx={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 0.5,
+                              cursor: "pointer",
+                              userSelect: "none",
+                              "&:hover": { opacity: 0.8 }
+                            }}
+                          >
+                            <ExpandMoreIcon
+                              fontSize="small"
+                              className="muted"
+                              sx={{
+                                transform: tempKeysOpen ? "rotate(0deg)" : "rotate(-90deg)",
+                                transition: "transform 150ms"
+                              }}
+                            />
+                            <Typography variant="caption" className="muted">
+                              {temporary.length} temporary key{temporary.length > 1 ? "s" : ""}
+                            </Typography>
+                          </Box>
+                          <Collapse in={tempKeysOpen} timeout={150}>
+                            <Stack spacing={0.5} sx={{ mt: 0.5, pl: 3 }}>
+                              {temporary.map((k) => (
+                                <Box
+                                  key={k.id}
+                                  sx={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 1.5,
+                                    py: 0.25
+                                  }}
+                                >
+                                  <Typography variant="caption" sx={{ minWidth: 80 }}>
+                                    {k.label}
+                                  </Typography>
+                                  <Typography
+                                    variant="caption"
+                                    className="muted"
+                                    sx={{ fontFamily: "monospace", fontSize: "0.75rem" }}
+                                  >
+                                    {k.prefix}...
+                                  </Typography>
+                                  <Typography variant="caption" className="muted" sx={{ ml: "auto" }}>
+                                    {timeRemaining(k.expires_at!)} left
+                                  </Typography>
+                                  <Tooltip title="Delete key">
+                                    <IconButton
+                                      size="small"
+                                      onClick={() => setConfirmDeleteKey(k)}
+                                      sx={{ p: 0.25 }}
+                                    >
+                                      <DeleteOutlineIcon sx={{ fontSize: 14 }} />
+                                    </IconButton>
+                                  </Tooltip>
+                                </Box>
+                              ))}
+                            </Stack>
+                          </Collapse>
+                        </Box>
+                      )}
+
+                      <TextField
+                        size="small"
+                        label="Snippet key lifetime (s)"
+                        type="number"
+                        inputProps={{ min: 0, max: 3600 }}
+                        value={draft.temp_api_key_ttl_seconds ?? ""}
+                        onChange={(event) => set("temp_api_key_ttl_seconds", num(event.target.value))}
+                        helperText="Temporary key lifespan for endpoint code snippets. 0 = disabled."
+                        sx={{ width: 220, mt: 2 }}
+                      />
+                    </>
+                  );
+                })()}
+              </DialogSection>
+            </Box>
+          )}
+
+          {/* ── Tab 1: Deployments ── */}
+          {activeTab === 1 && (
+            <Box>
+              <DialogSection
+                first
+                title="Deployments"
+                hint="Start watchdog, runtime preference, and the deploy form's pre-filled defaults."
+              >
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 2 }}>
+                  <TextField
+                    size="small"
+                    label="Start timeout (s)"
+                    type="number"
+                    value={draft.start_timeout_seconds ?? ""}
+                    onChange={(event) => set("start_timeout_seconds", num(event.target.value))}
+                    helperText="Mark a deployment as errored if it isn't running by then."
+                    sx={{ width: 220 }}
+                  />
+                  <TextField
+                    size="small"
+                    select
+                    label="Preferred runtime"
+                    value={draft.preferred_container_runtime ?? "docker"}
+                    onChange={(event) =>
+                      set("preferred_container_runtime", event.target.value)
+                    }
+                    helperText="Used when a node has both and no per-node override."
+                    sx={{ width: 200 }}
+                  >
+                    <MenuItem value="docker">Docker</MenuItem>
+                    <MenuItem value="podman">Podman</MenuItem>
+                  </TextField>
+                </Stack>
+                <Typography variant="body2" className="muted" sx={{ mb: 1 }}>
+                  Defaults pre-filled in the deploy form:
+                </Typography>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 2 }}>
+                  <TextField
+                    size="small"
+                    label="Port"
+                    type="number"
+                    value={draft.default_port ?? ""}
+                    onChange={(event) => set("default_port", num(event.target.value))}
+                    sx={{ width: 130 }}
+                  />
+                  <TextField
+                    size="small"
+                    label="GPU fraction"
+                    type="number"
+                    inputProps={{ step: 0.05, min: 0.05, max: 1 }}
+                    value={draft.default_gpu_fraction ?? ""}
+                    onChange={(event) => set("default_gpu_fraction", num(event.target.value))}
+                    sx={{ width: 130 }}
+                  />
+                  <TextField
+                    size="small"
+                    select
+                    label="Serve for"
+                    value={draft.default_duration_choice ?? "43200"}
+                    onChange={(event) => set("default_duration_choice", event.target.value)}
+                    sx={{ width: 150 }}
+                  >
+                    {DURATION_OPTIONS.map((option) => (
+                      <MenuItem key={option.value} value={option.value}>
+                        {option.label}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                </Stack>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+                  <TextField
+                    size="small"
+                    label="vLLM version"
+                    placeholder="empty = latest stable"
+                    value={draft.default_vllm_version ?? ""}
+                    onChange={(event) => set("default_vllm_version", event.target.value)}
+                    sx={{ width: 220 }}
+                  />
+                  <TextField
+                    size="small"
+                    label="Max failed restarts"
+                    type="number"
+                    placeholder="client default"
+                    value={draft.default_max_failed_restarts ?? ""}
+                    onChange={(event) =>
+                      set(
+                        "default_max_failed_restarts",
+                        event.target.value === "" ? null : num(event.target.value)
+                      )
+                    }
+                    sx={{ width: 180 }}
+                  />
+                </Stack>
+              </DialogSection>
+
+              <DialogSection
+                title="Notifications"
+                hint="Webhook messages for ready / failed / expiring deployments. Slack URLs get Slack formatting automatically."
+              >
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+                  <TextField
+                    size="small"
+                    label="Webhook URL"
+                    placeholder="empty = notifications off"
+                    value={draft.webhook_url ?? ""}
+                    onChange={(event) => set("webhook_url", event.target.value)}
+                    helperText="Slack webhook URLs get Slack formatting automatically."
+                    sx={{ flex: 1, minWidth: 260 }}
+                  />
+                  <TextField
+                    size="small"
+                    label="Expiry warning (min)"
+                    type="number"
+                    value={draft.expiry_warning_minutes ?? ""}
+                    onChange={(event) => set("expiry_warning_minutes", num(event.target.value))}
+                    sx={{ width: 180 }}
+                  />
+                </Stack>
+              </DialogSection>
+            </Box>
+          )}
+
+          {/* ── Tab 2: System ── */}
+          {activeTab === 2 && (
+            <Box>
+              <DialogSection
+                first
+                title="Data"
+                hint="How long node metric history is kept for the charts."
+              >
                 <TextField
                   size="small"
-                  label="Deployment failure threshold"
+                  label="Metric history retention (h)"
                   type="number"
-                  value={draft.deployment_failure_threshold ?? ""}
+                  value={draft.node_metrics_retention_hours ?? ""}
                   onChange={(event) =>
-                    set("deployment_failure_threshold", num(event.target.value))
+                    set("node_metrics_retention_hours", num(event.target.value))
                   }
-                  helperText="Unreachable polls before deployments degrade."
-                  sx={{ width: 250 }}
+                  sx={{ width: 220 }}
                 />
-              </Stack>
-          </DialogSection>
+              </DialogSection>
+
+              <DialogSection
+                title="Warm Cache"
+                hint="Controls how GPU models are swapped in and out of VRAM."
+              >
+                <TextField
+                  size="small"
+                  label="Busy guard (s)"
+                  type="number"
+                  inputProps={{ min: 0, max: 300 }}
+                  value={draft.busy_guard_seconds ?? ""}
+                  onChange={(event) => set("busy_guard_seconds", num(event.target.value))}
+                  helperText="Seconds after a model's last request before it can be auto-evicted. 0 = evict immediately when idle."
+                  sx={{ width: 220 }}
+                />
+              </DialogSection>
+
+              <DialogSection
+                title="Sync & Thresholds"
+                hint="Sync tuning — the defaults are sensible; changes apply live."
+              >
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 2 }}>
+                  <TextField
+                    size="small"
+                    label="Node sync (s)"
+                    type="number"
+                    value={draft.nodes_sync_interval_seconds ?? ""}
+                    onChange={(event) =>
+                      set("nodes_sync_interval_seconds", num(event.target.value))
+                    }
+                    sx={{ width: 150 }}
+                  />
+                  <TextField
+                    size="small"
+                    label="Deployment sync (s)"
+                    type="number"
+                    value={draft.deployments_sync_interval_seconds ?? ""}
+                    onChange={(event) =>
+                      set("deployments_sync_interval_seconds", num(event.target.value))
+                    }
+                    sx={{ width: 170 }}
+                  />
+                  <TextField
+                    size="small"
+                    label="Expiry check (s)"
+                    type="number"
+                    value={draft.expiry_check_interval_seconds ?? ""}
+                    onChange={(event) =>
+                      set("expiry_check_interval_seconds", num(event.target.value))
+                    }
+                    sx={{ width: 150 }}
+                  />
+                </Stack>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+                  <TextField
+                    size="small"
+                    label="Node failure threshold"
+                    type="number"
+                    value={draft.node_failure_threshold ?? ""}
+                    onChange={(event) =>
+                      set("node_failure_threshold", num(event.target.value))
+                    }
+                    helperText="Consecutive failures before a node turns critical."
+                    sx={{ width: 220 }}
+                  />
+                  <TextField
+                    size="small"
+                    label="Deployment failure threshold"
+                    type="number"
+                    value={draft.deployment_failure_threshold ?? ""}
+                    onChange={(event) =>
+                      set("deployment_failure_threshold", num(event.target.value))
+                    }
+                    helperText="Unreachable polls before deployments degrade."
+                    sx={{ width: 250 }}
+                  />
+                </Stack>
+              </DialogSection>
+            </Box>
+          )}
+
+          {/* ── Tab 3: Danger Zone ── */}
+          {activeTab === 3 && (
+            <Box>
+              <DialogSection
+                first
+                title="Purge"
+                hint="Purge selected records. Running models are not stopped — active nodes re-register and their deployments are re-adopted automatically."
+              >
+                <Box sx={{ display: "flex", flexDirection: "column", mb: 1 }}>
+                  {PURGE_OPTIONS.map((option) => (
+                    <FormControlLabel
+                      key={option.key}
+                      control={
+                        <Checkbox
+                          size="small"
+                          checked={purgeTargets.includes(option.key)}
+                          onChange={(event) =>
+                            togglePurgeTarget(option.key, event.target.checked)
+                          }
+                        />
+                      }
+                      label={
+                        <Typography variant="body2">
+                          {option.label}
+                          {option.hint && (
+                            <Typography component="span" variant="caption" className="muted">
+                              {" "}
+                              — {option.hint}
+                            </Typography>
+                          )}
+                        </Typography>
+                      }
+                    />
+                  ))}
+                </Box>
+                <AppButton
+                  type="button"
+                  variant="stop"
+                  disabled={purgeTargets.length === 0 || purgeMutation.isPending}
+                  onClick={() => setConfirmPurge(true)}
+                >
+                  Purge Selected
+                </AppButton>
+              </DialogSection>
+            </Box>
+          )}
         </Box>
       </AppDialog>
 
@@ -658,23 +808,60 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         )}
       </AppDialog>
 
-      <ConfirmDialog
+      <AppDialog
         open={confirmDeleteKey !== null}
+        onClose={() => { setConfirmDeleteKey(null); setDeleteAck(false); }}
+        maxWidth="xs"
         title="Delete API key?"
-        body={
-          confirmDeleteKey && apiKeysQuery.data && apiKeysQuery.data.length === 1
-            ? `This is the last key ("${confirmDeleteKey.label}"). Deleting it will make the gateway open to all requests.`
-            : confirmDeleteKey
-              ? `Delete key "${confirmDeleteKey.label}" (${confirmDeleteKey.prefix}...)? Clients using this key will lose access.`
-              : ""
+        actions={
+          <>
+            <AppButton type="button" onClick={() => { setConfirmDeleteKey(null); setDeleteAck(false); }}>
+              Cancel
+            </AppButton>
+            <AppButton
+              type="button"
+              variant="stop"
+              disabled={isLastPermanentKey && !deleteAck}
+              onClick={() => {
+                if (confirmDeleteKey) deleteKeyMutation.mutate(confirmDeleteKey.id);
+                setDeleteAck(false);
+              }}
+            >
+              Delete
+            </AppButton>
+          </>
         }
-        confirmLabel="Delete"
-        danger
-        onConfirm={() => {
-          if (confirmDeleteKey) deleteKeyMutation.mutate(confirmDeleteKey.id);
-        }}
-        onCancel={() => setConfirmDeleteKey(null)}
-      />
+      >
+        {isLastPermanentKey ? (
+          <Stack spacing={1.5}>
+            <Typography variant="body2">
+              This is the last API key (&ldquo;{confirmDeleteKey?.label}&rdquo;).
+              Deleting it will leave the gateway completely unprotected &mdash;
+              anyone with network access can send requests without authentication.
+            </Typography>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  size="small"
+                  checked={deleteAck}
+                  onChange={(e) => setDeleteAck(e.target.checked)}
+                />
+              }
+              label={
+                <Typography variant="body2">
+                  I understand the gateway will be open to all requests
+                </Typography>
+              }
+            />
+          </Stack>
+        ) : (
+          <Typography variant="body2">
+            {confirmDeleteKey
+              ? `Delete key "${confirmDeleteKey.label}" (${confirmDeleteKey.prefix}...)? Clients using this key will lose access.`
+              : ""}
+          </Typography>
+        )}
+      </AppDialog>
     </>
   );
 }

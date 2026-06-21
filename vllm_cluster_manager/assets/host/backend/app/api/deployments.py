@@ -248,11 +248,20 @@ async def _launch(payload: DeploymentStart, session: AsyncSession) -> Deployment
     node = await session.get(Node, payload.node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
-    if node.maintenance:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Node {node.hostname} is in maintenance mode; no new deployments.",
-        )
+    if node.maintenance_gpus:
+        all_indices = {g.get("index", i) for i, g in enumerate(node.gpu_usage or [])}
+        requested = set(payload.gpu_ids) if payload.gpu_ids else all_indices
+        overlap = requested & set(node.maintenance_gpus)
+        if overlap:
+            if node.maintenance:
+                msg = f"Node {node.hostname} is in maintenance mode; no new deployments."
+            else:
+                available = sorted(all_indices - set(node.maintenance_gpus))
+                msg = (
+                    f"GPU(s) {sorted(overlap)} on {node.hostname} are in maintenance; "
+                    f"available: {available}."
+                )
+            raise HTTPException(status_code=409, detail=msg)
 
     await _check_port_conflict(session, node, payload.port)
     await _check_served_name_conflict(
@@ -432,11 +441,20 @@ async def restart_deployment(
     node = await session.get(Node, deployment.node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
-    if node.maintenance:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Node {node.hostname} is in maintenance mode; no new deployments.",
-        )
+    if node.maintenance_gpus:
+        all_indices = {g.get("index", i) for i, g in enumerate(node.gpu_usage or [])}
+        requested = set(deployment.gpu_ids) if deployment.gpu_ids else all_indices
+        overlap = requested & set(node.maintenance_gpus)
+        if overlap:
+            if node.maintenance:
+                msg = f"Node {node.hostname} is in maintenance mode; no new deployments."
+            else:
+                available = sorted(all_indices - set(node.maintenance_gpus))
+                msg = (
+                    f"GPU(s) {sorted(overlap)} on {node.hostname} are in maintenance; "
+                    f"available: {available}."
+                )
+            raise HTTPException(status_code=409, detail=msg)
 
     await _check_port_conflict(session, node, deployment.port, exclude_id=deployment.id)
     await _check_served_name_conflict(

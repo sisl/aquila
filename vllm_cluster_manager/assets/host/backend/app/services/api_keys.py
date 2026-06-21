@@ -41,6 +41,22 @@ async def load(session) -> None:
         logger.info("Loaded %d API key hash(es)", len(_key_hashes))
 
 
+async def ensure_default_key(session) -> None:
+    """Create a default 'admin' API key on first run so the gateway is never unprotected."""
+    if has_keys():
+        return
+    raw, prefix, key_hash = generate()
+    row = ApiKey(label="admin", prefix=prefix, key_hash=key_hash)
+    session.add(row)
+    await session.commit()
+    add_hash(key_hash)
+    logger.info(
+        "Created default API key (label='admin'). "
+        "Store this key — it will not be shown again: %s",
+        raw,
+    )
+
+
 def has_keys() -> bool:
     """True when at least one permanent key exists."""
     return any(v is None for v in _key_hashes.values())

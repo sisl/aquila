@@ -177,6 +177,7 @@ export function Dashboard() {
   const [restartCustomHours, setRestartCustomHours] = useState("6");
   const [maintenanceTarget, setMaintenanceTarget] = useState<Node | null>(null);
   const [maintenanceDrain, setMaintenanceDrain] = useState(false);
+  const [maintenanceGpuSelection, setMaintenanceGpuSelection] = useState<number[]>([]);
   const [manifestDeployment, setManifestDeployment] = useState<Deployment | null>(null);
   const [endpointDeployment, setEndpointDeployment] = useState<Deployment | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -463,26 +464,39 @@ export function Dashboard() {
   });
 
   const maintenanceMutation = useMutation({
-    mutationFn: ({ node, enabled, drain }: { node: Node; enabled: boolean; drain: boolean }) =>
-      setNodeMaintenance(node.id, enabled, drain),
+    mutationFn: ({
+      node,
+      enabled,
+      drain,
+      gpuIds,
+    }: {
+      node: Node;
+      enabled: boolean;
+      drain: boolean;
+      gpuIds: number[];
+    }) => setNodeMaintenance(node.id, enabled, drain, gpuIds),
     onSuccess: (node) => {
       queryClient.invalidateQueries({ queryKey: ["nodes"] });
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
       setMaintenanceTarget(null);
+      const gpuCount = (node.maintenance_gpus ?? []).length;
       toast.success(
         node.maintenance
-          ? `${node.hostname} is now in maintenance mode.`
-          : `${node.hostname} is back in rotation.`
+          ? `${node.hostname} is fully in maintenance mode.`
+          : gpuCount > 0
+            ? `${node.hostname}: GPU(s) ${(node.maintenance_gpus ?? []).join(", ")} in maintenance.`
+            : `${node.hostname} is back in rotation.`
       );
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Failed to update maintenance mode.");
-    }
+    },
   });
 
   const openMaintenance = (node: Node) => {
     setMaintenanceTarget(node);
     setMaintenanceDrain(false);
+    setMaintenanceGpuSelection([]);
   };
 
   const restartMutation = useMutation({
@@ -690,7 +704,9 @@ export function Dashboard() {
   }, [nodeId, nodesQuery.data]);
 
   const availableGpuIds = useMemo(() => {
-    return selectedNode?.gpu_usage?.map((gpu) => gpu.index) ?? [];
+    const all = selectedNode?.gpu_usage?.map((gpu) => gpu.index) ?? [];
+    const cordoned = new Set(selectedNode?.maintenance_gpus ?? []);
+    return all.filter((id) => !cordoned.has(id));
   }, [selectedNode]);
 
   const parsedRawArgs = useMemo(() => {
@@ -1254,9 +1270,11 @@ export function Dashboard() {
                       {node.hostname} ({node.ip_address})
                       {node.maintenance
                         ? " — maintenance"
-                        : noRuntime
-                          ? " — no runtime"
-                          : ""}
+                        : node.partial_maintenance
+                          ? ` — GPU ${(node.maintenance_gpus ?? []).join(",")} in maint.`
+                          : noRuntime
+                            ? " — no runtime"
+                            : ""}
                     </MenuItem>
                   );
                 })}
@@ -2196,62 +2214,116 @@ export function Dashboard() {
       <AppDialog
         open={maintenanceTarget !== null}
         onClose={() => setMaintenanceTarget(null)}
-        title={
-          maintenanceTarget?.maintenance
-            ? `End maintenance on ${maintenanceTarget?.hostname}?`
-            : `Put ${maintenanceTarget?.hostname} into maintenance?`
-        }
-        maxWidth="xs"
-        actions={
-          <>
-            <AppButton type="button" onClick={() => setMaintenanceTarget(null)}>
-              Cancel
-            </AppButton>
-            <Button
-              variant="contained"
-              color={maintenanceTarget?.maintenance ? "primary" : "warning"}
-              disabled={maintenanceMutation.isPending}
-              onClick={() =>
-                maintenanceTarget &&
-                maintenanceMutation.mutate({
-                  node: maintenanceTarget,
-                  enabled: !maintenanceTarget.maintenance,
-                  drain: maintenanceDrain
-                })
-              }
-            >
-              {maintenanceMutation.isPending
-                ? "Applying..."
-                : maintenanceTarget?.maintenance
-                  ? "End Maintenance"
-                  : maintenanceDrain
-                    ? "Cordon & Drain"
-                    : "Cordon"}
-            </Button>
-          </>
-        }
+        title={`GPU Maintenance — ${maintenanceTarget?.hostname ?? ""}`}
+        maxWidth="sm"
+        actions={(() => {
+          const currentlyInMaint = new Set(maintenanceTarget?.maintenance_gpus ?? []);
+          const hasCordonable = maintenanceGpuSelection.some((id) => !currentlyInMaint.has(id));
+          const hasUncordonable = maintenanceGpuSelection.some((id) => currentlyInMaint.has(id));
+          return (
+            <>
+              <AppButton type="button" onClick={() => setMaintenanceTarget(null)}>
+                Cancel
+              </AppButton>
+              {hasUncordonable && (
+                <Button
+                  variant="outlined"
+                  disabled={maintenanceMutation.isPending}
+                  onClick={() =>
+                    maintenanceTarget &&
+                    maintenanceMutation.mutate({
+                      node: maintenanceTarget,
+                      enabled: false,
+                      drain: false,
+                      gpuIds: maintenanceGpuSelection.filter((id) => currentlyInMaint.has(id)),
+                    })
+                  }
+                >
+                  Uncordon Selected
+                </Button>
+              )}
+              {hasCordonable && (
+                <Button
+                  variant="contained"
+                  color="warning"
+                  disabled={maintenanceMutation.isPending}
+                  onClick={() =>
+                    maintenanceTarget &&
+                    maintenanceMutation.mutate({
+                      node: maintenanceTarget,
+                      enabled: true,
+                      drain: maintenanceDrain,
+                      gpuIds: maintenanceGpuSelection.filter((id) => !currentlyInMaint.has(id)),
+                    })
+                  }
+                >
+                  {maintenanceDrain ? "Cordon & Drain" : "Cordon Selected"}
+                </Button>
+              )}
+            </>
+          );
+        })()}
       >
-        {maintenanceTarget?.maintenance ? (
+        <Stack spacing={2}>
           <Typography variant="body2">
-            The node returns to rotation and accepts new deployments again.
+            Cordoned GPUs reject new deployments and ignore health flaps.
+            Select GPUs to cordon or uncordon.
           </Typography>
-        ) : (
-          <Stack spacing={1}>
-            <Typography variant="body2">
-              No new deployments can be started on the node, and health flaps during the
-              maintenance window are ignored.
-            </Typography>
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={maintenanceDrain}
-                  onChange={(event) => setMaintenanceDrain(event.target.checked)}
-                />
-              }
-              label="Also stop all active deployments on this node (drain)"
-            />
-          </Stack>
-        )}
+          <Box>
+            <SectionLabel sx={{ mb: 0.5 }}>GPUs</SectionLabel>
+            <ToggleButtonGroup
+              value={maintenanceGpuSelection}
+              onChange={(_, ids) => setMaintenanceGpuSelection(ids as number[])}
+              size="small"
+              sx={{ flexWrap: "wrap", gap: 0.5 }}
+            >
+              {(maintenanceTarget?.gpu_usage ?? []).map((gpu) => {
+                const inMaint = (maintenanceTarget?.maintenance_gpus ?? []).includes(gpu.index);
+                return (
+                  <ToggleButton
+                    key={gpu.index}
+                    value={gpu.index}
+                    sx={{
+                      px: 1.5,
+                      py: 0.5,
+                      fontSize: "0.8rem",
+                      ...(inMaint && {
+                        borderColor: "warning.main",
+                        color: "warning.dark",
+                      }),
+                    }}
+                  >
+                    GPU {gpu.index}{inMaint ? " (maint.)" : ""}
+                  </ToggleButton>
+                );
+              })}
+            </ToggleButtonGroup>
+            <Box sx={{ mt: 0.5, display: "flex", gap: 1 }}>
+              <Button
+                size="small"
+                onClick={() =>
+                  setMaintenanceGpuSelection(
+                    (maintenanceTarget?.gpu_usage ?? []).map((g) => g.index)
+                  )
+                }
+              >
+                Select All
+              </Button>
+              <Button size="small" onClick={() => setMaintenanceGpuSelection([])}>
+                Clear
+              </Button>
+            </Box>
+          </Box>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={maintenanceDrain}
+                onChange={(event) => setMaintenanceDrain(event.target.checked)}
+              />
+            }
+            label="Also stop deployments on selected GPUs (drain)"
+          />
+        </Stack>
       </AppDialog>
 
       <AppDialog

@@ -57,6 +57,7 @@ function isStale(node: Node): boolean {
 
 function statusColor(node: Node): "success" | "warning" | "error" | "default" {
   if (node.maintenance) return "warning";
+  if (node.partial_maintenance) return "warning";
   if (isStale(node)) return "error";
   if (node.status === "no-runtime") return "error";
   if (node.status === "healthy") return "success";
@@ -187,7 +188,11 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
       case "port":
         return node.port ?? Number.MAX_SAFE_INTEGER;
       case "status":
-        return node.maintenance ? "maintenance" : node.status;
+        return node.maintenance
+          ? "maintenance"
+          : node.partial_maintenance
+            ? "partial maintenance"
+            : node.status;
       case "heartbeat":
         return node.last_heartbeat_at ?? "";
       default:
@@ -201,7 +206,7 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
     const haystack = [
       node.hostname,
       node.ip_address,
-      node.maintenance ? "maintenance" : node.status,
+      node.maintenance || node.partial_maintenance ? "maintenance" : node.status,
       String(node.port ?? "")
     ]
       .join(" ")
@@ -314,11 +319,13 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
                           label={
                             node.maintenance
                               ? "maintenance"
-                              : isStale(node)
-                                ? "unreachable"
-                                : node.status === "no-runtime"
-                                  ? "no runtime"
-                                  : node.status
+                              : node.partial_maintenance
+                                ? `maint. GPU ${(node.maintenance_gpus ?? []).join(", ")}`
+                                : isStale(node)
+                                  ? "unreachable"
+                                  : node.status === "no-runtime"
+                                    ? "no runtime"
+                                    : node.status
                           }
                           size="small"
                           color={statusColor(node)}
@@ -415,7 +422,7 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
                           ghost
                           onClick={() => onToggleMaintenance(node)}
                         >
-                          {node.maintenance ? "End Maintenance" : "Maintenance"}
+                          {node.maintenance || node.partial_maintenance ? "Edit Maintenance" : "Maintenance"}
                         </AppButton>
                       )}
                       <AppButton

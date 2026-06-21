@@ -67,6 +67,7 @@ def _attach_derived(node: Node) -> None:
     node.rogue_process_count = rogue_process_counts.get(node.id)
     node.rogue_artifact_count = rogue_artifact_counts.get(node.id)
     node.ram_cache_used_mb = ram_cache_used_mb.get(node.id)
+    node.partial_maintenance = node.has_partial_maintenance
 
 
 @router.get("/", response_model=list[NodeRead])
@@ -211,16 +212,36 @@ async def set_node_maintenance(
     payload: NodeMaintenanceRequest,
     session: AsyncSession = Depends(get_session),
 ) -> NodeRead:
-    """Cordon/uncordon a node; optionally drain its active deployments."""
+    """Cordon/uncordon specific GPUs (or all); optionally drain affected deployments."""
     node = await session.get(Node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
 
-    node.maintenance = payload.enabled
-    node.status = "maintenance" if payload.enabled else node.status
+    all_gpu_indices = [g.get("index", i) for i, g in enumerate(node.gpu_usage or [])]
+    target_gpus = payload.gpu_ids if payload.gpu_ids else all_gpu_indices
+
+    if payload.gpu_ids:
+        invalid = set(payload.gpu_ids) - set(all_gpu_indices)
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"GPU indices {sorted(invalid)} not found on {node.hostname}. "
+                       f"Available: {sorted(all_gpu_indices)}",
+            )
+
+    current = set(node.maintenance_gpus or [])
+    if payload.enabled:
+        current |= set(target_gpus)
+    else:
+        current -= set(target_gpus)
+    node.maintenance_gpus = sorted(current)
+
+    if node.maintenance:
+        node.status = "maintenance"
 
     drained_ids: list[int] = []
     if payload.enabled and payload.drain:
+        newly_cordoned = set(target_gpus)
         result = await session.execute(
             select(Deployment).where(
                 Deployment.node_id == node_id,
@@ -228,8 +249,10 @@ async def set_node_maintenance(
             )
         )
         for deployment in result.scalars().all():
-            await stop_deployment_internal(deployment, node, best_effort=True)
-            drained_ids.append(deployment.id)
+            dep_gpus = set(deployment.gpu_ids) if deployment.gpu_ids else set(all_gpu_indices)
+            if dep_gpus & newly_cordoned:
+                await stop_deployment_internal(deployment, node, best_effort=True)
+                drained_ids.append(deployment.id)
 
     await session.commit()
     await session.refresh(node)
