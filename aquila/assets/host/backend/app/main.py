@@ -18,6 +18,7 @@ from alembic.config import Config as AlembicConfig
 from app.api.gateway import close_gateway_client, router as gateway_router
 from app.api.router import api_router
 from app.api.ws import router as ws_router
+from app.core.config import settings
 from app.db.session import SessionLocal, engine
 from app.services import api_keys, runtime_settings
 from app.services.client_api import close_client
@@ -33,11 +34,16 @@ logger = logging.getLogger(__name__)
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 
-async def wait_for_db(retries: int = 30, delay: float = 1.0) -> None:
+async def wait_for_db(retries: int = 60, delay: float = 1.0) -> None:
+    logger.info(
+        "Waiting for database at %s:%s/%s",
+        settings.postgres_host, settings.postgres_port, settings.postgres_db,
+    )
     for attempt in range(retries):
         try:
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
+            logger.info("Database connection established")
             return
         except Exception:
             if attempt == retries - 1:

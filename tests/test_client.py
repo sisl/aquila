@@ -415,7 +415,8 @@ class TestPodmanGpuPassthrough:
 
 
 class TestCrossRuntimeEnumeration:
-    def test_reconcile_unions_runtimes(self, logs_dir):
+    @pytest.mark.anyio
+    async def test_reconcile_unions_runtimes(self, logs_dir):
         docker_container = mock.MagicMock()
         docker_container.labels = {
             client_main._LABEL_KEY: "m1:8001",
@@ -453,12 +454,14 @@ class TestCrossRuntimeEnumeration:
             client_main, "_stream_container_logs", mock.MagicMock()
         ), mock.patch.object(
             client_main, "_monitor_container", mock.MagicMock()
+        ), mock.patch.object(
+            client_main, "_probe_sleeping", mock.AsyncMock(return_value=False)
         ), mock.patch("asyncio.create_task"), mock.patch.dict(
             client_main._statuses, {}, clear=True
         ), mock.patch.dict(client_main._containers, {}, clear=True), mock.patch.dict(
             client_main._logs, {}, clear=True
         ):
-            client_main._reconcile_containers()
+            await client_main._reconcile_containers()
             statuses = dict(client_main._statuses)
 
         assert statuses["m1:8001"]["container_runtime"] == "docker"
@@ -639,15 +642,17 @@ def _fake_managed_container(labels: dict, status: str = "running"):
 
 
 class TestReconcileContainers:
-    def _reconcile(self, container):
-        fake = mock.MagicMock()
-        fake.containers.list.return_value = [container]
-        with mock.patch.object(client_main, "_docker", return_value=fake), mock.patch.object(
+    async def _reconcile(self, container):
+        with mock.patch.object(
+            client_main, "_managed_containers", return_value=[("docker", container)]
+        ), mock.patch.object(
             client_main, "_image_digest", return_value="sha256:dgst"
         ), mock.patch.object(
             client_main, "_stream_container_logs", mock.MagicMock()
         ), mock.patch.object(
             client_main, "_monitor_container", mock.MagicMock()
+        ), mock.patch.object(
+            client_main, "_probe_sleeping", mock.AsyncMock(return_value=False)
         ), mock.patch(
             "asyncio.create_task"
         ), mock.patch.dict(
@@ -657,10 +662,11 @@ class TestReconcileContainers:
         ), mock.patch.dict(
             client_main._logs, {}, clear=True
         ):
-            client_main._reconcile_containers()
+            await client_main._reconcile_containers()
             return dict(client_main._statuses)
 
-    def test_restores_manifest(self):
+    @pytest.mark.anyio
+    async def test_restores_manifest(self):
         import json as json_mod
 
         manifest = {
@@ -686,7 +692,7 @@ class TestReconcileContainers:
                 client_main._LABEL_LAUNCH: json_mod.dumps(manifest),
             }
         )
-        statuses = self._reconcile(container)
+        statuses = await self._reconcile(container)
         status = statuses["org/model:8001"]
         assert status["launch_manifest"] == manifest
         assert status["gpu_memory_fraction"] == 0.5
@@ -696,7 +702,8 @@ class TestReconcileContainers:
         assert status["lora_modules"] == [{"name": "ad", "path": "p"}]
         assert status["max_failed_restarts"] == 5
 
-    def test_tolerates_corrupt_manifest(self):
+    @pytest.mark.anyio
+    async def test_tolerates_corrupt_manifest(self):
         container = _fake_managed_container(
             {
                 client_main._LABEL_KEY: "org/model:8001",
@@ -704,19 +711,20 @@ class TestReconcileContainers:
                 client_main._LABEL_LAUNCH: "{not json",
             }
         )
-        statuses = self._reconcile(container)
+        statuses = await self._reconcile(container)
         status = statuses["org/model:8001"]
         assert "launch_manifest" not in status
         assert status["port"] == 8001
 
-    def test_no_manifest_label_keeps_minimal_status(self):
+    @pytest.mark.anyio
+    async def test_no_manifest_label_keeps_minimal_status(self):
         container = _fake_managed_container(
             {
                 client_main._LABEL_KEY: "org/model:8001",
                 client_main._LABEL_PORT: "8001",
             }
         )
-        statuses = self._reconcile(container)
+        statuses = await self._reconcile(container)
         assert "launch_manifest" not in statuses["org/model:8001"]
 
 
@@ -1295,7 +1303,7 @@ class TestStartProvisionalStatus:
             mock.patch.object(client_main, "_effective_runtime", return_value="docker"), \
             mock.patch.object(client_main, "_docker_gpu_error", return_value=None), \
             mock.patch.object(
-                client_main, "_ensure_fit", return_value=(True, offloaded)
+                client_main, "_ensure_fit", return_value=(True, offloaded, "")
             ), mock.patch.object(client_main, "_start_proxy", mock.AsyncMock()), \
             mock.patch("asyncio.create_task"), mock.patch.dict(
                 client_main._node_policy, {"warm_offload_enabled": True}, clear=False
@@ -2804,7 +2812,8 @@ class TestIsBusy:
         assert client_main._is_busy(_meta(requests_running=2)) is True
 
     def test_recent_activity(self):
-        assert client_main._is_busy(_meta(last_active_at=client_main.time.monotonic())) is True
+        with mock.patch.dict(client_main._node_policy, {"busy_guard_seconds": 30}):
+            assert client_main._is_busy(_meta(last_active_at=client_main.time.monotonic())) is True
 
     def test_idle(self):
         assert client_main._is_busy(_meta(last_active_at=0.0, requests_running=0)) is False
@@ -2856,7 +2865,7 @@ class TestEnsureFit:
         with mock.patch.dict(client_main._node_policy, {"warm_offload_enabled": True}), \
             mock.patch.dict(client_main._statuses, statuses, clear=True), \
             mock.patch.dict(client_main._containers, {"small:8000": object()}, clear=True):
-            assert await client_main._ensure_fit([0], 0.5, "new:9000") == (True, [])
+            assert await client_main._ensure_fit([0], 0.5, "new:9000") == (True, [], "")
 
     @pytest.mark.anyio
     async def test_evicts_lru_then_fits(self):
@@ -2869,7 +2878,7 @@ class TestEnsureFit:
             mock.patch.dict(client_main._statuses, statuses, clear=True), \
             mock.patch.dict(client_main._containers, {"old:8000": object()}, clear=True), \
             mock.patch.object(client_main, "_pause", side_effect=fake_pause) as paused:
-            ok, offloaded = await client_main._ensure_fit([0], 0.5, "new:9000")
+            ok, offloaded, _reason = await client_main._ensure_fit([0], 0.5, "new:9000")
         assert ok is True
         # The planner assigns an explicit tier (RAM here, unlimited budget).
         paused.assert_awaited_once_with("old:8000", tier="ram")
@@ -2881,7 +2890,9 @@ class TestEnsureFit:
         with mock.patch.dict(client_main._node_policy, {"warm_offload_enabled": True}), \
             mock.patch.dict(client_main._statuses, statuses, clear=True), \
             mock.patch.dict(client_main._containers, {"pinned:8000": object()}, clear=True):
-            assert await client_main._ensure_fit([0], 0.5, "new:9000") == (False, [])
+            result = await client_main._ensure_fit([0], 0.5, "new:9000")
+            assert result[0] is False
+            assert result[1] == []
 
     @pytest.mark.anyio
     async def test_non_warm_victim_never_sleeps(self):
@@ -2905,7 +2916,7 @@ class TestEnsureFit:
                 client_main._containers, {k: object() for k in statuses}, clear=True
             ), mock.patch.object(client_main, "_vllm_sleep") as sleep, \
             mock.patch.object(client_main, "_ram_estimate", return_value=4096.0):
-            ok, offloaded = await client_main._ensure_fit([0], 0.5, "new:9000")
+            ok, offloaded, _reason = await client_main._ensure_fit([0], 0.5, "new:9000")
             # The legacy model must be left untouched (asserted inside the patch).
             assert client_main._statuses["legacy:8000"].get("pause_tier") is None
         assert ok is True
@@ -3110,10 +3121,10 @@ class TestEnsureActive:
     async def test_ram_resume_wakes_and_runs(self):
         meta = _meta(pause_tier="ram", status="paused_ram")
         with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
-            mock.patch.object(client_main, "_ensure_fit", return_value=(True, [])), \
+            mock.patch.object(client_main, "_ensure_fit", return_value=(True, [], "")), \
             mock.patch.object(client_main, "_vllm_wake") as wake, \
             mock.patch.object(client_main, "_wait_awake", return_value=True):
-            ok = await client_main._ensure_active("m:8000")
+            ok, _reason = await client_main._ensure_active("m:8000")
         assert ok is True
         wake.assert_awaited_once()
         assert meta["pause_tier"] is None
@@ -3123,14 +3134,14 @@ class TestEnsureActive:
     async def test_already_active_is_noop(self):
         meta = _meta(pause_tier=None, status="running")
         with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True):
-            assert await client_main._ensure_active("m:8000") is True
+            assert (await client_main._ensure_active("m:8000"))[0] is True
 
     @pytest.mark.anyio
     async def test_returns_false_when_cannot_fit(self):
         meta = _meta(pause_tier="ram", status="paused_ram")
         with mock.patch.dict(client_main._statuses, {"m:8000": meta}, clear=True), \
-            mock.patch.object(client_main, "_ensure_fit", return_value=(False, [])):
-            assert await client_main._ensure_active("m:8000") is False
+            mock.patch.object(client_main, "_ensure_fit", return_value=(False, [], "reason")):
+            assert (await client_main._ensure_active("m:8000"))[0] is False
         assert meta["pause_tier"] == "ram"  # stays paused
 
 

@@ -120,6 +120,26 @@ async def stop_model(node_ip: str, node_port: int | None, key: str) -> None:
     response.raise_for_status()
 
 
+async def extend_model(
+    node_ip: str,
+    node_port: int | None,
+    key: str,
+    expires_at: str | None,
+    duration_seconds: int | None,
+) -> None:
+    url = _satellite_url(node_ip, node_port, "/deployments/extend")
+    response = await get_client().post(
+        url,
+        json={
+            "key": key,
+            "expires_at": expires_at,
+            "duration_seconds": duration_seconds,
+        },
+        timeout=10.0,
+    )
+    response.raise_for_status()
+
+
 async def get_statuses(node_ip: str, node_port: int | None) -> list[dict[str, object]]:
     url = _satellite_url(node_ip, node_port, "/deployments/status")
     response = await get_client().get(url, timeout=30.0)

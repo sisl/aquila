@@ -1,3 +1,4 @@
+import os
 from typing import Any
 from urllib.parse import urlparse
 
@@ -11,7 +12,15 @@ class ConsulService:
         parsed = urlparse(settings.consul_http_addr)
         host = parsed.hostname or "localhost"
         port = parsed.port or 47528
-        self.client = consul.Consul(host=host, port=port)
+        # python-consul2 also reads CONSUL_HTTP_ADDR internally and chokes on
+        # the http:// scheme prefix.  Hide it so the library uses our explicit
+        # host/port instead.
+        saved = os.environ.pop("CONSUL_HTTP_ADDR", None)
+        try:
+            self.client = consul.Consul(host=host, port=port)
+        finally:
+            if saved is not None:
+                os.environ["CONSUL_HTTP_ADDR"] = saved
 
     def list_nodes(self) -> list[dict[str, Any]]:
         _, nodes = self.client.catalog.nodes()

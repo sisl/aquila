@@ -179,9 +179,11 @@ class TestGatewayGate:
     def test_disabled_raises_503(self):
         runtime_settings._overrides["gateway_enabled"] = False
         with pytest.raises(Exception) as excinfo:
-            gateway._require_gateway()
+            gateway._require_gateway(mock.MagicMock())
         assert getattr(excinfo.value, "status_code", None) == 503
         assert "disabled" in str(excinfo.value.detail)
 
     def test_enabled_passes(self):
-        assert gateway._require_gateway() is None
+        req = mock.MagicMock()
+        with mock.patch.object(gateway.api_keys, "has_keys", return_value=False):
+            assert gateway._require_gateway(req) is None

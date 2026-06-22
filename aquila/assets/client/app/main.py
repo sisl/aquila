@@ -23,7 +23,7 @@ from docker.errors import APIError, ContainerError, ImageNotFound, NotFound
 from docker.types import DeviceRequest
 import httpx
 import psutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -2067,6 +2067,8 @@ async def start_deployment(payload: StartRequest) -> dict[str, object]:
         "pause_tier": None,
         "paused_ram_mb": 0,
         "last_active_at": time.monotonic(),
+        "duration_seconds": payload.duration_seconds,
+        "expires_at": None,
     }
     _log(f"[docker] Started container {name}")
     if warm:
@@ -2237,6 +2239,22 @@ def pin_deployment(payload: PinRequest) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Deployment not found")
     meta["pinned"] = payload.pinned
     return {"status": "ok", "key": payload.key, "pinned": payload.pinned}
+
+
+class ExtendRequest(BaseModel):
+    key: str
+    expires_at: str | None = None
+    duration_seconds: int | None = None
+
+
+@app.post("/deployments/extend")
+def extend_deployment(payload: ExtendRequest) -> dict[str, object]:
+    meta = _statuses.get(payload.key)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    meta["expires_at"] = payload.expires_at
+    meta["duration_seconds"] = payload.duration_seconds
+    return {"status": "ok", "key": payload.key}
 
 
 class ConfigRequest(BaseModel):
@@ -3047,6 +3065,30 @@ async def _monitor_container(
                 break
             continue
 
+        # Client-side expiry: stop the deployment locally when the timer
+        # elapses, even if the host is unreachable.
+        ea = _statuses.get(key, {}).get("expires_at")
+        if ea:
+            try:
+                exp = datetime.fromisoformat(ea)
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) >= exp:
+                    logger.info("Deployment %s expired locally", key)
+                    _append_agent_log(
+                        key,
+                        "[agent] Serve duration reached — stopping deployment.",
+                    )
+                    if key in _statuses:
+                        _statuses[key]["status"] = "expired"
+                        _statuses[key]["desired_state"] = "stopped"
+                    await asyncio.to_thread(_remove_container, container)
+                    _containers.pop(key, None)
+                    await _stop_proxy(key)
+                    break
+            except (ValueError, TypeError):
+                pass
+
         # RAM pause, offloading, or waking: container alive, engine
         # offloaded/transitioning.  Skip readiness/scrape; unexpected exit → error.
         meta_snap = _statuses.get(key, {})
@@ -3117,7 +3159,14 @@ async def _monitor_container(
             continue
 
         if await _is_ready(port):
-            ever_ready = True
+            if not ever_ready:
+                ever_ready = True
+                meta = _statuses.get(key, {})
+                ds = meta.get("duration_seconds")
+                if ds is not None and meta.get("expires_at") is None:
+                    meta["expires_at"] = (
+                        datetime.now(timezone.utc) + timedelta(seconds=ds)
+                    ).isoformat()
             if key in _statuses:
                 _statuses[key]["status"] = "running"
                 _statuses[key]["phase"] = "ready"
@@ -3487,6 +3536,8 @@ async def _reconcile_containers() -> None:
                 status["engine_args"] = manifest.get("engine_args") or {}
                 status["lora_modules"] = manifest.get("lora_modules") or []
                 status["max_failed_restarts"] = manifest.get("max_failed_restarts")
+                status["duration_seconds"] = manifest.get("duration_seconds")
+                status["expires_at"] = manifest.get("expires_at")
                 # Warm-mode bookkeeping survives a restart via the manifest, so
                 # the agent re-fronts the public port and can pause/resume again.
                 warm = bool(manifest.get("warm"))

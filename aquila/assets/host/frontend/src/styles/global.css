@@ -77,23 +77,24 @@ body {
   gap: 16px;
 }
 
-/* No text-transform: the literal "vLLM" casing must survive. */
 .brand-title {
-  font-size: clamp(26px, 4vw, 64px);
-  font-weight: 300;
-  letter-spacing: 0.08em;
-  line-height: 1.05;
-  text-wrap: balance;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
   margin: 0;
-  color: var(--accent);
+}
+
+.brand-logo {
+  height: clamp(36px, 5vw, 64px);
+  width: auto;
 }
 
 .brand-subtitle {
-  font-size: 0.35em;
+  font-size: clamp(11px, 1.6vw, 18px);
   font-weight: 300;
   letter-spacing: 0.05em;
   opacity: 0.4;
-  vertical-align: baseline;
+  padding-bottom: 0.45em;
 }
 
 .stage {
@@ -295,6 +296,7 @@ body {
 @media (min-width: 900px) {
   .app-shell {
     grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
   }
 
   .overview-strip {
@@ -307,6 +309,7 @@ body {
     order: 0;
     grid-column: 1;
     grid-row: 2;
+    align-self: start;
   }
 
   .stage {

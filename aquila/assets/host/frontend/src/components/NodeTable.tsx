@@ -320,23 +320,25 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
         value={search}
         onChange={(event) => setSearch(event.target.value)}
         sx={{ width: { xs: "100%", sm: 280 } }}
-        InputProps={{
-          startAdornment: (
-            <InputAdornment position="start">
-              <SearchIcon sx={{ fontSize: 16, color: "text.secondary" }} />
-            </InputAdornment>
-          ),
-          endAdornment: search ? (
-            <InputAdornment position="end">
-              <IconButton
-                size="small"
-                aria-label="Clear search"
-                onClick={() => setSearch("")}
-              >
-                <ClearIcon sx={{ fontSize: 14 }} />
-              </IconButton>
-            </InputAdornment>
-          ) : undefined
+        slotProps={{
+          input: {
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon sx={{ fontSize: 16, color: "text.secondary" }} />
+              </InputAdornment>
+            ),
+            endAdornment: search ? (
+              <InputAdornment position="end">
+                <IconButton
+                  size="small"
+                  aria-label="Clear search"
+                  onClick={() => setSearch("")}
+                >
+                  <ClearIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+              </InputAdornment>
+            ) : undefined
+          }
         }}
       />
     </Box>

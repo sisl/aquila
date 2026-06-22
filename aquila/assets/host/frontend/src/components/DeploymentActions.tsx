@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
 
-import DeleteOutline from "@mui/icons-material/DeleteOutline";
+import DeleteOutlined from "@mui/icons-material/DeleteOutlined";
 import LinkOutlined from "@mui/icons-material/LinkOutlined";
-import PauseCircleOutline from "@mui/icons-material/PauseCircleOutline";
+import PauseCircleOutlined from "@mui/icons-material/PauseCircleOutlined";
 import PlayArrowOutlined from "@mui/icons-material/PlayArrowOutlined";
-import PlayCircleOutline from "@mui/icons-material/PlayCircleOutline";
+import PlayCircleOutlined from "@mui/icons-material/PlayCircleOutlined";
 import PushPin from "@mui/icons-material/PushPin";
 import PushPinOutlined from "@mui/icons-material/PushPinOutlined";
 import SettingsOutlined from "@mui/icons-material/SettingsOutlined";
@@ -175,7 +175,7 @@ export function DeploymentActions({
       {onPause && status === "running" && warm && !isUnifiedMemory && (
         <ActionBtn
           tooltip="Pause"
-          icon={<PauseCircleOutline sx={ICON_SX} />}
+          icon={<PauseCircleOutlined sx={ICON_SX} />}
           onClick={deployment.pinned
             ? () => toast.info("Cannot pause a pinned deployment. Unpin it first.")
             : onPause}
@@ -185,7 +185,7 @@ export function DeploymentActions({
       {onResume && status === "paused_ram" && (
         <ActionBtn
           tooltip="Resume"
-          icon={<PlayCircleOutline sx={ICON_SX} />}
+          icon={<PlayCircleOutlined sx={ICON_SX} />}
           onClick={onResume}
         />
       )}
@@ -210,7 +210,7 @@ export function DeploymentActions({
       {canRestart(status) && (
         <ActionBtn
           tooltip="Delete"
-          icon={<DeleteOutline sx={ICON_ERR_SX} />}
+          icon={<DeleteOutlined sx={ICON_ERR_SX} />}
           onClick={onDeleteClick}
           color="error"
         />

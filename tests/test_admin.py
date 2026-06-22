@@ -400,6 +400,7 @@ async def test_set_node_runtime_persists_and_broadcasts():
         port=9000,
         status="healthy",
         maintenance=False,
+        has_partial_maintenance=False,
         gpu_usage=[],
         disk_usage=None,
         default_pip_packages=[],

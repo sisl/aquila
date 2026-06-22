@@ -220,6 +220,8 @@ def run_host_up(config: HostConfig, use_service: bool) -> None:
         cwd=runtime_dir / "backend",
         env=merge_env(backend_env),
     )
+    backend_port = int(backend_env.get("ADMIN_API_PORT", str(config.admin_api_port)))
+    _wait_for_backend(backend_proc, backend_port)
     frontend_proc = subprocess.Popen(
         frontend_cmd,
         cwd=runtime_dir / "frontend",
@@ -301,8 +303,9 @@ def run_clean(remove_docker: bool = False, assume_yes: bool = False) -> None:
     base_dir = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
     data_root = base_dir / "aquila"
     client_root = Path(os.environ.get("VLLM_CLIENT_ROOT", Path.home() / ".vllm-client"))
+    legacy_roots = [base_dir / "athanor", base_dir / "vllm_cluster_manager"]
 
-    targets = [p for p in (data_root, client_root) if p.exists()]
+    targets = [p for p in (data_root, client_root, *legacy_roots) if p.exists()]
 
     candidate_units = (
         f"{HOST_SERVICE_NAME}-infra.service",
@@ -403,6 +406,12 @@ def _clean_docker() -> None:
             print(f"  Removed {len(images)} cached vLLM image(s).")
     except RuntimeError as exc:
         print(f"  (image cleanup failed: {exc})")
+    for vol in ("vllm_cluster_manager_pgdata", "athanor_pgdata"):
+        try:
+            run([docker, "volume", "rm", "-f", vol], capture=True)
+            print(f"  Removed legacy volume {vol}.")
+        except RuntimeError:
+            pass
 
 
 def ensure_runtime_dir(kind: str) -> Path:
@@ -598,7 +607,7 @@ def ensure_frontend_deps(runtime_dir: Path) -> None:
     node_modules = frontend_dir / "node_modules"
     if node_modules.exists() and not needs_install(manifest, marker):
         return
-    run([npm, "install"], cwd=frontend_dir)
+    run([npm, "install", "--no-audit", "--no-fund"], cwd=frontend_dir)
     write_hash_marker(manifest, marker)
 
 
@@ -846,6 +855,33 @@ def stop_pid(path: Path) -> None:
     except ProcessLookupError:
         pass
     remove_pid(path)
+
+
+def _wait_for_backend(proc: subprocess.Popen, port: int, timeout: int = 90) -> None:
+    """Poll the backend until it responds or dies."""
+    import urllib.request
+    import urllib.error
+
+    url = f"http://127.0.0.1:{port}/api/settings"
+    deadline = time.monotonic() + timeout
+    print(f"Waiting for backend on port {port} ...")
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError(
+                f"Backend exited with code {proc.returncode} before becoming ready. "
+                "Check the output above for errors."
+            )
+        try:
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=2):
+                print("Backend ready.")
+                return
+        except (urllib.error.URLError, OSError):
+            time.sleep(2)
+    raise RuntimeError(
+        f"Backend did not become ready within {timeout}s. "
+        "Check the output above for errors."
+    )
 
 
 def wait_for_processes(*procs: subprocess.Popen) -> None:

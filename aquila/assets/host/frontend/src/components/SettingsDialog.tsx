@@ -17,7 +17,7 @@ import {
   Typography
 } from "@mui/material";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
 import EditOutlined from "@mui/icons-material/EditOutlined";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import RocketLaunchOutlined from "@mui/icons-material/RocketLaunchOutlined";
@@ -376,7 +376,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <Switch
                     checked={draft.gateway_enabled ?? true}
                     onChange={(event) => set("gateway_enabled", event.target.checked)}
-                    inputProps={{ "aria-label": "OpenAI gateway enabled" }}
+                    slotProps={{ input: { "aria-label": "OpenAI gateway enabled" } }}
                   />
                 }
               >
@@ -544,7 +544,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                         size="small"
                         label="Snippet key lifetime (s)"
                         type="number"
-                        inputProps={{ min: 0, max: 3600 }}
+                        slotProps={{ htmlInput: { min: 0, max: 3600 } }}
                         value={draft.temp_api_key_ttl_seconds ?? ""}
                         onChange={(event) => set("temp_api_key_ttl_seconds", num(event.target.value))}
                         helperText="Temporary key lifespan for endpoint code snippets. 0 = disabled."
@@ -606,7 +606,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     size="small"
                     label="GPU fraction"
                     type="number"
-                    inputProps={{ step: 0.05, min: 0.05, max: 1 }}
+                    slotProps={{ htmlInput: { step: 0.05, min: 0.05, max: 1 } }}
                     value={draft.default_gpu_fraction ?? ""}
                     onChange={(event) => set("default_gpu_fraction", num(event.target.value))}
                     sx={{ width: { xs: "100%", sm: 130 } }}
@@ -718,7 +718,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   size="small"
                   label="Busy guard (s)"
                   type="number"
-                  inputProps={{ min: 0, max: 300 }}
+                  slotProps={{ htmlInput: { min: 0, max: 300 } }}
                   value={draft.busy_guard_seconds ?? ""}
                   onChange={(event) => set("busy_guard_seconds", num(event.target.value))}
                   helperText="Seconds after a model's last request before it can be auto-evicted. 0 = evict immediately when idle."
@@ -949,19 +949,6 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 getOptionLabel={deploymentDisplayName}
                 value={newKeyScopeIds}
                 onChange={(_, value) => setNewKeyScopeIds(value)}
-                renderTags={(value, getTagProps) =>
-                  value.map((d, index) => {
-                    const { key, ...rest } = getTagProps({ index });
-                    return (
-                      <Chip
-                        key={key}
-                        label={deploymentDisplayName(d)}
-                        size="small"
-                        {...rest}
-                      />
-                    );
-                  })
-                }
                 renderInput={(params) => (
                   <TextField
                     {...params}
@@ -1023,19 +1010,6 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               value={editScopeIds}
               onChange={(_, value) => setEditScopeIds(value)}
               isOptionEqualToValue={(option, value) => option.id === value.id}
-              renderTags={(value, getTagProps) =>
-                value.map((d, index) => {
-                  const { key, ...rest } = getTagProps({ index });
-                  return (
-                    <Chip
-                      key={key}
-                      label={deploymentDisplayName(d)}
-                      size="small"
-                      {...rest}
-                    />
-                  );
-                })
-              }
               renderInput={(params) => (
                 <TextField
                   {...params}

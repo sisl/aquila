@@ -53,7 +53,7 @@ export function AppDialog({
       fullWidth
       fullScreen={fullScreen}
       maxWidth={maxWidth}
-      PaperProps={{ className: paperClassName ? `panel ${paperClassName}` : "panel" }}
+      slotProps={{ paper: { className: paperClassName ? `panel ${paperClassName}` : "panel" } }}
     >
       <DialogTitle sx={{ p: { xs: "16px 14px 10px", sm: "20px 24px 12px" } }}>
         {title}

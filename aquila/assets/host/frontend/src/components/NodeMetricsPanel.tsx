@@ -7,8 +7,9 @@ import {
   Typography,
   useTheme
 } from "@mui/material";
-import { SparkLineChart } from "@mui/x-charts/SparkLineChart";
 import { useQuery } from "@tanstack/react-query";
+
+import { Sparkline } from "./Sparkline";
 
 import { fetchNodeMetricsHistory } from "../services/api";
 import { EmptyState } from "./EmptyState";
@@ -143,14 +144,13 @@ export function NodeMetricsPanel({ nodeId }: NodeMetricsPanelProps) {
                   {entry.label} — {last.toFixed(entry.unit === "GB" ? 1 : 0)}
                   {entry.unit}
                 </Typography>
-                <SparkLineChart
+                <Sparkline
                   data={entry.values}
                   height={48}
                   area
-                  showTooltip
-                  showHighlight
-                  colors={[muiTheme.palette.primary.main]}
-                  yAxis={{ min: 0, max: entry.max }}
+                  color={muiTheme.palette.primary.main}
+                  yMin={0}
+                  yMax={entry.max}
                 />
               </Box>
             );

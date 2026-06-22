@@ -16,12 +16,14 @@ export const tokens = {
   lineStrong: "rgba(148, 163, 184, 0.55)",
   background: "#f2f3f5",
   panel: "#ffffff",
-  success: "#1f9d55",
-  warning: "#d97706",
-  error: "#dc2626",
+  success: "#3d8b5e",
+  warning: "#b8860b",
+  error: "#c0392b",
+  info: "#4a6fa5",
   // Darker shades for text on the soft tinted chip backgrounds.
-  successText: "#15803d",
-  warningText: "#b45309",
+  successText: "#2d6e4a",
+  warningText: "#946a0c",
+  infoText: "#3b5d8c",
   fontMono: "'SFMono-Regular', ui-monospace, 'SF Mono', Menlo, Consolas, monospace",
   radius: 12,
   radiusLg: 16
@@ -52,6 +54,9 @@ export const theme = createTheme({
     },
     error: {
       main: tokens.error
+    },
+    info: {
+      main: tokens.info
     },
     divider: tokens.line,
     background: {
@@ -161,12 +166,17 @@ export const theme = createTheme({
           height: 20,
           borderRadius: 6,
           letterSpacing: "0.02em",
+          lineHeight: 1,
           transition: hoverTransition,
           "&.Mui-focusVisible": focusRing,
           // colorDefault is not a typed override slot in MUI 5.
           "&.MuiChip-colorDefault": {
             backgroundColor: alpha(tokens.ink, 0.06),
             color: tokens.inkSoft
+          },
+          "& .MuiChip-label": {
+            display: "flex",
+            alignItems: "center"
           },
           "& .MuiChip-icon": {
             color: "inherit",
@@ -186,6 +196,21 @@ export const theme = createTheme({
         colorError: {
           backgroundColor: alpha(tokens.error, 0.12),
           color: tokens.error
+        },
+        colorInfo: {
+          backgroundColor: alpha(tokens.info, 0.12),
+          color: tokens.infoText
+        }
+      }
+    },
+    MuiAlert: {
+      defaultProps: {
+        variant: "standard"
+      },
+      styleOverrides: {
+        root: {
+          border: "none",
+          borderRadius: tokens.radius
         }
       }
     },
@@ -206,13 +231,13 @@ export const theme = createTheme({
           "&:hover": {
             color: tokens.ink,
             backgroundColor: alpha(tokens.ink, 0.04)
-          }
-        },
-        textError: {
-          color: tokens.error,
-          "&:hover": {
+          },
+          "&.MuiButton-colorError": {
             color: tokens.error,
-            backgroundColor: alpha(tokens.error, 0.06)
+            "&:hover": {
+              color: tokens.error,
+              backgroundColor: alpha(tokens.error, 0.06)
+            }
           }
         },
         outlined: {
@@ -222,15 +247,15 @@ export const theme = createTheme({
             borderColor: tokens.inkSoft,
             color: tokens.ink,
             backgroundColor: alpha(tokens.ink, 0.04)
-          }
-        },
-        outlinedError: {
-          borderColor: alpha(tokens.error, 0.45),
-          color: tokens.error,
-          "&:hover": {
-            borderColor: tokens.error,
+          },
+          "&.MuiButton-colorError": {
+            borderColor: alpha(tokens.error, 0.45),
             color: tokens.error,
-            backgroundColor: alpha(tokens.error, 0.06)
+            "&:hover": {
+              borderColor: tokens.error,
+              color: tokens.error,
+              backgroundColor: alpha(tokens.error, 0.06)
+            }
           }
         },
         contained: {
@@ -359,9 +384,11 @@ export const theme = createTheme({
             borderWidth: 1.5
           }
         },
-        inputSizeSmall: {
-          paddingTop: 8,
-          paddingBottom: 8
+        input: {
+          "&.MuiInputBase-inputSizeSmall": {
+            paddingTop: 8,
+            paddingBottom: 8
+          }
         }
       }
     },

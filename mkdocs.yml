@@ -10,9 +10,8 @@ theme:
   language: en
   font:
     text: Source Sans 3
-  logo: null
-  icon:
-    logo: null
+  logo: assets/img/aquila-logo.svg
+  favicon: assets/img/aquila-icon.svg
   features:
     - navigation.instant
     - navigation.sections

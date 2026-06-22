@@ -293,6 +293,13 @@ def _transition_event(deployment, before_status: str, node) -> tuple | None:
             f"{deployment.model_name} is ready on {node.hostname}:{deployment.port}",
             {"deployment_id": deployment.id, "model": deployment.model_name},
         )
+    if status == "expired" and before_status != "expired":
+        return (
+            "deployment_expired",
+            f"{deployment.model_name} (deployment {deployment.id}) reached its "
+            "serve duration and was stopped",
+            {"deployment_id": deployment.id, "model": deployment.model_name},
+        )
     if status in ("error", "unreachable") and before_status not in ("error", "unreachable"):
         return (
             "deployment_error",
@@ -539,13 +546,25 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
                                 _accumulate_usage(deployment, usage)
                                 _update_live_usage(deployment.id, usage)
                                 _persist_token_speeds(deployment, usage)
-                            # Start the serve countdown the first time the model is
-                            # actually serving (status -> running).
-                            if (
+                            # Sync expires_at from the client (the client
+                            # starts the countdown locally when the model
+                            # first reaches "running").
+                            client_ea = client_dep.get("expires_at")
+                            if client_ea:
+                                try:
+                                    parsed = datetime.fromisoformat(str(client_ea))
+                                    if parsed.tzinfo is None:
+                                        parsed = parsed.replace(tzinfo=timezone.utc)
+                                    deployment.expires_at = parsed
+                                except (ValueError, TypeError):
+                                    pass
+                            elif (
                                 deployment.status == "running"
                                 and deployment.expires_at is None
                                 and deployment.duration_seconds is not None
                             ):
+                                # Fallback for old clients that don't report
+                                # expires_at.
                                 deployment.expires_at = now + timedelta(
                                     seconds=deployment.duration_seconds
                                 )

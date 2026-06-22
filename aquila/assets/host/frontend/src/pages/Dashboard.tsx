@@ -24,7 +24,7 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import ClearIcon from "@mui/icons-material/Clear";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -669,7 +669,7 @@ export function Dashboard() {
   const statusSummary = useMemo(() => {
     const nodes = nodesQuery.data ?? [];
     const active = visibleDeployments.filter(
-      (deployment) => deployment.status === "running" || deployment.status === "paused"
+      (deployment) => deployment.status === "running" || deployment.status === "paused_ram"
     );
 
     return {
@@ -1194,9 +1194,10 @@ export function Dashboard() {
   return (
     <Box className="app">
       <Box className="brand">
-        {/* Plain h1: MUI Typography's body1 font-size would override the
-            .brand-title CSS (its runtime styles land after the stylesheet). */}
-        <h1 className="brand-title">AQUILA <span className="brand-subtitle">GPU Inference Management</span></h1>
+        <h1 className="brand-title">
+          <img src="/aquila_light_logo.svg" alt="Aquila" className="brand-logo" />
+          <span className="brand-subtitle">GPU Inference Management</span>
+        </h1>
         <Tooltip title="Settings" enterDelay={500}>
           <IconButton aria-label="Settings" onClick={() => setSettingsOpen(true)}>
             <SettingsOutlinedIcon sx={{ fontSize: 20 }} />
@@ -1333,7 +1334,7 @@ export function Dashboard() {
                   fullWidth
                   label="GPU Fraction"
                   type="number"
-                  inputProps={{ step: 0.1, min: 0.1, max: 1.0 }}
+                  slotProps={{ htmlInput: { step: 0.1, min: 0.1, max: 1.0 } }}
                   value={gpuFraction}
                   onChange={(event) => setGpuFraction(Number(event.target.value))}
                 />
@@ -1355,7 +1356,7 @@ export function Dashboard() {
                 <TextField
                   label="Custom hours"
                   type="number"
-                  inputProps={{ step: 0.5, min: 0.1 }}
+                  slotProps={{ htmlInput: { step: 0.5, min: 0.1 } }}
                   value={customHours}
                   onChange={(event) => setCustomHours(event.target.value)}
                   helperText="Hours to serve before the model is auto-stopped."
@@ -1405,7 +1406,7 @@ export function Dashboard() {
                   <AccordionDetails>
                     <Stack spacing={1.5}>
                       {advancedArgs.map((entry, index) => (
-                        <Stack key={entry.id} direction="row" spacing={1.5} alignItems="center">
+                        <Stack key={entry.id} direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
                           <TextField
                             fullWidth
                             label="Flag"
@@ -1464,7 +1465,7 @@ export function Dashboard() {
                       />
                       <SectionLabel>Environment Variables</SectionLabel>
                       {envVars.map((entry, index) => (
-                        <Stack key={entry.id} direction="row" spacing={1.5} alignItems="center">
+                        <Stack key={entry.id} direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
                           <TextField
                             fullWidth
                             label="Name"
@@ -1529,7 +1530,7 @@ export function Dashboard() {
                   <AccordionDetails>
                     <Stack spacing={1.5}>
                       {loraModules.map((entry, index) => (
-                        <Stack key={entry.id} direction="row" spacing={1.5} alignItems="center">
+                        <Stack key={entry.id} direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
                           <TextField
                             fullWidth
                             label="Name"
@@ -1619,7 +1620,7 @@ export function Dashboard() {
                           label="Max model len"
                           placeholder="--max-model-len"
                           type="number"
-                          inputProps={{ min: 1 }}
+                          slotProps={{ htmlInput: { min: 1 } }}
                           value={maxModelLen}
                           onChange={(event) => setMaxModelLen(event.target.value)}
                         />
@@ -1628,7 +1629,7 @@ export function Dashboard() {
                           label="Max num seqs"
                           placeholder="--max-num-seqs"
                           type="number"
-                          inputProps={{ min: 1 }}
+                          slotProps={{ htmlInput: { min: 1 } }}
                           value={maxNumSeqs}
                           onChange={(event) => setMaxNumSeqs(event.target.value)}
                         />
@@ -1694,12 +1695,12 @@ export function Dashboard() {
                           label="Trust remote code"
                         />
                       </Stack>
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ xs: "stretch", sm: "center" }}>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ alignItems: { xs: "stretch", sm: "center" } }}>
                         <TextField
                           label="Max failed restarts"
                           placeholder="3"
                           type="number"
-                          inputProps={{ min: 1 }}
+                          slotProps={{ htmlInput: { min: 1 } }}
                           value={maxFailedRestarts}
                           onChange={(event) => setMaxFailedRestarts(event.target.value)}
                           sx={{ maxWidth: { xs: "100%", sm: 220 } }}
@@ -1755,7 +1756,7 @@ export function Dashboard() {
                         onChange={(e) => setExtraPackagesText(e.target.value)}
                         helperText="One package per line (requirements.txt format). Or upload a .py, .whl, or .tar.gz below."
                       />
-                      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                      <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>
                         <input
                           ref={fileInputRef}
                           type="file"
@@ -1791,17 +1792,7 @@ export function Dashboard() {
                   action they block, even while the long form scrolls. */}
               <Box
                 sx={{
-                  position: "sticky",
-                  bottom: { xs: "-16px", sm: "-20px" },
-                  zIndex: 2,
-                  bgcolor: "var(--panel)",
-                  borderTop: "1px solid var(--line)",
-                  mx: { xs: "-14px", sm: "-24px" },
-                  mb: { xs: "-16px", sm: "-20px" },
-                  px: { xs: "14px", sm: "24px" },
-                  py: 2,
-                  borderBottomLeftRadius: "var(--radius-lg)",
-                  borderBottomRightRadius: "var(--radius-lg)"
+                  pt: 2
                 }}
               >
                 {!startMutation.isPending && (
@@ -2118,7 +2109,7 @@ export function Dashboard() {
         }
       >
         <Stack spacing={1.5}>
-          <Stack direction="row" spacing={1} alignItems="center">
+          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
             <TextField
               fullWidth
               label="Configuration Name"
@@ -2392,7 +2383,7 @@ export function Dashboard() {
                 fullWidth
                 label="Custom hours"
                 type="number"
-                inputProps={{ step: 0.5, min: 0.1 }}
+                slotProps={{ htmlInput: { step: 0.5, min: 0.1 } }}
                 value={restartCustomHours}
                 onChange={(event) => setRestartCustomHours(event.target.value)}
               />

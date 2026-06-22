@@ -1,4 +1,8 @@
-# Aquila
+<p align="center">
+  <img src="assets/img/aquila-logo.svg" alt="Aquila" height="64" />
+  <br />
+  <em>GPU Inference Management</em>
+</p>
 
 <div class="hero-card"  style="margin-bottom: 2rem;">
   <h2>Operate multi-node vLLM deployments</h2>

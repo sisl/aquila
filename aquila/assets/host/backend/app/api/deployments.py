@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
@@ -28,6 +30,7 @@ from app.services import api_keys, model_names
 from app.services import runtime_settings
 from app.services import sync as sync_service
 from app.services.client_api import (
+    extend_model,
     get_logs,
     pause_model,
     pin_model,
@@ -37,6 +40,8 @@ from app.services.client_api import (
     stream_log_download,
 )
 from app.services.deployment_state import set_status
+
+logger = logging.getLogger(__name__)
 from app.services.deployment_stop import stop_deployment_internal
 from app.ws.manager import manager
 
@@ -646,10 +651,7 @@ async def extend_deployment(
     payload: DeploymentExtend,
     session: AsyncSession = Depends(get_session),
 ) -> DeploymentRead:
-    """Push the serve deadline forward without restarting the model.
-
-    Expiry is enforced host-side only, so no client call is involved.
-    """
+    """Push the serve deadline forward without restarting the model."""
     deployment = await session.get(Deployment, deployment_id)
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
@@ -660,32 +662,39 @@ async def extend_deployment(
         )
 
     if payload.infinite:
-        # Drop the deadline entirely: serve until explicitly stopped.
         deployment.expires_at = None
         deployment.duration_seconds = None
-        await session.commit()
-        await session.refresh(deployment)
-        await _broadcast_change(deployment.id)
-        return deployment
-
-    extra_seconds = int((payload.hours or 0) * 3600)
-    if deployment.expires_at is not None:
-        expires_at = deployment.expires_at
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        deployment.expires_at = expires_at + timedelta(seconds=extra_seconds)
-        deployment.duration_seconds = (deployment.duration_seconds or 0) + extra_seconds
-    elif deployment.duration_seconds is not None:
-        # Countdown hasn't started yet (still loading): lengthen the duration.
-        deployment.duration_seconds += extra_seconds
     else:
-        raise HTTPException(
-            status_code=409, detail="Deployment has no expiry to extend."
-        )
+        extra_seconds = int((payload.hours or 0) * 3600)
+        if deployment.expires_at is not None:
+            expires_at = deployment.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            deployment.expires_at = expires_at + timedelta(seconds=extra_seconds)
+            deployment.duration_seconds = (deployment.duration_seconds or 0) + extra_seconds
+        elif deployment.duration_seconds is not None:
+            deployment.duration_seconds += extra_seconds
+        else:
+            raise HTTPException(
+                status_code=409, detail="Deployment has no expiry to extend."
+            )
 
     await session.commit()
     await session.refresh(deployment)
     await _broadcast_change(deployment.id)
+
+    node = await session.get(Node, deployment.node_id)
+    if node:
+        ea_iso = deployment.expires_at.isoformat() if deployment.expires_at else None
+        try:
+            await extend_model(
+                node.ip_address, node.port, deployment.key,
+                expires_at=ea_iso,
+                duration_seconds=deployment.duration_seconds,
+            )
+        except Exception:
+            logger.warning("Could not push extend to client for %s", deployment.key)
+
     return deployment
 
 
