@@ -1,4 +1,4 @@
-# vLLM Cluster Manager
+# Athanor
 
 <div class="hero-card"  style="margin-bottom: 2rem;">
   <h2>Operate multi-node vLLM deployments</h2>
@@ -24,7 +24,7 @@
 </div>
 
 <div class="hero-image">
-  <img alt="vLLM Cluster Manager dashboard" src="assets/img/vllm-cluster-manager-screenshot.png" />
+  <img alt="Athanor dashboard" src="assets/img/athanor-screenshot.png" />
 </div>
 
 ## What you can do

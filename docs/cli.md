@@ -1,12 +1,12 @@
 # CLI Reference
 
-The CLI command is `vllm-cluster-manager`.
+The CLI command is `athanor`.
 
 Run `--help` to see command and flag details:
 ```bash
-vllm-cluster-manager --help
-vllm-cluster-manager host up --help
-vllm-cluster-manager client up --help
+athanor --help
+athanor host up --help
+athanor client up --help
 ```
 
 ## Host (`host up`)
@@ -20,7 +20,7 @@ vllm-cluster-manager client up --help
 | `--host-backend-port` | `8000` | Backend API port. |
 | `--postgres-host` | `127.0.0.1` | Postgres host. |
 | `--postgres-port` | `5757` | Postgres port. |
-| `--postgres-db` | `vllm_admin` | Postgres database name. |
+| `--postgres-db` | `athanor` | Postgres database name. |
 | `--postgres-user` | `vllm` | Postgres user. |
 | `--postgres-password` | `change-me` | Postgres password. |
 | `--base-path` | `/` | Base path for the UI (reverse proxy subpath). |
@@ -46,24 +46,24 @@ vllm-cluster-manager client up --help
 
 Launch host services in the foreground:
 ```bash
-vllm-cluster-manager host up --host-ip 127.0.0.1 --host-frontend-port 5173 --host-discover-port 47528
+athanor host up --host-ip 127.0.0.1 --host-frontend-port 5173 --host-discover-port 47528
 ```
 
 Reverse proxy under `/vllm/`:
 ```bash
-vllm-cluster-manager host up --base-path /vllm/
+athanor host up --base-path /vllm/
 ```
 
 Launch a client node:
 ```bash
-vllm-cluster-manager client up --host-ip 127.0.0.1 --host-discover-port 47528 --node-name node-1
+athanor client up --host-ip 127.0.0.1 --host-discover-port 47528 --node-name node-1
 ```
 
 ### Service mode
 Service mode writes systemd unit files and enables them so they start automatically on boot:
 ```bash
-vllm-cluster-manager host up --service
-vllm-cluster-manager client up --service
+athanor host up --service
+athanor client up --service
 ```
 
 !!! warning

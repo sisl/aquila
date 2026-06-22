@@ -1,11 +1,13 @@
-# VLLM Cluster Manager
+# Athanor
+
+GPU inference cluster manager
 
 [![Docs](https://img.shields.io/badge/docs-online-111827)](https://sisl.github.io/VLLMClusterManager/)
-[![PyPI](https://img.shields.io/pypi/v/vllm-cluster-manager?color=111827)](https://pypi.org/project/vllm-cluster-manager/)
+[![PyPI](https://img.shields.io/pypi/v/athanor?color=111827)](https://pypi.org/project/athanor/)
 [![Tests](https://github.com/sisl/VLLMClusterManager/actions/workflows/tests.yml/badge.svg)](https://github.com/sisl/VLLMClusterManager/actions/workflows/tests.yml)
-[![Python](https://img.shields.io/badge/python-3.10--3.14-111827)](https://pypi.org/project/vllm-cluster-manager/)
+[![Python](https://img.shields.io/badge/python-3.10--3.14-111827)](https://pypi.org/project/athanor/)
 
-![VLLM Cluster Manager dashboard](img/vllm-cluster-manager-screenshot.png "VLLM Cluster Manager")
+![Athanor dashboard](img/athanor-screenshot.png "Athanor")
 
 Admin dashboard + satellite clients for multi-model vLLM deployments. Deploy vLLM `serve` endpoints across a cluster with a few clicks — ideal for research labs or small teams that need repeatable, multi-endpoint serving without a full MLOps stack.
 
@@ -32,17 +34,17 @@ See the [full documentation](https://sisl.github.io/VLLMClusterManager/) for det
 Install:
 ```bash
 uv venv && source .venv/bin/activate
-uv pip install vllm-cluster-manager
+uv pip install athanor
 ```
 
 Start the host:
 ```bash
-vllm-cluster-manager host up --host-ip 0.0.0.0 --host-frontend-port 5173 --host-discover-port 11400
+athanor host up --host-ip 0.0.0.0 --host-frontend-port 5173 --host-discover-port 11400
 ```
 
 Add a client node:
 ```bash
-vllm-cluster-manager client up --host-ip <host-ip> --host-discover-port 11400
+athanor client up --host-ip <host-ip> --host-discover-port 11400
 ```
 
 Open `http://<host-ip>:5173` — the client node appears within seconds. Add `--service` for persistent systemd services.

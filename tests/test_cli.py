@@ -8,7 +8,7 @@ from unittest import mock
 
 import pytest
 
-from vllm_cluster_manager.cli import (
+from athanor.cli import (
     HostConfig,
     ClientConfig,
     build_host_config,
@@ -207,7 +207,7 @@ def test_stop_pid_no_such_process(tmp_path):
 
 
 def test_write_host_env_files(tmp_path):
-    from vllm_cluster_manager.cli import write_host_env_files
+    from athanor.cli import write_host_env_files
 
     cfg = HostConfig(
         host_ip="10.0.0.1",
@@ -238,7 +238,7 @@ def test_write_host_env_files(tmp_path):
 
 
 def test_write_client_env_file(tmp_path):
-    from vllm_cluster_manager.cli import write_client_env_file
+    from athanor.cli import write_client_env_file
 
     cfg = ClientConfig(
         host_ip="10.0.0.1",
@@ -261,9 +261,9 @@ def test_write_client_env_file(tmp_path):
 
 
 def test_run_clean_removes_working_dirs(tmp_path, monkeypatch):
-    from vllm_cluster_manager.cli import run_clean
+    from athanor.cli import run_clean
 
-    data_root = tmp_path / "share" / "vllm_cluster_manager"
+    data_root = tmp_path / "share" / "athanor"
     # Only the client subtree (no host dir) so clean doesn't shell out to docker.
     (data_root / "client" / ".venv").mkdir(parents=True)
     client_root = tmp_path / ".vllm-client"
@@ -279,7 +279,7 @@ def test_run_clean_removes_working_dirs(tmp_path, monkeypatch):
 
 
 def test_run_clean_nothing_to_do(tmp_path, monkeypatch, capsys):
-    from vllm_cluster_manager.cli import run_clean
+    from athanor.cli import run_clean
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "empty-share"))
     monkeypatch.setenv("VLLM_CLIENT_ROOT", str(tmp_path / "empty-client"))
@@ -296,7 +296,7 @@ def test_run_clean_nothing_to_do(tmp_path, monkeypatch, capsys):
 
 class TestInfraPersistence:
     def test_stop_infra_keeps_volumes_by_default(self, tmp_path):
-        from vllm_cluster_manager import cli as cli_mod
+        from athanor import cli as cli_mod
 
         with mock.patch.object(
             cli_mod, "detect_compose_cmd", return_value="docker compose"
@@ -307,7 +307,7 @@ class TestInfraPersistence:
         assert "-v" not in cmd
 
     def test_stop_infra_purge_removes_volumes(self, tmp_path):
-        from vllm_cluster_manager import cli as cli_mod
+        from athanor import cli as cli_mod
 
         with mock.patch.object(
             cli_mod, "detect_compose_cmd", return_value="docker compose"
@@ -318,7 +318,7 @@ class TestInfraPersistence:
 
     @pytest.mark.parametrize("purge", [False, True])
     def test_run_host_down_threads_purge(self, tmp_path, purge):
-        from vllm_cluster_manager import cli as cli_mod
+        from athanor import cli as cli_mod
 
         with mock.patch.object(
             cli_mod, "runtime_dir_path", return_value=tmp_path
@@ -331,7 +331,7 @@ class TestInfraPersistence:
         stop_infra.assert_called_once_with(tmp_path, purge=purge)
 
     def test_infra_service_execstop_keeps_volumes(self, tmp_path):
-        from vllm_cluster_manager import cli as cli_mod
+        from athanor import cli as cli_mod
 
         units: dict[str, str] = {}
 
@@ -363,9 +363,9 @@ class TestInfraPersistence:
         assert "docker compose down" in infra_unit
 
     def test_run_clean_purges_volumes(self, tmp_path, monkeypatch):
-        from vllm_cluster_manager import cli as cli_mod
+        from athanor import cli as cli_mod
 
-        data_root = tmp_path / "share" / "vllm_cluster_manager"
+        data_root = tmp_path / "share" / "athanor"
         (data_root / "host").mkdir(parents=True)
         monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
         monkeypatch.setenv("VLLM_CLIENT_ROOT", str(tmp_path / "no-client"))
@@ -383,7 +383,7 @@ class TestInfraPersistence:
 
 
 def test_refresh_tree_updates_content_and_skips_ignored(tmp_path):
-    from vllm_cluster_manager import cli as cli_mod
+    from athanor import cli as cli_mod
 
     src = tmp_path / "src"
     (src / "sub").mkdir(parents=True)
@@ -410,7 +410,7 @@ def test_refresh_tree_does_not_touch_directory_metadata(tmp_path, monkeypatch):
     """Regression: a runtime subdir chowned by a container (e.g. Consul takes
     infra/consul as uid 100) must not break a re-copy. copytree failed there via
     copystat -> os.utime (EPERM); _refresh_tree must never call those."""
-    from vllm_cluster_manager import cli as cli_mod
+    from athanor import cli as cli_mod
 
     src = tmp_path / "src"
     (src / "infra" / "consul").mkdir(parents=True)
@@ -435,7 +435,7 @@ def test_refresh_tree_does_not_touch_directory_metadata(tmp_path, monkeypatch):
 
 
 def test_copy_assets_subdir_missing_raises(tmp_path):
-    from vllm_cluster_manager import cli as cli_mod
+    from athanor import cli as cli_mod
 
     with pytest.raises(RuntimeError, match="Missing packaged assets"):
         cli_mod.copy_assets_subdir("host", "definitely-not-a-real-subdir", tmp_path / "d")

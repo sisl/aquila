@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-athanor}
+      POSTGRES_USER: ${POSTGRES_USER:-vllm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    ports:
+      - "${POSTGRES_PORT:-5757}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  consul:
+    image: hashicorp/consul:1.17
+    command: ["agent", "-dev", "-client=0.0.0.0"]
+    ports:
+      - "${CONSUL_PORT:-47528}:8500"  # HTTP API mapped to single port
+    volumes:
+      - ./infra/consul:/consul/config
+
+volumes:
+  pgdata:

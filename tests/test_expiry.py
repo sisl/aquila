@@ -11,7 +11,7 @@ import pytest
 # Add the host backend app to sys.path.
 _BACKEND_DIR = (
     Path(__file__).resolve().parent.parent
-    / "vllm_cluster_manager"
+    / "athanor"
     / "assets"
     / "host"
     / "backend"

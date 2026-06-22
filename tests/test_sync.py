@@ -7,7 +7,7 @@ import pytest
 
 _SYNC_PATH = (
     Path(__file__).resolve().parent.parent
-    / "vllm_cluster_manager"
+    / "athanor"
     / "assets"
     / "host"
     / "backend"

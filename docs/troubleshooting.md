@@ -101,7 +101,7 @@ Explanation:
 **Symptoms**: Previously created deployments are gone after shutdown.
 
 Explanation:
-- Host data persists across `host down` by default. Data is only wiped by `host down --purge`, `vllm-cluster-manager clean`, or the dashboard's Settings → Data → Purge.
+- Host data persists across `host down` by default. Data is only wiped by `host down --purge`, `athanor clean`, or the dashboard's Settings → Data → Purge.
 - If data vanished without one of those, check whether the Postgres volume (`host_pgdata`) still exists: `docker volume ls`.
 
 !!! tip

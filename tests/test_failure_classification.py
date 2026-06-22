@@ -10,7 +10,7 @@ import pytest
 # whichever is imported first wins for the whole test session. Import the
 # client's package in a clean slate, bind the names we need, then restore the
 # previous `app` modules (the backend's) for later test modules.
-_CLIENT_DIR = Path(__file__).resolve().parent.parent / "vllm_cluster_manager" / "assets" / "client"
+_CLIENT_DIR = Path(__file__).resolve().parent.parent / "athanor" / "assets" / "client"
 _client_path = str(_CLIENT_DIR)
 if _client_path in sys.path:
     sys.path.remove(_client_path)

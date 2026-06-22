@@ -1,7 +1,7 @@
 # Architecture
 
 ## Overview
-vLLM Cluster Manager runs three host services and a client agent on each GPU node.
+Athanor runs three host services and a client agent on each GPU node.
 
 <div class="grid-2">
   <div>

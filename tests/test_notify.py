@@ -10,7 +10,7 @@ import pytest
 
 _BACKEND_DIR = (
     Path(__file__).resolve().parent.parent
-    / "vllm_cluster_manager"
+    / "athanor"
     / "assets"
     / "host"
     / "backend"
@@ -72,7 +72,7 @@ class TestPayloadFormatting:
             settings, "webhook_url", "https://hooks.slack.com/services/T/B/x"
         ):
             payload = notify_mod._payload("e", "hello", {})
-        assert payload == {"text": "[vllm-cluster] hello"}
+        assert payload == {"text": "[athanor] hello"}
 
     def test_generic_payload(self):
         with mock.patch.object(settings, "webhook_url", "https://example.com/hook"):

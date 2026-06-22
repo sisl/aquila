@@ -1,5 +1,5 @@
-site_name: vLLM Cluster Manager
-site_description: Documentation for the vLLM Cluster Manager CLI and services.
+site_name: Athanor
+site_description: Documentation for the Athanor GPU inference cluster manager.
 site_url: https://sisl.github.io/vllmclustermanager/
 repo_name: sisl/vllmclustermanager
 repo_url: https://github.com/sisl/vllmclustermanager

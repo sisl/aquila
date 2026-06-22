@@ -34,18 +34,18 @@ source .venv/bin/activate
 ```
 
 ```bash
-uv pip install vllm-cluster-manager
+uv pip install athanor
 ```
 
 ## Start the host
 Foreground (no sudo):
 ```bash
-vllm-cluster-manager host up --host-ip 0.0.0.0 --host-frontend-port 5173 --host-discover-port 11400
+athanor host up --host-ip 0.0.0.0 --host-frontend-port 5173 --host-discover-port 11400
 ```
 
 Persistent service (systemd):
 ```bash
-vllm-cluster-manager host up --service --host-ip 0.0.0.0 --host-frontend-port 5173 --host-discover-port 11400
+athanor host up --service --host-ip 0.0.0.0 --host-frontend-port 5173 --host-discover-port 11400
 ```
 
 `--host-discover-port` sets the discovery port used for clients. Use `--host-backend-port` to override the backend API port (default 8000).
@@ -53,12 +53,12 @@ vllm-cluster-manager host up --service --host-ip 0.0.0.0 --host-frontend-port 51
 ## Start a client
 Foreground (no sudo):
 ```bash
-vllm-cluster-manager client up --host-ip 1.2.3.4 --host-discover-port 11400
+athanor client up --host-ip 1.2.3.4 --host-discover-port 11400
 ```
 
 Persistent service (systemd):
 ```bash
-vllm-cluster-manager client up --service --host-ip 1.2.3.4 --host-discover-port 11400
+athanor client up --service --host-ip 1.2.3.4 --host-discover-port 11400
 ```
 
 !!! note
@@ -66,8 +66,8 @@ vllm-cluster-manager client up --service --host-ip 1.2.3.4 --host-discover-port 
 
 ## Stop services
 ```bash
-vllm-cluster-manager host down
-vllm-cluster-manager client down
+athanor host down
+athanor client down
 ```
 
 Host data (deployments, nodes, history) survives `host down` and comes back on the next `host up`. Pass `--purge` to `host down` to also delete the Postgres volume — see [Operations → Data persistence](operations.md#data-persistence).

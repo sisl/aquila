@@ -12,7 +12,7 @@ import pytest
 # tests/test_admin.py for the long-form rationale).
 _HOST_BACKEND = (
     Path(__file__).resolve().parent.parent
-    / "vllm_cluster_manager"
+    / "athanor"
     / "assets"
     / "host"
     / "backend"

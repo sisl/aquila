@@ -3,35 +3,35 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vllm-cluster-manager"
+name = "athanor"
 version = "0.2.3"
 description = "Deploy, manage, and monitor vLLM instances across a GPU cluster from a single web dashboard."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Marc Schlichting", email="mschl@stanford.edu"}]
 readme = {text = """
-# vLLM Cluster Manager
+# Athanor
 
-Deploy, manage, and monitor vLLM instances across a GPU cluster from a single web dashboard.
+GPU inference cluster manager. Deploy, manage, and monitor vLLM instances across a GPU cluster from a single web dashboard.
 
 ## Quick Start
 
 ```bash
-pip install vllm-cluster-manager
+pip install athanor
 ```
 
 **On each GPU node (satellite):**
 
 ```bash
-vllm-cluster-manager client install
-vllm-cluster-manager client start
+athanor client install
+athanor client start
 ```
 
 **On the management server (host):**
 
 ```bash
-vllm-cluster-manager host install
-vllm-cluster-manager host start
+athanor host install
+athanor host start
 ```
 
 Then open the dashboard at `http://<host-ip>:5173` to deploy and monitor models across your cluster.
@@ -58,14 +58,14 @@ classifiers = [
 Homepage = "https://github.com/sisl/VLLMClusterManager"
 
 [project.scripts]
-vllm-cluster-manager = "vllm_cluster_manager.cli:main"
+athanor = "athanor.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["vllm_cluster_manager*"]
+include = ["athanor*"]
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.package-data]
-"vllm_cluster_manager" = ["assets/**"]
+"athanor" = ["assets/**"]

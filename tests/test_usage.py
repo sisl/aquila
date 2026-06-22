@@ -8,7 +8,7 @@ import pytest
 
 _BACKEND_DIR = (
     Path(__file__).resolve().parent.parent
-    / "vllm_cluster_manager"
+    / "athanor"
     / "assets"
     / "host"
     / "backend"

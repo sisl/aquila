@@ -10,7 +10,7 @@ from unittest import mock
 import pytest
 
 # Add client app to sys.path.
-_CLIENT_DIR = Path(__file__).resolve().parent.parent / "vllm_cluster_manager" / "assets" / "client"
+_CLIENT_DIR = Path(__file__).resolve().parent.parent / "athanor" / "assets" / "client"
 if str(_CLIENT_DIR) not in sys.path:
     sys.path.insert(0, str(_CLIENT_DIR))
 
@@ -129,7 +129,7 @@ class TestDerivedImageTag:
 
     def test_repo_prefix(self):
         tag = _derived_image_tag("vllm/vllm-openai:v0.8.5", ["transformers"])
-        assert tag.startswith("vllm-cluster-manager/local:")
+        assert tag.startswith("athanor/local:")
 
 
 # ---------------------------------------------------------------------------
@@ -2007,14 +2007,14 @@ async def test_list_containers_filters_and_tracks():
         name="vllm-tracked",
         short_id="aaa111",
         status="running",
-        labels={"vllm-cluster-manager.managed": "true", "vllm-cluster-manager.key": "trk:8000"},
+        labels={"athanor.managed": "true", "athanor.key": "trk:8000"},
         image_tags=["vllm/vllm-openai:v0.8.5"],
     )
     rogue = _fake_container(
         name="vllm-rogue",
         short_id="bbb222",
         status="exited",
-        labels={"vllm-cluster-manager.managed": "true", "vllm-cluster-manager.key": "rog:8001"},
+        labels={"athanor.managed": "true", "athanor.key": "rog:8001"},
         image_tags=["vllm/vllm-openai:v0.8.5"],
     )
     unrelated = _fake_container(
@@ -2150,7 +2150,7 @@ async def test_stop_container_guards_tracked():
         name="vllm-tracked",
         short_id="aaa111",
         status="running",
-        labels={"vllm-cluster-manager.managed": "true", "vllm-cluster-manager.key": "trk:8000"},
+        labels={"athanor.managed": "true", "athanor.key": "trk:8000"},
         image_tags=["vllm/vllm-openai:v0.8.5"],
     )
     fake = mock.MagicMock()
@@ -2173,7 +2173,7 @@ async def test_stop_container_removes_rogue():
         name="vllm-rogue",
         short_id="bbb222",
         status="exited",
-        labels={"vllm-cluster-manager.managed": "true", "vllm-cluster-manager.key": "rog:8001"},
+        labels={"athanor.managed": "true", "athanor.key": "rog:8001"},
         image_tags=["vllm/vllm-openai:v0.8.5"],
     )
     fake = mock.MagicMock()
@@ -2554,7 +2554,7 @@ def _fake_image(*, image_id, tags, size_mb, layers=None, repo_digests=None):
 @pytest.mark.anyio
 async def test_prune_images_skips_in_use():
     in_use = _fake_image(image_id="sha256:aaa", tags=["vllm/vllm-openai:v0.8.5"], size_mb=2048)
-    free = _fake_image(image_id="sha256:bbb", tags=["vllm-cluster-manager/local:x"], size_mb=1024)
+    free = _fake_image(image_id="sha256:bbb", tags=["athanor/local:x"], size_mb=1024)
     unrelated = _fake_image(image_id="sha256:ccc", tags=["postgres:16"], size_mb=500)
 
     using_container = mock.MagicMock()
@@ -2585,7 +2585,7 @@ async def test_prune_images_skips_in_use():
 
 @pytest.mark.anyio
 async def test_prune_images_sweeps_dangling_derived():
-    free = _fake_image(image_id="sha256:bbb", tags=["vllm-cluster-manager/local:x"], size_mb=1024)
+    free = _fake_image(image_id="sha256:bbb", tags=["athanor/local:x"], size_mb=1024)
     dangling = _fake_image(image_id="sha256:ddd", tags=[], size_mb=2048)
 
     def _list(*args, **kwargs):
