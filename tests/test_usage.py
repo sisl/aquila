@@ -8,7 +8,7 @@ import pytest
 
 _BACKEND_DIR = (
     Path(__file__).resolve().parent.parent
-    / "athanor"
+    / "aquila"
     / "assets"
     / "host"
     / "backend"

@@ -1,4 +1,4 @@
-# Athanor
+# Aquila
 
 <div class="hero-card"  style="margin-bottom: 2rem;">
   <h2>Operate multi-node vLLM deployments</h2>
@@ -24,7 +24,7 @@
 </div>
 
 <div class="hero-image">
-  <img alt="Athanor dashboard" src="assets/img/athanor-screenshot.png" />
+  <img alt="Aquila dashboard" src="assets/img/aquila-screenshot.png" />
 </div>
 
 ## What you can do

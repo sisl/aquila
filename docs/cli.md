@@ -1,12 +1,12 @@
 # CLI Reference
 
-The CLI command is `athanor`.
+The CLI command is `aquila`.
 
 Run `--help` to see command and flag details:
 ```bash
-athanor --help
-athanor host up --help
-athanor client up --help
+aquila --help
+aquila host up --help
+aquila client up --help
 ```
 
 ## Host (`host up`)
@@ -20,7 +20,7 @@ athanor client up --help
 | `--host-backend-port` | `8000` | Backend API port. |
 | `--postgres-host` | `127.0.0.1` | Postgres host. |
 | `--postgres-port` | `5757` | Postgres port. |
-| `--postgres-db` | `athanor` | Postgres database name. |
+| `--postgres-db` | `aquila` | Postgres database name. |
 | `--postgres-user` | `vllm` | Postgres user. |
 | `--postgres-password` | `change-me` | Postgres password. |
 | `--base-path` | `/` | Base path for the UI (reverse proxy subpath). |
@@ -46,24 +46,24 @@ athanor client up --help
 
 Launch host services in the foreground:
 ```bash
-athanor host up --host-ip 127.0.0.1 --host-frontend-port 5173 --host-discover-port 47528
+aquila host up --host-ip 127.0.0.1 --host-frontend-port 5173 --host-discover-port 47528
 ```
 
 Reverse proxy under `/vllm/`:
 ```bash
-athanor host up --base-path /vllm/
+aquila host up --base-path /vllm/
 ```
 
 Launch a client node:
 ```bash
-athanor client up --host-ip 127.0.0.1 --host-discover-port 47528 --node-name node-1
+aquila client up --host-ip 127.0.0.1 --host-discover-port 47528 --node-name node-1
 ```
 
 ### Service mode
 Service mode writes systemd unit files and enables them so they start automatically on boot:
 ```bash
-athanor host up --service
-athanor client up --service
+aquila host up --service
+aquila client up --service
 ```
 
 !!! warning

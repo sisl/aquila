@@ -13,7 +13,7 @@ import pytest
 # modules (e.g. test_client.py) can import the client's `app` package fresh.
 _HOST_BACKEND = (
     Path(__file__).resolve().parent.parent
-    / "athanor"
+    / "aquila"
     / "assets"
     / "host"
     / "backend"

@@ -8,7 +8,7 @@ import pytest
 import httpx
 
 # Add the host backend to sys.path.
-_HOST_BACKEND = Path(__file__).resolve().parent.parent / "athanor" / "assets" / "host" / "backend"
+_HOST_BACKEND = Path(__file__).resolve().parent.parent / "aquila" / "assets" / "host" / "backend"
 if str(_HOST_BACKEND) not in sys.path:
     sys.path.insert(0, str(_HOST_BACKEND))
 

@@ -7,7 +7,7 @@ import pytest
 
 _SYNC_PATH = (
     Path(__file__).resolve().parent.parent
-    / "athanor"
+    / "aquila"
     / "assets"
     / "host"
     / "backend"

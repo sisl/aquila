@@ -1,13 +1,13 @@
-# Athanor
+# Aquila
 
 GPU inference cluster manager
 
 [![Docs](https://img.shields.io/badge/docs-online-111827)](https://sisl.github.io/VLLMClusterManager/)
-[![PyPI](https://img.shields.io/pypi/v/athanor?color=111827)](https://pypi.org/project/athanor/)
+[![PyPI](https://img.shields.io/pypi/v/aquila?color=111827)](https://pypi.org/project/aquila/)
 [![Tests](https://github.com/sisl/VLLMClusterManager/actions/workflows/tests.yml/badge.svg)](https://github.com/sisl/VLLMClusterManager/actions/workflows/tests.yml)
-[![Python](https://img.shields.io/badge/python-3.10--3.14-111827)](https://pypi.org/project/athanor/)
+[![Python](https://img.shields.io/badge/python-3.10--3.14-111827)](https://pypi.org/project/aquila/)
 
-![Athanor dashboard](img/athanor-screenshot.png "Athanor")
+![Aquila dashboard](img/aquila-screenshot.png "Aquila")
 
 Admin dashboard + satellite clients for multi-model vLLM deployments. Deploy vLLM `serve` endpoints across a cluster with a few clicks — ideal for research labs or small teams that need repeatable, multi-endpoint serving without a full MLOps stack.
 
@@ -34,17 +34,17 @@ See the [full documentation](https://sisl.github.io/VLLMClusterManager/) for det
 Install:
 ```bash
 uv venv && source .venv/bin/activate
-uv pip install athanor
+uv pip install aquila
 ```
 
 Start the host:
 ```bash
-athanor host up --host-ip 0.0.0.0 --host-frontend-port 5173 --host-discover-port 11400
+aquila host up --host-ip 0.0.0.0 --host-frontend-port 5173 --host-discover-port 11400
 ```
 
 Add a client node:
 ```bash
-athanor client up --host-ip <host-ip> --host-discover-port 11400
+aquila client up --host-ip <host-ip> --host-discover-port 11400
 ```
 
 Open `http://<host-ip>:5173` — the client node appears within seconds. Add `--service` for persistent systemd services.

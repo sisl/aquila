@@ -17,7 +17,7 @@ Most operational knobs live in the dashboard: **gear icon → Settings**. Saved 
 The env variables below remain the *defaults* for these settings (used until a value is saved in the UI); infrastructure values (Postgres, Consul, bind addresses) are env-only.
 
 ## Configuration files
-The CLI writes service-specific env files under `~/.local/share/athanor`:
+The CLI writes service-specific env files under `~/.local/share/aquila`:
 - `host/.env` (Docker compose: Postgres + discovery service)
 - `host/backend/.env` (API service)
 - `host/frontend/.env` (UI)
@@ -88,8 +88,8 @@ Host data (deployments, nodes, metric history, saved configurations) lives in a 
 
 To wipe the database intentionally:
 
-- `athanor host down --purge` — stop the host and delete the Postgres volume.
-- `athanor clean` — full factory reset (always deletes the volume).
+- `aquila host down --purge` — stop the host and delete the Postgres volume.
+- `aquila clean` — full factory reset (always deletes the volume).
 - Dashboard → gear icon → Settings → **Data → Purge** — select which record categories to wipe (deployment records, nodes, metric history, saved configurations) while the host keeps running. Running models are not stopped: nodes re-register via discovery within seconds and their deployments are re-adopted automatically.
 
 Re-adoption restores owner, lease, and launch configuration from a manifest each vLLM container carries as a Docker label (set at launch). The restored lease is the original one — extensions granted later are not preserved, and a lease that elapsed in the meantime is enforced (the deployment is stopped as expired).
@@ -137,10 +137,10 @@ The integration was designed for environments that disallow the Docker daemon: i
 ## Service management
 Systemd unit names (service mode):
 
-- `vllm-cluster-infra.service`
-- `vllm-cluster-backend.service`
-- `vllm-cluster-frontend.service`
-- `vllm-cluster-client.service`
+- `aquila-infra.service`
+- `aquila-backend.service`
+- `aquila-frontend.service`
+- `aquila-client.service`
 
 Frontend behavior:
 - `host up` builds a static frontend bundle and serves it with the Vite preview server.
@@ -148,10 +148,10 @@ Frontend behavior:
 
 Restart flows:
 ```bash
-sudo systemctl restart vllm-cluster-infra.service
-sudo systemctl restart vllm-cluster-backend.service
-sudo systemctl restart vllm-cluster-frontend.service
-sudo systemctl restart vllm-cluster-client.service
+sudo systemctl restart aquila-infra.service
+sudo systemctl restart aquila-backend.service
+sudo systemctl restart aquila-frontend.service
+sudo systemctl restart aquila-client.service
 ```
 
 ## Host network setup
@@ -193,7 +193,7 @@ Model weights are cached in a shared HuggingFace cache mounted into every contai
 You can inspect cached models (with per-model size) and delete unused ones from the node's manage dialog in the dashboard, or via the host API: `GET /api/nodes/{id}/models/cache` and `DELETE /api/nodes/{id}/models/cache/{name}`. The dialog also shows the node's disk usage and total cache size.
 
 ## Per-deployment containers
-Containers are labelled (`athanor.managed=true`) and started with `--restart unless-stopped`, so they survive a client-agent or host reboot. On startup the agent reconciles its in-memory state from the running containers, and stopping a deployment removes its container (the image stays cached).
+Containers are labelled (`aquila.managed=true`) and started with `--restart unless-stopped`, so they survive a client-agent or host reboot. On startup the agent reconciles its in-memory state from the running containers, and stopping a deployment removes its container (the image stays cached).
 
 ## Uploaded packages and plugins
 Uploaded files (`.py`, `.whl`, `.tar.gz`, `.zip`) are stored under `~/.vllm-client/.packages/`. Each upload is content-hashed to avoid duplicates.

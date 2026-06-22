@@ -3,7 +3,7 @@
 ## Project structure
 
 ```
-athanor/
+aquila/
 ├── assets/
 │   ├── host/
 │   │   ├── backend/     # FastAPI backend (Python, SQLAlchemy, Alembic)
@@ -50,4 +50,4 @@ npx tsc --noEmit
 
 ## Database
 
-PostgreSQL 16 via Docker Compose, port 5757, database `athanor`, user `vllm`. Migrations run automatically at backend startup.
+PostgreSQL 16 via Docker Compose, port 5757, database `aquila`, user `vllm`. Migrations run automatically at backend startup.

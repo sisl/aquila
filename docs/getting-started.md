@@ -34,18 +34,18 @@ source .venv/bin/activate
 ```
 
 ```bash
-uv pip install athanor
+uv pip install aquila
 ```
 
 ## Start the host
 Foreground (no sudo):
 ```bash
-athanor host up --host-ip 0.0.0.0 --host-frontend-port 5173 --host-discover-port 11400
+aquila host up --host-ip 0.0.0.0 --host-frontend-port 5173 --host-discover-port 11400
 ```
 
 Persistent service (systemd):
 ```bash
-athanor host up --service --host-ip 0.0.0.0 --host-frontend-port 5173 --host-discover-port 11400
+aquila host up --service --host-ip 0.0.0.0 --host-frontend-port 5173 --host-discover-port 11400
 ```
 
 `--host-discover-port` sets the discovery port used for clients. Use `--host-backend-port` to override the backend API port (default 8000).
@@ -53,12 +53,12 @@ athanor host up --service --host-ip 0.0.0.0 --host-frontend-port 5173 --host-dis
 ## Start a client
 Foreground (no sudo):
 ```bash
-athanor client up --host-ip 1.2.3.4 --host-discover-port 11400
+aquila client up --host-ip 1.2.3.4 --host-discover-port 11400
 ```
 
 Persistent service (systemd):
 ```bash
-athanor client up --service --host-ip 1.2.3.4 --host-discover-port 11400
+aquila client up --service --host-ip 1.2.3.4 --host-discover-port 11400
 ```
 
 !!! note
@@ -66,8 +66,8 @@ athanor client up --service --host-ip 1.2.3.4 --host-discover-port 11400
 
 ## Stop services
 ```bash
-athanor host down
-athanor client down
+aquila host down
+aquila client down
 ```
 
 Host data (deployments, nodes, history) survives `host down` and comes back on the next `host up`. Pass `--purge` to `host down` to also delete the Postgres volume — see [Operations → Data persistence](operations.md#data-persistence).
