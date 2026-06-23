@@ -311,6 +311,9 @@ def _check_docker_client() -> PreflightResult:
         return PreflightResult("Docker", CheckStatus.WARN, "Error checking Docker")
 
 
+_PODMAN_MIN_VERSION = (5, 4)
+
+
 def _check_podman_client() -> PreflightResult:
     podman = shutil.which("podman")
     if not podman:
@@ -321,7 +324,20 @@ def _check_podman_client() -> PreflightResult:
             capture_output=True, text=True, timeout=5,
         )
         if out.returncode == 0 and out.stdout.strip():
-            return PreflightResult("Podman", CheckStatus.PASS, f"Podman {out.stdout.strip()}")
+            version_str = out.stdout.strip()
+            parts: list[int] = []
+            for token in version_str.split("."):
+                digits = "".join(ch for ch in token if ch.isdigit())
+                if not digits:
+                    break
+                parts.append(int(digits))
+            if parts and tuple(parts) < _PODMAN_MIN_VERSION:
+                min_ver = ".".join(map(str, _PODMAN_MIN_VERSION))
+                return PreflightResult(
+                    f"Podman >= {min_ver}", CheckStatus.WARN, f"Podman {version_str}",
+                    hint=f"Podman < {min_ver} cannot pass GPUs to containers (CDI device requests are ignored). Upgrade Podman.",
+                )
+            return PreflightResult("Podman", CheckStatus.PASS, f"Podman {version_str}")
         return PreflightResult("Podman", CheckStatus.WARN, "Error checking Podman")
     except Exception:
         return PreflightResult("Podman", CheckStatus.WARN, "Error checking Podman")

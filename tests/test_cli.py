@@ -592,12 +592,22 @@ class TestCheckPodmanClient:
     def test_pass(self, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/podman" if cmd == "podman" else None)
         fake = mock.MagicMock()
-        fake.stdout = "4.9.3\n"
+        fake.stdout = "5.4.1\n"
         fake.returncode = 0
         monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake)
         result = _check_podman_client()
         assert result.status == CheckStatus.PASS
-        assert "4.9.3" in result.message
+        assert "5.4.1" in result.message
+
+    def test_warn_old_version(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/podman" if cmd == "podman" else None)
+        fake = mock.MagicMock()
+        fake.stdout = "4.9.3\n"
+        fake.returncode = 0
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake)
+        result = _check_podman_client()
+        assert result.status == CheckStatus.WARN
+        assert "CDI" in result.hint
 
     def test_warn_not_found(self, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda cmd: None)
