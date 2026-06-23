@@ -1195,7 +1195,7 @@ export function Dashboard() {
     <Box className="app">
       <Box className="brand">
         <h1 className="brand-title">
-          <img src="/aquila_light_logo.svg" alt="Aquila" className="brand-logo" />
+          <img src={`${import.meta.env.BASE_URL}aquila_light_logo.svg`} alt="Aquila" className="brand-logo" />
           <span className="brand-subtitle">GPU Inference Management</span>
         </h1>
         <Tooltip title="Settings" enterDelay={500}>
