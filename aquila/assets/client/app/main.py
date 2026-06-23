@@ -32,7 +32,8 @@ from urllib.request import Request as UrllibRequest, urlopen
 
 from app.config import settings
 from app.consul import register_node, register_loop
-from aquila import __version__ as _aquila_version
+
+_aquila_version = os.environ.get("AQUILA_VERSION", "unknown")
 
 logger = logging.getLogger("aquila-client")
 if not logger.handlers:

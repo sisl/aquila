@@ -697,6 +697,7 @@ def install_host_service(config: HostConfig) -> None:
         Type=simple
         WorkingDirectory={runtime_dir}/backend
         EnvironmentFile={runtime_dir}/backend/.env
+        Environment=AQUILA_VERSION={__version__}
         ExecStart={runtime_dir}/backend/.venv/bin/uvicorn app.main:app --host ${{ADMIN_API_HOST}} --port ${{ADMIN_API_PORT}}
         Restart=always
         RestartSec=2
@@ -758,6 +759,7 @@ def install_client_service(config: ClientConfig) -> None:
         Type=simple
         WorkingDirectory={runtime_dir}
         EnvironmentFile={runtime_dir}/.env
+        Environment=AQUILA_VERSION={__version__}
         ExecStart={runtime_dir}/.venv/bin/python -m app.main
         Restart=always
         RestartSec=2
@@ -809,6 +811,7 @@ def load_env_file(path: Path) -> dict[str, str]:
 
 def merge_env(extra: dict[str, str]) -> dict[str, str]:
     env = os.environ.copy()
+    env["AQUILA_VERSION"] = __version__
     env.update(extra)
     return env
 

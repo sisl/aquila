@@ -1,11 +1,12 @@
 import json
+import os
 import time
 import logging
 from urllib.request import Request, urlopen
 
 from fastapi import APIRouter
 
-from aquila import __version__ as _aquila_version
+_aquila_version = os.environ.get("AQUILA_VERSION", "unknown")
 
 router = APIRouter()
 
