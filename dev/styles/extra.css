@@ -75,11 +75,14 @@
 
 /* ------------------------------------------------ version selector (mike) */
 
-/* Pull the selector out of the topic flow and pin it to the right side of
-   the header, between search and the repo link. */
+/* Place the selector to the left of the repo link in the header. */
+.md-header__inner {
+  position: relative;
+}
+
 .md-version {
-  position: fixed;
-  right: 3.6rem;
+  position: absolute;
+  right: 234px;
   top: 0;
   height: 2.4rem;
   z-index: 3;
