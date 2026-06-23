@@ -4,23 +4,23 @@
 </div>
 
 <div class="hero-card"  style="margin-bottom: 2rem;">
-  <h2>Operate multi-node vLLM deployments</h2>
-  <p>Spin up a host with a web dashboard, then add GPU nodes with the client agent. The UI lets you launch, monitor, and troubleshoot model deployments without building a full MLOps stack.</p>
+  <h2>Deploy, serve, and manage LLMs across your GPU cluster</h2>
+  <p>Aquila gives you a single control plane for multi-node vLLM inference. Point-and-click deployments, an OpenAI-compatible gateway with API key auth, warm caching that parks idle models in RAM, live GPU monitoring, and a full deployment lifecycle — without Kubernetes or a managed platform.</p>
   <div class="grid-2">
     <div>
       <strong>Best for</strong>
       <ul>
-        <li>Research labs</li>
-        <li>Small teams</li>
-        <li>Multi-model serving</li>
+        <li>Research labs and university clusters</li>
+        <li>Teams sharing GPUs across projects</li>
+        <li>Self-hosted multi-model inference</li>
       </ul>
     </div>
     <div>
       <strong>Built-in</strong>
       <ul>
-        <li>Service discovery</li>
-        <li>Web UI</li>
-        <li>Systemd support</li>
+        <li>OpenAI-compatible gateway & API keys</li>
+        <li>Warm cache (GPU ↔ RAM offloading)</li>
+        <li>LoRA, checkpoints, and version pinning</li>
       </ul>
     </div>
   </div>

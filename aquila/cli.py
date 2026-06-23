@@ -165,6 +165,8 @@ def build_client_config(args: argparse.Namespace) -> ClientConfig:
 
 
 def run_host_up(config: HostConfig, use_service: bool) -> None:
+    from aquila.banner import banner
+    print(banner())
     runtime_dir = ensure_runtime_dir("host")
     ensure_host_assets(runtime_dir)
     print("Host configuration:")
@@ -259,6 +261,8 @@ def run_host_down(purge: bool = False) -> None:
 
 
 def run_client_up(config: ClientConfig, use_service: bool) -> None:
+    from aquila.banner import banner
+    print(banner())
     runtime_dir = ensure_runtime_dir("client")
     print("Client configuration:")
     print(format_kv(
