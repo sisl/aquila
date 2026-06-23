@@ -64,67 +64,13 @@
 /* No subtitle in header — logo only. */
 
 /* Hide the site-name text — the logo replaces it — but keep the container
-   visible so the version selector (appended by JS) can render. */
+   visible so the version selector (appended by mike JS) can render. */
 .md-header__topic:first-child > .md-ellipsis {
   display: none;
 }
 
 .md-header__title {
   font-weight: 300;
-}
-
-/* ------------------------------------------------ version selector (mike) */
-
-/* JS moves .md-version to .md-header__inner so it sits after the repo link
-   in the natural flex flow. */
-.md-version {
-  height: 2.4rem;
-  margin-left: 0.4rem;
-}
-
-.md-version__current {
-  color: var(--muted);
-  font-size: 0.6rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  cursor: pointer;
-}
-
-.md-version__current::after {
-  background-color: var(--muted);
-}
-
-.md-version__current:hover {
-  color: var(--ink);
-}
-
-.md-version__current:hover::after {
-  background-color: var(--ink);
-}
-
-.md-version__list {
-  background-color: #ffffff;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  pointer-events: none;
-}
-
-.md-version:hover .md-version__list,
-.md-version:focus-within .md-version__list {
-  pointer-events: auto;
-}
-
-.md-version__link {
-  color: var(--muted);
-  font-size: 0.7rem;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-}
-
-.md-version__link:hover {
-  color: var(--ink);
 }
 
 .md-search__form {
