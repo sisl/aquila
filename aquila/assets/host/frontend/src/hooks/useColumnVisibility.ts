@@ -4,17 +4,22 @@ export type ColumnDef = {
   key: string;
   label: string;
   alwaysVisible?: boolean;
+  defaultHidden?: boolean;
 };
 
-function loadHidden(storageKey: string, validKeys: Set<string>): Set<string> {
+function defaultHiddenSet(columns: ColumnDef[]): Set<string> {
+  return new Set(columns.filter((c) => c.defaultHidden && !c.alwaysVisible).map((c) => c.key));
+}
+
+function loadHidden(storageKey: string, validKeys: Set<string>, columns: ColumnDef[]): Set<string> {
   try {
     const raw = localStorage.getItem(storageKey);
-    if (!raw) return new Set();
+    if (!raw) return defaultHiddenSet(columns);
     const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return new Set();
+    if (!Array.isArray(parsed)) return defaultHiddenSet(columns);
     return new Set(parsed.filter((k): k is string => typeof k === "string" && validKeys.has(k)));
   } catch {
-    return new Set();
+    return defaultHiddenSet(columns);
   }
 }
 
@@ -31,7 +36,7 @@ export function useColumnVisibility(
   columns: ColumnDef[]
 ) {
   const validKeys = new Set(columns.filter((c) => !c.alwaysVisible).map((c) => c.key));
-  const [userHidden, setUserHidden] = useState(() => loadHidden(storageKey, validKeys));
+  const [userHidden, setUserHidden] = useState(() => loadHidden(storageKey, validKeys, columns));
 
   const visibleKeys = new Set<string>();
   for (const col of columns) {
@@ -52,17 +57,23 @@ export function useColumnVisibility(
     });
   };
 
+  const defaults = defaultHiddenSet(columns);
+
   const reset = () => {
-    setUserHidden(new Set());
-    localStorage.removeItem(storageKey);
+    setUserHidden(defaults);
+    persist(storageKey, defaults);
   };
+
+  const isCustomized =
+    userHidden.size !== defaults.size ||
+    [...userHidden].some((k) => !defaults.has(k));
 
   return {
     visibleKeys,
     userHidden,
     toggle,
     reset,
-    isCustomized: userHidden.size > 0,
+    isCustomized,
     columns,
   };
 }

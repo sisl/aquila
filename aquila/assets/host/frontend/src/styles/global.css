@@ -97,6 +97,14 @@ body {
   padding-bottom: 0.45em;
 }
 
+.brand-version {
+  font-size: clamp(9px, 1vw, 12px);
+  font-weight: 400;
+  letter-spacing: 0.03em;
+  opacity: 0.25;
+  padding-bottom: 0.55em;
+}
+
 .stage {
   display: flex;
   flex-direction: column;

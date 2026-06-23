@@ -220,6 +220,7 @@ const NODE_COLUMNS: ColumnDef[] = [
   { key: "port",      label: "Client Port" },
   { key: "gpus",      label: "GPUs" },
   { key: "status",    label: "Status" },
+  { key: "version",   label: "Client Version",  defaultHidden: true },
   { key: "heartbeat", label: "Last Heartbeat" },
   { key: "actions",   label: "Actions",        alwaysVisible: true },
 ];
@@ -355,6 +356,7 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
             {visibleKeys.has("port") && sortableHeader("port", "Client Port")}
             {visibleKeys.has("gpus") && <TableCell>GPUs</TableCell>}
             {visibleKeys.has("status") && sortableHeader("status", "Status")}
+            {visibleKeys.has("version") && <TableCell>Client Version</TableCell>}
             {visibleKeys.has("heartbeat") && sortableHeader("heartbeat", "Last Heartbeat", "right")}
             <TableCell align="right">Actions</TableCell>
           </TableRow>
@@ -468,6 +470,9 @@ export function NodeTable({ nodes, loading = false, onManage, onToggleMaintenanc
                         )}
                       </Box>
                     </TableCell>
+                  )}
+                  {visibleKeys.has("version") && (
+                    <TableCell>{node.aquila_version ?? "-"}</TableCell>
                   )}
                   {visibleKeys.has("heartbeat") && (
                     <TableCell align="right">{node.last_heartbeat_at ?? "-"}</TableCell>
