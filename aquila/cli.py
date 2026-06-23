@@ -1,5 +1,7 @@
 import argparse
 import hashlib
+
+from aquila import __version__
 import os
 import shutil
 import socket
@@ -56,6 +58,7 @@ def main() -> None:
         description="Aquila — GPU inference cluster manager",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     host_parser = subparsers.add_parser("host", help="Manage the host services")

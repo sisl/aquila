@@ -38,6 +38,10 @@ markdown_extensions:
   - pymdownx.superfences
   - pymdownx.tabbed
 
+extra:
+  version:
+    provider: mike
+
 extra_css:
   - styles/extra.css
 

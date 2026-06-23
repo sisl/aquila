@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68", "wheel", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "aquila"
-version = "0.2.3"
+dynamic = ["version"]
 description = "Deploy, manage, and monitor vLLM instances across a GPU cluster from a single web dashboard."
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -69,3 +69,7 @@ include-package-data = true
 
 [tool.setuptools.package-data]
 "aquila" = ["assets/**"]
+
+[tool.setuptools_scm]
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
