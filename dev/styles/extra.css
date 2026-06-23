@@ -76,24 +76,15 @@
 /* ------------------------------------------------ version selector (mike) */
 
 /* Move the version selector to the right edge of the header grid, aligned
-   with the repo link.  The selector lives inside an absolutely-positioned
-   topic div — override that to static so .md-version can escape it and
-   position against .md-header__ellipsis instead. */
-.md-header__topic:first-child {
-  position: static;
-}
-
-.md-header__ellipsis {
-  position: relative;
-}
-
+   with the repo link.  Break out of all intermediate positioning contexts
+   so it anchors to the viewport via fixed positioning, then align with
+   the grid edge using the same horizontal padding as .md-header__inner. */
 .md-version {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  height: auto;
-  z-index: 3;
+  position: fixed;
+  top: 0;
+  right: max(0.8rem, calc((100vw - 61rem) / 2));
+  height: 2.4rem;
+  z-index: 4;
 }
 
 .md-version__current {
