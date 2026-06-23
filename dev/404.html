@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Documentation for the vLLM Cluster Manager CLI and services.">
+        <meta name="description" content="Documentation for the Aquila GPU inference cluster manager.">
       
       
       
@@ -16,19 +16,19 @@
         
       
       
-      <link rel="icon" href="/vllmclustermanager/latest/assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.4">
+      <link rel="icon" href="/aquila/latest/assets/img/aquila-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>vLLM Cluster Manager</title>
+        <title>Aquila</title>
       
     
     
-      <link rel="stylesheet" href="/vllmclustermanager/latest/assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="/aquila/latest/assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="/vllmclustermanager/latest/assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="/aquila/latest/assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -42,14 +42,14 @@
         
         
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
-        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Sans+3:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Source Sans 3";--md-code-font:"Roboto Mono"}</style>
       
     
     
-      <link rel="stylesheet" href="/vllmclustermanager/latest/styles/extra.css">
+      <link rel="stylesheet" href="/aquila/latest/styles/extra.css">
     
-    <script>__md_scope=new URL("/vllmclustermanager/latest",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("/aquila/latest",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -78,6 +78,10 @@
       
     </div>
     
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
     
       
 
@@ -85,10 +89,9 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="/vllmclustermanager/latest/." title="vLLM Cluster Manager" class="md-header__button md-logo" aria-label="vLLM Cluster Manager" data-md-component="logo">
+    <a href="/aquila/latest/." title="Aquila" class="md-header__button md-logo" aria-label="Aquila" data-md-component="logo">
       
-  
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+  <img src="/aquila/latest/assets/img/aquila-logo.svg" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -99,7 +102,7 @@
       <div class="md-header__ellipsis">
         <div class="md-header__topic">
           <span class="md-ellipsis">
-            vLLM Cluster Manager
+            Aquila
           </span>
         </div>
         <div class="md-header__topic" data-md-component="header-topic">
@@ -171,13 +174,13 @@
     
     
       <div class="md-header__source">
-        <a href="https://github.com/sisl/vllmclustermanager" title="Go to repository" class="md-source" data-md-component="source">
+        <a href="https://github.com/sisl/aquila" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
   </div>
   <div class="md-source__repository">
-    sisl/vllmclustermanager
+    sisl/aquila
   </div>
 </a>
       </div>
@@ -207,23 +210,22 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="/vllmclustermanager/latest/." title="vLLM Cluster Manager" class="md-nav__button md-logo" aria-label="vLLM Cluster Manager" data-md-component="logo">
+    <a href="/aquila/latest/." title="Aquila" class="md-nav__button md-logo" aria-label="Aquila" data-md-component="logo">
       
-  
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+  <img src="/aquila/latest/assets/img/aquila-logo.svg" alt="logo">
 
     </a>
-    vLLM Cluster Manager
+    Aquila
   </label>
   
     <div class="md-nav__source">
-      <a href="https://github.com/sisl/vllmclustermanager" title="Go to repository" class="md-source" data-md-component="source">
+      <a href="https://github.com/sisl/aquila" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
   </div>
   <div class="md-source__repository">
-    sisl/vllmclustermanager
+    sisl/aquila
   </div>
 </a>
     </div>
@@ -237,7 +239,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/vllmclustermanager/latest/." class="md-nav__link">
+      <a href="/aquila/latest/." class="md-nav__link">
         
   
   
@@ -264,7 +266,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/vllmclustermanager/latest/getting-started/" class="md-nav__link">
+      <a href="/aquila/latest/getting-started/" class="md-nav__link">
         
   
   
@@ -291,7 +293,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/vllmclustermanager/latest/deployments/" class="md-nav__link">
+      <a href="/aquila/latest/deployments/" class="md-nav__link">
         
   
   
@@ -318,7 +320,61 @@
   
   
     <li class="md-nav__item">
-      <a href="/vllmclustermanager/latest/cli/" class="md-nav__link">
+      <a href="/aquila/latest/gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gateway & Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="/aquila/latest/api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="/aquila/latest/cli/" class="md-nav__link">
         
   
   
@@ -345,7 +401,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/vllmclustermanager/latest/architecture/" class="md-nav__link">
+      <a href="/aquila/latest/architecture/" class="md-nav__link">
         
   
   
@@ -372,7 +428,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/vllmclustermanager/latest/operations/" class="md-nav__link">
+      <a href="/aquila/latest/operations/" class="md-nav__link">
         
   
   
@@ -399,7 +455,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/vllmclustermanager/latest/troubleshooting/" class="md-nav__link">
+      <a href="/aquila/latest/troubleshooting/" class="md-nav__link">
         
   
   
@@ -494,10 +550,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "/vllmclustermanager/latest", "features": ["navigation.instant", "navigation.sections", "navigation.top", "content.code.copy", "content.tabs.link"], "search": "/vllmclustermanager/latest/assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "/aquila/latest", "features": ["navigation.instant", "navigation.sections", "navigation.top", "content.code.copy", "content.tabs.link"], "search": "/aquila/latest/assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="/vllmclustermanager/latest/assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="/aquila/latest/assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>

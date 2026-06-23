@@ -1,16 +1,13 @@
-
-<!doctype html>
-<html lang="en" class="no-js">
-  <head>
+<!DOCTYPE html><html lang="en" class="no-js"><head>
     
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Documentation for the vLLM Cluster Manager CLI and services.">
+        <meta name="description" content="Documentation for the Aquila GPU inference cluster manager.">
       
       
       
-        <link rel="canonical" href="https://sisl.github.io/vllmclustermanager/latest/operations/">
+        <link rel="canonical" href="https://sisl.github.io/aquila/latest/operations/">
       
       
         <link rel="prev" href="../architecture/">
@@ -22,12 +19,12 @@
         
       
       
-      <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.4">
+      <link rel="icon" href="../assets/img/aquila-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>Operations - vLLM Cluster Manager</title>
+        <title>Operations - Aquila</title>
       
     
     
@@ -47,9 +44,9 @@
       
         
         
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
-        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Sans+3:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Source Sans 3";--md-code-font:"Roboto Mono"}</style>
       
     
     
@@ -61,7 +58,17 @@
 
     
     
-  </head>
+  <link href="../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
+            html.glightbox-open { overflow: initial; height: 100%; }
+            .gslide-title { margin-top: 0px; user-select: text; }
+            .gslide-desc { color: #666; user-select: text; }
+            .gslide-image img { background: white; }
+            .gscrollbar-fixer { padding-right: 15px; }
+            .gdesc-inner { font-size: 0.75rem; }
+            body[data-md-color-scheme="slate"] .gdesc-inner { background: var(--md-default-bg-color); }
+            body[data-md-color-scheme="slate"] .gslide-title { color: var(--md-default-fg-color); }
+            body[data-md-color-scheme="slate"] .gslide-desc { color: var(--md-default-fg-color); }
+        </style></head>
   
   
     
@@ -89,6 +96,10 @@
       
     </div>
     
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden="">
+        
+      </div>
+    
     
       
 
@@ -96,21 +107,20 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="vLLM Cluster Manager" class="md-header__button md-logo" aria-label="vLLM Cluster Manager" data-md-component="logo">
+    <a href=".." title="Aquila" class="md-header__button md-logo" aria-label="Aquila" data-md-component="logo">
       
-  
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+  <img src="../assets/img/aquila-logo.svg" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
       
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
     </label>
     <div class="md-header__title" data-md-component="header-title">
       <div class="md-header__ellipsis">
         <div class="md-header__topic">
           <span class="md-ellipsis">
-            vLLM Cluster Manager
+            Aquila
           </span>
         </div>
         <div class="md-header__topic" data-md-component="header-topic">
@@ -129,7 +139,7 @@
     
     
     
-    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom" aria-hidden="true" type="radio" name="__palette" id="__palette_0">
     
   
 </form>
@@ -144,30 +154,30 @@
       
         <label class="md-header__button md-icon" for="__search">
           
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
         </label>
         <div class="md-search" data-md-component="search" role="dialog">
   <label class="md-search__overlay" for="__search"></label>
   <div class="md-search__inner" role="search">
     <form class="md-search__form" name="search">
-      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required="">
       <label class="md-search__icon md-icon" for="__search">
         
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
         
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
       </label>
       <nav class="md-search__options" aria-label="Search">
         
         <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
           
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
         </button>
       </nav>
       
     </form>
     <div class="md-search__output">
-      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix="">
         <div class="md-search-result" data-md-component="search-result">
           <div class="md-search-result__meta">
             Initializing search
@@ -182,13 +192,13 @@
     
     
       <div class="md-header__source">
-        <a href="https://github.com/sisl/vllmclustermanager" title="Go to repository" class="md-source" data-md-component="source">
+        <a href="https://github.com/sisl/aquila" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
   </div>
   <div class="md-source__repository">
-    sisl/vllmclustermanager
+    sisl/aquila
   </div>
 </a>
       </div>
@@ -209,7 +219,7 @@
           
             
               
-              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -218,28 +228,27 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="vLLM Cluster Manager" class="md-nav__button md-logo" aria-label="vLLM Cluster Manager" data-md-component="logo">
+    <a href=".." title="Aquila" class="md-nav__button md-logo" aria-label="Aquila" data-md-component="logo">
       
-  
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+  <img src="../assets/img/aquila-logo.svg" alt="logo">
 
     </a>
-    vLLM Cluster Manager
+    Aquila
   </label>
   
     <div class="md-nav__source">
-      <a href="https://github.com/sisl/vllmclustermanager" title="Go to repository" class="md-source" data-md-component="source">
+      <a href="https://github.com/sisl/aquila" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
   </div>
   <div class="md-source__repository">
-    sisl/vllmclustermanager
+    sisl/aquila
   </div>
 </a>
     </div>
   
-  <ul class="md-nav__list" data-md-scrollfix>
+  <ul class="md-nav__list" data-md-scrollfix="">
     
       
       
@@ -310,6 +319,60 @@
     
   
     Deployments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gateway &amp; Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
   
 
     
@@ -440,13 +503,63 @@
       <span class="md-nav__icon md-icon"></span>
       Table of contents
     </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#global-settings-dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Global settings (dashboard)
+      
+    </span>
+  </a>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#configuration-files" class="md-nav__link">
     <span class="md-ellipsis">
       
         Configuration files
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration files">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#backend-settings-hostbackendenv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend settings (host/backend/.env)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#client-settings-clientenv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Client settings (client/.env)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notifications
       
     </span>
   </a>
@@ -487,6 +600,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#container-runtimes-docker-podman" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Container runtimes (Docker / Podman)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Container runtimes (Docker / Podman)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#setting-up-podman-on-a-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setting up Podman on a node
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#podman-on-restricted-clusters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Podman on restricted clusters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#service-management" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -520,10 +672,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#gpu-wheel-selection" class="md-nav__link">
+  <a href="#vllm-images" class="md-nav__link">
     <span class="md-ellipsis">
       
-        GPU wheel selection
+        vLLM images
       
     </span>
   </a>
@@ -531,10 +683,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#per-deployment-venvs" class="md-nav__link">
+  <a href="#model-cache" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Per-deployment venvs
+        Model cache
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#per-deployment-containers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-deployment containers
       
     </span>
   </a>
@@ -546,6 +709,111 @@
     <span class="md-ellipsis">
       
         Uploaded packages and plugins
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#warm-cache-pause-resume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Warm cache (pause &amp; resume)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Warm cache (pause &amp; resume)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enabling-warm-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enabling warm cache
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#auto-eviction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auto-eviction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#manual-pause-and-resume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Manual pause and resume
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unified-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unified memory
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#node-maintenance-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node maintenance mode
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#node-metrics-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node metrics history
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#database-migrations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Database migrations
       
     </span>
   </a>
@@ -606,7 +874,7 @@
             
             
               
-              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -622,13 +890,63 @@
       <span class="md-nav__icon md-icon"></span>
       Table of contents
     </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#global-settings-dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Global settings (dashboard)
+      
+    </span>
+  </a>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#configuration-files" class="md-nav__link">
     <span class="md-ellipsis">
       
         Configuration files
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration files">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#backend-settings-hostbackendenv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend settings (host/backend/.env)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#client-settings-clientenv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Client settings (client/.env)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notifications
       
     </span>
   </a>
@@ -669,6 +987,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#container-runtimes-docker-podman" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Container runtimes (Docker / Podman)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Container runtimes (Docker / Podman)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#setting-up-podman-on-a-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setting up Podman on a node
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#podman-on-restricted-clusters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Podman on restricted clusters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#service-management" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -702,10 +1059,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#gpu-wheel-selection" class="md-nav__link">
+  <a href="#vllm-images" class="md-nav__link">
     <span class="md-ellipsis">
       
-        GPU wheel selection
+        vLLM images
       
     </span>
   </a>
@@ -713,10 +1070,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#per-deployment-venvs" class="md-nav__link">
+  <a href="#model-cache" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Per-deployment venvs
+        Model cache
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#per-deployment-containers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-deployment containers
       
     </span>
   </a>
@@ -728,6 +1096,111 @@
     <span class="md-ellipsis">
       
         Uploaded packages and plugins
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#warm-cache-pause-resume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Warm cache (pause &amp; resume)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Warm cache (pause &amp; resume)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enabling-warm-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enabling warm cache
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#auto-eviction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auto-eviction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#manual-pause-and-resume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Manual pause and resume
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unified-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unified memory
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#node-maintenance-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node maintenance mode
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#node-metrics-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node metrics history
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#database-migrations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Database migrations
       
     </span>
   </a>
@@ -766,20 +1239,133 @@
 
 
 <h1 id="operations">Operations</h1>
+<h2 id="global-settings-dashboard">Global settings (dashboard)</h2>
+<div class="screenshot">
+  <a class="glightbox" data-type="image" data-width="auto" data-height="auto" href="../assets/img/settings-dialog.png" data-desc-position="bottom"><img alt="Settings dialog showing Gateway &amp; Keys, Deployments, System, and Danger Zone tabs" src="../assets/img/settings-dialog.png"></a>
+</div>
+
+<p>Most operational knobs live in the dashboard: <strong>gear icon → Settings</strong>. Saved values are stored in the database, override the backend's env defaults, and <strong>apply live</strong> — no restart needed. Sections:</p>
+<ul>
+<li><strong>Gateway</strong> — enable/disable the <a href="../gateway/">OpenAI gateway</a> (disabled → <code>/v1</code> returns 503; direct node URLs keep working) and its request timeout. API key management (permanent and temporary keys, per-deployment scoping) also lives here — see <a href="../gateway/#authentication">Gateway → Authentication</a>.</li>
+<li><strong>Deployments</strong> — the start-timeout watchdog, plus the deploy form's pre-filled defaults: port, GPU fraction, serve duration, vLLM version, max failed restarts.</li>
+<li><strong>Notifications</strong> — webhook URL (Slack-aware) and the expiry-warning lead time.</li>
+<li><strong>System</strong> — metric-history retention, warm-cache defaults (enable by default on new nodes, busy guard seconds), sync-loop intervals, and node/deployment failure thresholds.</li>
+<li><strong>Danger Zone</strong> — granular purge (select any of: deployment records, nodes, metric history, saved configurations; purging nodes includes their deployments and metrics).</li>
+</ul>
+<p>The env variables below remain the <em>defaults</em> for these settings (used until a value is saved in the UI); infrastructure values (Postgres, Consul, bind addresses) are env-only.</p>
 <h2 id="configuration-files">Configuration files</h2>
-<p>The CLI writes service-specific env files under <code>~/.local/share/vllm_cluster_manager</code>:
+<p>The CLI writes service-specific env files under <code>~/.local/share/aquila</code>:
 - <code>host/.env</code> (Docker compose: Postgres + discovery service)
 - <code>host/backend/.env</code> (API service)
 - <code>host/frontend/.env</code> (UI)
 - <code>client/.env</code> (client agent)</p>
 <p>If you edit any env file, restart the affected service.</p>
+<h3 id="backend-settings-hostbackendenv">Backend settings (<code>host/backend/.env</code>)</h3>
+<p>These act as defaults for the corresponding <a href="#global-settings-dashboard">dashboard settings</a>; a value saved in the UI takes precedence.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>WEBHOOK_URL</code></td>
+<td><em>(unset)</em></td>
+<td>Enable <a href="#notifications">notifications</a>. Slack incoming-webhook URLs get Slack formatting; anything else receives generic JSON.</td>
+</tr>
+<tr>
+<td><code>EXPIRY_WARNING_MINUTES</code></td>
+<td><code>30</code></td>
+<td>Warn this many minutes before a deployment auto-expires.</td>
+</tr>
+<tr>
+<td><code>START_TIMEOUT_SECONDS</code></td>
+<td><code>1800</code></td>
+<td>Watchdog: mark deployments errored if stuck in <code>starting</code>/<code>loading</code> this long.</td>
+</tr>
+<tr>
+<td><code>GATEWAY_TIMEOUT_SECONDS</code></td>
+<td><code>600</code></td>
+<td>Read timeout for non-streaming gateway requests (streams have none).</td>
+</tr>
+<tr>
+<td><code>NODE_METRICS_RETENTION_HOURS</code></td>
+<td><code>48</code></td>
+<td>How long node metric samples are kept for the history charts.</td>
+</tr>
+<tr>
+<td><code>BUSY_GUARD_SECONDS</code></td>
+<td><code>60</code></td>
+<td>Seconds after a model's last request before it can be auto-evicted by the warm cache. 0 = evict immediately when idle.</td>
+</tr>
+<tr>
+<td><code>TEMP_API_KEY_TTL_SECONDS</code></td>
+<td><code>300</code></td>
+<td>Lifespan (seconds) of temporary API keys auto-created for endpoint code snippets. 0 = disabled.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="client-settings-clientenv">Client settings (<code>client/.env</code>)</h3>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MODEL_DIRS</code></td>
+<td><em>(unset)</em></td>
+<td>Comma-separated directories that may be served as local models / LoRA adapters (mounted read-only into containers). Unset = local paths rejected.</td>
+</tr>
+<tr>
+<td><code>MAX_FAILED_RESTARTS</code></td>
+<td><code>3</code></td>
+<td>Crash-loop breaker: stop a deployment that restarts this many times without becoming ready. Overridable per deployment.</td>
+</tr>
+<tr>
+<td><code>HF_CACHE_DIR</code></td>
+<td><code>~/.cache/huggingface</code></td>
+<td>Host directory used as the shared HuggingFace cache.</td>
+</tr>
+<tr>
+<td><code>LOG_MAX_MB</code></td>
+<td><code>50</code></td>
+<td>Rotate a deployment's persistent log file (<code>~/.vllm-client/.logs</code>) once it exceeds this size; the overflow is kept as <code>&lt;file&gt;.1</code>.</td>
+</tr>
+<tr>
+<td><code>LOG_RETENTION_DAYS</code></td>
+<td><code>14</code></td>
+<td>Delete persistent deployment log files untouched for this many days.</td>
+</tr>
+<tr>
+<td><code>PODMAN_SOCK</code></td>
+<td><em>(auto)</em></td>
+<td>Non-standard Podman API socket path. By default the agent probes the rootless socket (<code>$XDG_RUNTIME_DIR/podman/podman.sock</code>) and the rootful one (<code>/run/podman/podman.sock</code>).</td>
+</tr>
+</tbody>
+</table>
+<h2 id="notifications">Notifications</h2>
+<p>Set <code>WEBHOOK_URL</code> in the backend <code>.env</code> to get webhook notifications for deployment lifecycle events:</p>
+<ul>
+<li>a deployment becomes <strong>ready</strong> (with its host and port)</li>
+<li>a deployment enters <strong>error</strong> or <strong>unreachable</strong> (with the classified cause)</li>
+<li>a deployment <strong>expires soon</strong> (default 30 minutes before; extending it re-arms the warning)</li>
+<li>a deployment <strong>expired</strong> and was stopped</li>
+</ul>
+<p>URLs containing <code>hooks.slack.com</code> receive Slack-formatted messages (<code>{"text": ...}</code>); any other URL receives a generic JSON payload (<code>event</code>, <code>message</code>, plus structured fields) for custom integrations. Notification delivery is fire-and-forget and never blocks or fails cluster operations.</p>
 <h2 id="gated-models-huggingface">Gated models (Huggingface)</h2>
 <p>Some models (for example Llama variants) require a Hugging Face access token. Provide the token via an env var when creating the deployment:
 - <code>HF_TOKEN</code>
 - <code>HUGGING_FACE_HUB_TOKEN</code></p>
 <p>Set the value to your Hugging Face access token (read access) and include quotation marks, for example:
-<div class="highlight"><pre><span></span><code>HUGGING_FACE_HUB_TOKEN=&quot;hf_...&quot;
-</code></pre></div></p>
+</p><div class="highlight"><pre><span></span><code>HUGGING_FACE_HUB_TOKEN="hf_..."
+</code></pre></div><p></p>
 <p>You can add this in the UI under env vars or by setting it in the client environment before starting a deployment.</p>
 <h2 id="firewall-rules">Firewall rules</h2>
 <p>Allow these network paths (adjust ports to your flags):</p>
@@ -788,46 +1374,149 @@
 <li>UI/Browser → Host API: TCP <code>host-backend-port</code> (default 8000)</li>
 <li>Clients → Host discovery port: TCP <code>host-discover-port</code> (default 47528)</li>
 <li>Host → Client agents: TCP <code>client-port</code> (default 9000)</li>
+<li>Gateway API consumers → Host: TCP <code>host-frontend-port</code> or <code>host-backend-port</code> (the <a href="../gateway/">OpenAI gateway</a> at <code>/v1</code> is served by the backend and proxied by the frontend)</li>
+<li>Direct API consumers → Client nodes: TCP on each deployment's port (only needed if you bypass the gateway)</li>
 </ul>
 <h2 id="data-persistence">Data persistence</h2>
-<p>By default, shutting down the host (<code>host down</code> or stopping the systemd infra unit) runs <code>docker compose down -v</code>, which wipes the Postgres volume. Remove <code>-v</code> in code if you want to keep data.</p>
+<p>Host data (deployments, nodes, metric history, saved configurations) lives in a named Postgres Docker volume and <strong>persists across <code>host down</code>, systemd restarts, and reboots</strong>. Deployments therefore come back with their owner, remaining serve time, and full launch configuration after a host restart.</p>
+<p>To wipe the database intentionally:</p>
+<ul>
+<li><code>aquila host down --purge</code> — stop the host and delete the Postgres volume.</li>
+<li><code>aquila clean</code> — full factory reset (always deletes the volume).</li>
+<li>Dashboard → gear icon → Settings → <strong>Data → Purge</strong> — select which record categories to wipe (deployment records, nodes, metric history, saved configurations) while the host keeps running. Running models are not stopped: nodes re-register via discovery within seconds and their deployments are re-adopted automatically.</li>
+</ul>
+<p>Re-adoption restores owner, lease, and launch configuration from a manifest each vLLM container carries as a Docker label (set at launch). The restored lease is the original one — extensions granted later are not preserved, and a lease that elapsed in the meantime is enforced (the deployment is stopped as expired).</p>
+<p>To remove a <strong>single</strong> stale node instead of purging everything, open the node's <strong>Manage</strong> dialog and click <strong>Remove Node</strong>: it deletes the node, its deployment records, and its Consul registration. Running containers are not touched — an active node re-registers within seconds (and its deployments are re-adopted), while a decommissioned node disappears for good.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Deployment environment variable values (e.g. <code>HF_TOKEN</code>) are stored on the vLLM container itself — in its Docker <code>Env</code> and in the launch-manifest label — and are reported by the client agent's unauthenticated LAN API during re-adoption. This is the same trust domain as the rest of the satellite API (logs, metrics); keep client ports restricted to your cluster network.</p>
+</div>
+<h2 id="container-runtimes-docker-podman">Container runtimes (Docker / Podman)</h2>
+<div class="screenshot screenshot-narrow">
+  <a class="glightbox" data-type="image" data-width="auto" data-height="auto" href="../assets/img/node-manage-dialog.png" data-desc-position="bottom"><img alt="Node manage dialog showing container runtime, warm cache, and vLLM containers" src="../assets/img/node-manage-dialog.png"></a>
+</div>
+
+<p>Client nodes can run deployments via <strong>Docker</strong> or <strong>Podman</strong> (Podman exposes a Docker-compatible API socket and runs the same official images — useful on clusters that disallow the Docker daemon; rootless Podman is supported). Each agent detects which runtimes are available and reports them; the node's Manage dialog shows them and lets you pick.</p>
+<p>The runtime for a <strong>new</strong> deployment resolves as: the node's per-node override (Manage dialog → Container Runtime) → the global <strong>Preferred runtime</strong> (Settings → Deployments) → whichever single runtime exists. Running containers always keep the runtime they started with — switching a node's runtime never migrates them, and the agent manages containers in both runtimes side by side.</p>
+<p>A reachable node with <strong>no</strong> runtime at all shows status <code>no runtime</code> in the node table and cannot be selected for deployments.</p>
+<p><strong>One image cache.</strong> Docker and Podman keep physically separate image stores, but the manager presents them as a single logical cache: the Manage dialog lists each image once (noting which runtimes hold a copy), <strong>Delete removes every copy</strong>, and when a deployment needs an image the <em>other</em> runtime already has, the agent copies it locally (a save→load transfer between the two API sockets, phase <code>copying image</code>) instead of re-downloading it from the registry. The transfer of a multi-GB image takes a few minutes — noticeably faster than a registry pull. Note that the <em>same</em> image can carry a different ID (and reported size) in each store — Docker's containerd image store identifies images by their registry manifest digest, Podman by the config digest — so the manager matches copies by content (layer digests), not by ID.</p>
+<p>The host's own infrastructure (Postgres + Consul via docker compose) still requires Docker on the <strong>host</strong> machine; the Podman option applies to client GPU nodes.</p>
+<h3 id="setting-up-podman-on-a-node">Setting up Podman on a node</h3>
+<ol>
+<li>Install Podman — <strong>version ≥ 5.4 required for GPU deployments</strong>. Older versions silently ignore GPU requests sent over the Docker-compatible API; the manager passes GPUs as CDI device requests, which the compat API only honors from 5.4 on. (Podman 3.x also streams no byte-level pull progress — the status chip shows <code>pulling image</code> without GB figures.)</li>
+<li>Start the API socket (installing the package does <strong>not</strong> start it):
+   <code>systemctl --user enable --now podman.socket</code>. The socket is activation-based — the API service only runs while the agent talks to it; there is no persistent daemon.</li>
+<li>Generate NVIDIA CDI specs once (and after driver updates): <code>sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml</code> (ships with nvidia-container-toolkit ≥ 1.12). The agent checks both preconditions before starting a deployment and rejects it with the specific remedy when one is missing.</li>
+<li>If the agent runs unattended (systemd service) as a user without a login session, enable lingering so user processes survive logout: <code>loginctl enable-linger &lt;user&gt;</code>.</li>
+</ol>
+<p>Rootless notes: containers run entirely as the agent's user — model files in the shared HF cache end up user-owned (no root-owned files, unlike Docker). The user needs <code>/etc/subuid</code>/<code>/etc/subgid</code> ranges (one-time admin step; rootless containers won't start without them).</p>
+<h3 id="podman-on-restricted-clusters">Podman on restricted clusters</h3>
+<p>The integration was designed for environments that disallow the Docker daemon: it is rootless, daemonless, and connects only to a socket the user owns. Site lockdowns that still need attention:</p>
+<ul>
+<li><strong>No systemd user sessions</strong> (common on HPC compute nodes): start the API service manually next to the agent — <code>podman system service --time=0 unix:///path/of/your/choice &amp;</code> — and point the agent at it with <code>PODMAN_SOCK</code> in the client <code>.env</code>.</li>
+<li><strong>SELinux enforcing</strong> (RHEL-family): bind-mounted volumes (HF cache, model dirs) may hit permission denials because mounts are not relabeled (<code>:z</code>). If deployments fail with <code>Permission denied</code> on mounted paths despite correct ownership, check <code>sudo ausearch -m AVC -ts recent</code>; relabel the directories (<code>chcon -Rt container_file_t &lt;dir&gt;</code>) or run the affected dirs with a permissive policy.</li>
+<li><strong>User namespaces disabled kernel-wide</strong> (<code>user.max_user_namespaces=0</code>): rootless Podman cannot work at all — the node will correctly report <code>no runtime</code> unless Docker or rootful Podman is permitted.</li>
+<li><strong>NFS home directories</strong>: rootless Podman stores images under <code>~/.local/share/containers</code>, which performs poorly (or fails) on NFS. Point <code>graphroot</code> in <code>~/.config/containers/storage.conf</code> at local scratch storage before pulling 20+ GB vLLM images.</li>
+</ul>
 <h2 id="service-management">Service management</h2>
 <p>Systemd unit names (service mode):</p>
 <ul>
-<li><code>vllm-cluster-infra.service</code></li>
-<li><code>vllm-cluster-backend.service</code></li>
-<li><code>vllm-cluster-frontend.service</code></li>
-<li><code>vllm-cluster-client.service</code></li>
+<li><code>aquila-infra.service</code></li>
+<li><code>aquila-backend.service</code></li>
+<li><code>aquila-frontend.service</code></li>
+<li><code>aquila-client.service</code></li>
 </ul>
 <p>Frontend behavior:
 - <code>host up</code> builds a static frontend bundle and serves it with the Vite preview server.
 - If you change frontend config or base path, rerun <code>host up</code> to rebuild.</p>
 <p>Restart flows:
-<div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>vllm-cluster-infra.service
-sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>vllm-cluster-backend.service
-sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>vllm-cluster-frontend.service
-sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>vllm-cluster-client.service
-</code></pre></div></p>
+</p><div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>aquila-infra.service
+sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>aquila-backend.service
+sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>aquila-frontend.service
+sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>aquila-client.service
+</code></pre></div><p></p>
 <h2 id="host-network-setup">Host network setup</h2>
 <p>If the host should be reachable from other machines, use a non-loopback <code>--host-ip</code> (for example the host's LAN IP) and ensure firewall rules allow inbound traffic.</p>
 <h2 id="reverse-proxy-base-path">Reverse proxy base path</h2>
 <p>If you proxy the frontend under a path like <code>/vllm/</code>, pass <code>--base-path /vllm/</code> when running <code>host up</code>. This ensures asset URLs and API/WebSocket paths resolve correctly.</p>
-<p>For Nginx, make sure <code>/vllm/api</code> and <code>/vllm/ws</code> are proxied to the backend (port 8000 by default). The frontend uses the configured base path for API and WebSocket URLs, so it works both at <code>/</code> and under a subpath.</p>
-<h2 id="gpu-wheel-selection">GPU wheel selection</h2>
-<p>The client bootstrapper detects CUDA from <code>nvcc</code> or <code>nvidia-smi</code> and installs a vLLM wheel that matches the detected version. If no wheel exists for your exact CUDA version, the installer automatically falls back to the highest compatible CUDA wheel and displays a warning.</p>
-<h2 id="per-deployment-venvs">Per-deployment venvs</h2>
-<p>Each deployment creates an isolated virtual environment under <code>~/.vllm-client/.venvs/</code>. Venvs are managed with <code>uv</code> for fast creation and installs. When a deployment is stopped, its venv is automatically removed. Cached venvs are reused when deploying the same version + model + port combination.</p>
-<p>You can inspect and manage venvs via the client API:</p>
+<p>For Nginx, make sure <code>/vllm/api</code>, <code>/vllm/ws</code>, and <code>/vllm/v1</code> are proxied to the backend (port 8000 by default; <code>/v1</code> is the <a href="../gateway/">OpenAI gateway</a>). The frontend uses the configured base path for API, WebSocket, and gateway URLs, so it works both at <code>/</code> and under a subpath.</p>
+<p>Streamed chat completions through the gateway are server-sent events; with Nginx's default response buffering, tokens arrive in bursts instead of streaming. Disable buffering on the gateway location:</p>
+<div class="highlight"><pre><span></span><code><span class="k">location</span><span class="w"> </span><span class="s">/vllm/v1/</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kn">proxy_pass</span><span class="w"> </span><span class="s">http://127.0.0.1:8000/v1/</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_buffering</span><span class="w"> </span><span class="no">off</span><span class="p">;</span><span class="w">        </span><span class="c1"># stream SSE tokens as they arrive</span>
+<span class="w">    </span><span class="kn">proxy_read_timeout</span><span class="w"> </span><span class="s">1h</span><span class="p">;</span><span class="w">      </span><span class="c1"># long generations / idle streams</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>If you use the dashboard's <a href="../deployments/#local-checkpoints">local-model uploads</a> behind Nginx, raise the request body limits for the <code>api</code> location — checkpoint uploads are streamed and can be tens of GB:</p>
+<div class="highlight"><pre><span></span><code><span class="k">client_max_body_size</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="k">proxy_request_buffering</span><span class="w"> </span><span class="no">off</span><span class="p">;</span><span class="w">   </span><span class="c1"># stream instead of spooling the body to disk</span>
+</code></pre></div>
+<h2 id="vllm-images">vLLM images</h2>
+<p>Each deployment runs the official <code>vllm/vllm-openai</code> container; the requested version maps to an image tag and the image bundles its own matching CUDA runtime and PyTorch. There is no host-side CUDA detection or wheel selection — the client only needs Docker and the NVIDIA Container Toolkit. Images are pulled once and cached on the node; warm starts are instant. When extra pip packages are requested, the client builds and caches a thin derived image (<code>FROM vllm/vllm-openai:&lt;tag&gt;</code>).</p>
+<p>You can inspect and manage cached images via the client API:</p>
 <ul>
-<li><code>GET /venvs</code> — list all cached venvs.</li>
-<li><code>DELETE /venvs/&lt;id&gt;</code> — remove a specific venv.</li>
+<li><code>GET /images</code> — list cached vLLM images (official + locally derived).</li>
+<li><code>DELETE /images/&lt;id&gt;</code> — remove a specific image.</li>
 </ul>
+<h2 id="model-cache">Model cache</h2>
+<p>Model weights are cached in a shared HuggingFace cache mounted into every container (host <code>~/.cache/huggingface</code> by default, configurable via the client's <code>HF_CACHE_DIR</code>). Bind-mounting it means a model is downloaded only once per node and reused across deployments and versions.</p>
+<p>You can inspect cached models (with per-model size) and delete unused ones from the node's manage dialog in the dashboard, or via the host API: <code>GET /api/nodes/{id}/models/cache</code> and <code>DELETE /api/nodes/{id}/models/cache/{name}</code>. The dialog also shows the node's disk usage and total cache size.</p>
+<h2 id="per-deployment-containers">Per-deployment containers</h2>
+<p>Containers are labelled (<code>aquila.managed=true</code>) and started with <code>--restart unless-stopped</code>, so they survive a client-agent or host reboot. On startup the agent reconciles its in-memory state from the running containers, and stopping a deployment removes its container (the image stays cached).</p>
 <h2 id="uploaded-packages-and-plugins">Uploaded packages and plugins</h2>
 <p>Uploaded files (<code>.py</code>, <code>.whl</code>, <code>.tar.gz</code>, <code>.zip</code>) are stored under <code>~/.vllm-client/.packages/</code>. Each upload is content-hashed to avoid duplicates.</p>
 <ul>
 <li><code>GET /packages</code> — list uploaded packages.</li>
 <li><code>DELETE /packages/&lt;id&gt;</code> — remove a specific package.</li>
 </ul>
+<h2 id="warm-cache-pause-resume">Warm cache (pause &amp; resume)</h2>
+<p>The warm cache lets the cluster keep more models ready than GPU VRAM can hold at once by pausing idle models to RAM and resuming them on demand — the first inference request after a pause transparently wakes the model (a few seconds, no re-download).</p>
+<h3 id="how-it-works">How it works</h3>
+<p>When warm cache is enabled on a node, the client agent runs a local proxy in front of each deployment. Pausing a model calls vLLM's sleep mode (<code>cudaFree</code>), which releases the CUDA memory allocation while keeping the model weights in CPU RAM. Resuming calls wake, which re-allocates GPU memory and restores the model — much faster than a cold start.</p>
+<h3 id="enabling-warm-cache">Enabling warm cache</h3>
+<p>Warm cache is controlled <strong>per node</strong> in the node's Manage dialog (toggle <strong>Warm offload</strong>). The global default for newly discovered nodes is set in <strong>Settings → System → Warm Cache</strong> (<code>default_warm_offload_enabled</code>, default on).</p>
+<p>An optional <strong>RAM cache limit</strong> (MB) per node caps how much host RAM paused models may occupy. When the limit would be exceeded, the oldest paused model is stopped entirely rather than kept in RAM.</p>
+<h3 id="auto-eviction">Auto-eviction</h3>
+<p>When a new deployment needs GPU memory on a warm-cache node, the agent automatically pauses idle models to make room:</p>
+<ol>
+<li>Models are ranked by <strong>last request time</strong> (LRU).</li>
+<li>A model is considered <strong>busy</strong> (and skipped) if it received a request within the last <code>BUSY_GUARD_SECONDS</code> (default 0, configurable in Settings → System) or has requests currently in flight.</li>
+<li><strong>Pinned</strong> deployments are never auto-evicted — use the pin button on a running deployment to protect it.</li>
+<li>The eviction planner simulates freeing GPU memory until the new deployment fits, then executes the plan.</li>
+</ol>
+<h3 id="manual-pause-and-resume">Manual pause and resume</h3>
+<p>Running deployments on warm-cache nodes show <strong>Pause</strong> and <strong>Resume</strong> buttons in the deployment actions:</p>
+<ul>
+<li><strong>Pause</strong> puts the model to sleep (frees VRAM, keeps weights in RAM). A paused deployment shows status <code>paused_ram</code> and remains routable through the gateway — the first request wakes it automatically. The serve-duration countdown continues while paused.</li>
+<li><strong>Resume</strong> explicitly wakes a paused model without waiting for a request.</li>
+<li>Pinned deployments cannot be paused (unpin first).</li>
+</ul>
+<h3 id="unified-memory">Unified memory</h3>
+<p>On unified-memory nodes (e.g. DGX Spark), GPU and CPU share the same physical memory pool. Pausing would call <code>cudaFree</code> but free no actual capacity, breaking the eviction chain. The pause button is therefore <strong>hidden</strong> on unified-memory nodes, and the agent rejects manual pause requests with HTTP 409.</p>
+<h2 id="node-maintenance-mode">Node maintenance mode</h2>
+<div class="screenshot">
+  <a class="glightbox" data-type="image" data-width="auto" data-height="auto" href="../assets/img/node-table.png" data-desc-position="bottom"><img alt="Node table with status badges and action icons" src="../assets/img/node-table.png"></a>
+</div>
+
+<p>Maintenance mode lets you cordon GPUs on a node so they are excluded from new deployments. You can cordon <strong>individual GPUs</strong> or all GPUs at once — partial maintenance is shown as a warning badge with the specific GPU indices (e.g. <code>maint. GPU 0, 2</code>), while full maintenance marks the entire node.</p>
+<p>Use the <strong>Maintenance</strong> button on a node to open the GPU selector:</p>
+<ul>
+<li><strong>Toggle individual GPUs</strong> to cordon or uncordon them.</li>
+<li><strong>Select All / Clear</strong> to quickly switch all GPUs.</li>
+<li><strong>Drain</strong> (optional checkbox): stop active deployments whose GPUs overlap with the newly cordoned set.</li>
+<li><strong>Cordon</strong> adds the selected GPUs to the maintenance set; <strong>Uncordon</strong> removes them.</li>
+</ul>
+<p>New deployments cannot use cordoned GPUs — the deploy form's GPU selector hides them, and the API rejects launches that overlap. Existing deployments on cordoned GPUs keep running unless explicitly drained.</p>
+<p>The API equivalent is <code>POST /api/nodes/{id}/maintenance</code> with <code>{"gpu_ids": [0, 2], "enabled": true, "drain": true}</code>.</p>
+<h2 id="node-metrics-history">Node metrics history</h2>
+<div class="screenshot">
+  <a class="glightbox" data-type="image" data-width="auto" data-height="auto" href="../assets/img/node-metrics.png" data-desc-position="bottom"><img alt="Node table with expanded utilization history charts" src="../assets/img/node-metrics.png"></a>
+</div>
+
+<p>The backend samples GPU/CPU/memory/disk metrics from each node and keeps them for <code>NODE_METRICS_RETENTION_HOURS</code> (default 48). Expand a node row in the dashboard to see the charts; the raw data is available at <code>GET /api/nodes/{id}/metrics/history</code>.</p>
+<p>On unified-memory devices (e.g. DGX Spark), the GPU's dedicated-VRAM fields aren't reported by <code>nvidia-smi</code>/NVML: the <strong>compute</strong> percentage is still the real GPU utilization, while the <strong>memory</strong> figures come from system RAM (the shared pool) and are marked <code>(unified)</code> in the node table. Compute shows <code>n/a</code> only when the node has no NVIDIA tooling at all. Warm cache (pause/resume) is disabled on unified-memory nodes because GPU and CPU share the same physical memory — <code>cudaFree</code> releases the CUDA allocation but no capacity is actually freed.</p>
+<h2 id="database-migrations">Database migrations</h2>
+<p>The backend manages its schema with Alembic and runs <code>upgrade head</code> automatically at startup, so upgrades never require manual migration steps. Databases created by older versions are absorbed by the baseline migration and upgraded in place. If you need to inspect or run migrations manually, the Alembic environment lives in the backend's install directory and reads the same <code>.env</code> as the API service.</p>
 <h2 id="deployment-recovery">Deployment recovery</h2>
 <p>The backend sync loop runs every 5 seconds and polls each client for its current deployments. If the backend is restarted while models are running on clients, the sync loop automatically recreates the database entries so the dashboard reflects the actual cluster state. Deployments in <code>stopped</code> or <code>error</code> state on the client are not re-imported.</p>
 
@@ -852,9 +1541,9 @@ sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class=
 <script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
         </div>
         
-          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden="">
   
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"></path></svg>
   Back to top
 </button>
         
@@ -887,11 +1576,13 @@ sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class=
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "content.code.copy", "content.tabs.link"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "content.code.copy", "content.tabs.link"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
       <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
-  </body>
-</html>
+  
+<script id="init-glightbox">const lightbox = GLightbox({"touchNavigation": true, "loop": false, "zoomable": true, "draggable": true, "openEffect": "zoom", "closeEffect": "zoom", "slideEffect": "slide"});
+document$.subscribe(()=>{ lightbox.reload(); });
+</script></body></html>

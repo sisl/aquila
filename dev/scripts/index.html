@@ -7,13 +7,9 @@
       
       
       
-        <link rel="canonical" href="https://sisl.github.io/aquila/latest/architecture/">
+        <link rel="canonical" href="https://sisl.github.io/aquila/latest/scripts/">
       
       
-        <link rel="prev" href="../cli/">
-      
-      
-        <link rel="next" href="../operations/">
       
       
         
@@ -24,7 +20,7 @@
     
     
       
-        <title>Architecture - Aquila</title>
+        <title>Documentation Screenshots - Aquila</title>
       
     
     
@@ -87,7 +83,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#architecture" class="md-skip">
+        <a href="#documentation-screenshots" class="md-skip">
           Skip to content
         </a>
       
@@ -126,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Architecture
+              Documentation Screenshots
             
           </span>
         </div>
@@ -416,37 +412,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Architecture
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
         
   
   
@@ -462,103 +431,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
-      
-        <li class="md-nav__item">
-  <a href="#overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Overview
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#service-discovery" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Service discovery
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#data-flow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Data flow
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#ports" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Ports
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#communication-flow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Communication flow
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#deployment-lifecycle" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Deployment lifecycle
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#websocket-events" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        WebSocket events
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -644,10 +516,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
       
         <li class="md-nav__item">
-  <a href="#overview" class="md-nav__link">
+  <a href="#prerequisites" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Overview
+        Prerequisites
       
     </span>
   </a>
@@ -655,10 +527,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#service-discovery" class="md-nav__link">
+  <a href="#usage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Service discovery
+        Usage
       
     </span>
   </a>
@@ -666,10 +538,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#data-flow" class="md-nav__link">
+  <a href="#options" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Data flow
+        Options
       
     </span>
   </a>
@@ -677,43 +549,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#ports" class="md-nav__link">
+  <a href="#how-it-works" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Ports
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#communication-flow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Communication flow
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#deployment-lifecycle" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Deployment lifecycle
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#websocket-events" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        WebSocket events
+        How it works
       
     </span>
   </a>
@@ -740,152 +579,51 @@
   
 
 
-<h1 id="architecture">Architecture</h1>
-<h2 id="overview">Overview</h2>
-<p>Aquila runs three host services and a client agent on each GPU node.</p>
-<div class="grid-2">
-  <div>
-    <strong>Host services</strong>
-    <ul>
-      <li>Infra: Postgres + Consul via Docker Compose</li>
-      <li>Backend: FastAPI orchestration API</li>
-      <li>Frontend: React + Vite admin dashboard</li>
-    </ul>
-  </div>
-  <div>
-    <strong>Client agent</strong>
-    <ul>
-      <li>Python service that registers with Consul</li>
-      <li>Runs each deployment as an official <code>vllm/vllm-openai</code> Docker container</li>
-      <li>Pulls/builds and caches images; reconciles running containers on restart</li>
-      <li>Reports deployment status, version, and GPU metrics</li>
-    </ul>
-  </div>
-</div>
-
-<h2 id="service-discovery">Service discovery</h2>
-<p>Consul provides service discovery so the UI and backend can list connected clients.</p>
-<h2 id="data-flow">Data flow</h2>
-<ol>
-<li>Client registers with Consul.</li>
-<li>Backend discovers clients and stores state in Postgres.</li>
-<li>UI calls the backend API and subscribes to WebSocket streams for logs and status.</li>
-<li>On deploy, the backend proxies the request to the client, which pulls the matching <code>vllm/vllm-openai</code> image (building a derived image if extra packages are requested) and starts a vLLM container.</li>
-<li>The sync loop periodically polls clients for deployment status and GPU metrics, updating the database. If the backend restarts, it rediscovers running deployments from clients automatically.</li>
-</ol>
-<h2 id="ports">Ports</h2>
+<h1 id="documentation-screenshots">Documentation Screenshots</h1>
+<p>Captures anonymized screenshots of the Aquila dashboard for the docs site. Real hostnames, IPs, ports, and user names are automatically replaced with fake values.</p>
+<h2 id="prerequisites">Prerequisites</h2>
+<ul>
+<li>Node.js 18+</li>
+<li>A running Aquila frontend (<code>aquila host up</code> or <code>npm run dev</code> in the frontend directory)</li>
+<li>At least one node and one deployment active (dialogs that require data are skipped otherwise)</li>
+</ul>
+<h2 id="usage">Usage</h2>
+<div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>docs/scripts
+npm<span class="w"> </span>install<span class="w">                        </span><span class="c1"># first time only</span>
+npx<span class="w"> </span>playwright<span class="w"> </span>install<span class="w"> </span>chromium<span class="w">    </span><span class="c1"># first time only</span>
+node<span class="w"> </span>update-screenshots.mjs
+</code></pre></div>
+<p>Screenshots are written to <code>docs/assets/img/</code>.</p>
+<h2 id="options">Options</h2>
 <table>
 <thead>
 <tr>
-<th>Service</th>
+<th>Flag</th>
 <th>Default</th>
-<th>Purpose</th>
+<th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Frontend</td>
-<td>5173</td>
-<td>Web UI (Vite dev server).</td>
+<td><code>--url</code></td>
+<td><code>http://localhost:5173</code></td>
+<td>Frontend URL to capture</td>
 </tr>
 <tr>
-<td>Backend</td>
-<td>8000</td>
-<td>API + WebSockets.</td>
-</tr>
-<tr>
-<td>Consul</td>
-<td>47528</td>
-<td>Host port mapped to Consul HTTP API (container port 8500).</td>
-</tr>
-<tr>
-<td>Postgres</td>
-<td>5757</td>
-<td>Host port mapped to Postgres (container port 5432).</td>
-</tr>
-<tr>
-<td>Client</td>
-<td>9000</td>
-<td>Client agent HTTP server.</td>
+<td><code>--out</code></td>
+<td><code>../assets/img</code></td>
+<td>Output directory for PNGs</td>
 </tr>
 </tbody>
 </table>
-<h2 id="communication-flow">Communication flow</h2>
-<div class="highlight"><pre><span></span><code>graph LR
-    subgraph Host
-        FE[Frontend&lt;br&gt;:5173]
-        BE[Backend&lt;br&gt;:8000]
-        PG[(Postgres&lt;br&gt;:5757)]
-        CO[Consul&lt;br&gt;:47528]
-    end
-    subgraph "GPU Node"
-        AG[Client Agent&lt;br&gt;:9000]
-        VL[vLLM Container&lt;br&gt;:port]
-    end
-    FE --&gt;|API + WS| BE
-    BE --&gt;|SQL| PG
-    BE --&gt;|discovery| CO
-    AG --&gt;|register| CO
-    BE --&gt;|deploy/stop/status| AG
-    AG --&gt;|start/manage| VL
-    User --&gt;|dashboard| FE
-    User --&gt;|/v1 gateway| BE
-    User -.-&gt;|direct| VL
-</code></pre></div>
-<h2 id="deployment-lifecycle">Deployment lifecycle</h2>
-<p>A deployment moves through these states:</p>
-<div class="highlight"><pre><span></span><code>stateDiagram-v2
-    [*] --&gt; stopped
-    stopped --&gt; starting : deploy / restart
-    starting --&gt; loading : container running
-    loading --&gt; running : health check passes
-    running --&gt; stopping : stop requested
-    running --&gt; paused_ram : pause (warm cache)
-    paused_ram --&gt; running : resume / first request
-    paused_ram --&gt; stopping : stop requested
-    stopping --&gt; stopped : clean exit
-    stopping --&gt; stopped : duration expired
-    running --&gt; error : crash
-    loading --&gt; error : timeout / crash
-    starting --&gt; error : image pull fail
-    error --&gt; starting : restart
-    error --&gt; [*] : delete
-    stopped --&gt; [*] : delete
-</code></pre></div>
-<h2 id="websocket-events">WebSocket events</h2>
-<p>The backend pushes live updates to the frontend over a single WebSocket connection (<code>/ws</code>). The frontend reconnects automatically on disconnect. Message format:</p>
-<table>
-<thead>
-<tr>
-<th>Event type</th>
-<th>Trigger</th>
-<th>Payload</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>deployments_changed</code></td>
-<td>Any deployment status change, create, delete, or settings update</td>
-<td><code>{"type": "deployments_changed"}</code></td>
-</tr>
-<tr>
-<td><code>nodes_changed</code></td>
-<td>Node status, metrics, or configuration update</td>
-<td><code>{"type": "nodes_changed"}</code></td>
-</tr>
-<tr>
-<td><code>settings_changed</code></td>
-<td>Runtime settings updated via the Settings dialog</td>
-<td><code>{"type": "settings_changed"}</code></td>
-</tr>
-<tr>
-<td><code>api_keys_changed</code></td>
-<td>API key created, updated, or deleted</td>
-<td><code>{"type": "api_keys_changed"}</code></td>
-</tr>
-</tbody>
-</table>
-<p>The frontend uses these events to invalidate its React Query caches and re-fetch the affected data, keeping the dashboard in sync across multiple browser tabs without polling.</p>
+<h2 id="how-it-works">How it works</h2>
+<ol>
+<li>Fetches <code>/api/nodes/</code> and <code>/api/deployments/</code> to discover real values</li>
+<li>Builds a replacement map (hostnames, IPs, ports, owners) to anonymized equivalents</li>
+<li>Launches headless Chrome via Playwright, intercepting all API responses to apply the replacements</li>
+<li>Navigates the dashboard and takes element-level screenshots of each panel and dialog</li>
+<li>Saves 8 PNGs matching the filenames referenced in the MkDocs markdown files</li>
+</ol>
 
 
 
