@@ -2915,7 +2915,9 @@ class TestEnsureFit:
             mock.patch.dict(
                 client_main._containers, {k: object() for k in statuses}, clear=True
             ), mock.patch.object(client_main, "_vllm_sleep") as sleep, \
-            mock.patch.object(client_main, "_ram_estimate", return_value=4096.0):
+            mock.patch.object(client_main, "_ram_estimate", return_value=4096.0), \
+            mock.patch.object(client_main, "_is_unified_memory", return_value=False), \
+            mock.patch.object(client_main, "_all_gpu_indices", return_value=[0]):
             ok, offloaded, _reason = await client_main._ensure_fit([0], 0.5, "new:9000")
             # The legacy model must be left untouched (asserted inside the patch).
             assert client_main._statuses["legacy:8000"].get("pause_tier") is None
@@ -3095,7 +3097,8 @@ class TestTierSelection:
         with mock.patch.dict(
             client_main._node_policy, {"ram_cache_limit_mb": 100000}, clear=False
         ), mock.patch.object(client_main, "_ram_estimate", return_value=5000.0), \
-            mock.patch.dict(client_main._statuses, {}, clear=True):
+            mock.patch.dict(client_main._statuses, {}, clear=True), \
+            mock.patch.object(client_main, "_is_unified_memory", return_value=False):
             tier = client_main._auto_tier(_meta())
         assert tier == "ram"
 
