@@ -75,16 +75,11 @@
 
 /* ------------------------------------------------ version selector (mike) */
 
-/* Move the version selector to the right edge of the header grid, aligned
-   with the repo link.  Break out of all intermediate positioning contexts
-   so it anchors to the viewport via fixed positioning, then align with
-   the grid edge using the same horizontal padding as .md-header__inner. */
+/* JS moves .md-version to .md-header__inner so it sits after the repo link
+   in the natural flex flow. */
 .md-version {
-  position: fixed;
-  top: 0;
-  right: max(0.8rem, calc((100vw - 61rem) / 2));
   height: 2.4rem;
-  z-index: 4;
+  margin-left: 0.4rem;
 }
 
 .md-version__current {
