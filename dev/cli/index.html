@@ -843,8 +843,8 @@ aquila<span class="w"> </span>client<span class="w"> </span>up<span class="w"> <
 <p>Launch host services in the foreground:
 </p><div class="highlight"><pre><span></span><code>aquila<span class="w"> </span>host<span class="w"> </span>up<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--host-frontend-port<span class="w"> </span><span class="m">5173</span><span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">47528</span>
 </code></pre></div><p></p>
-<p>Reverse proxy under <code>/vllm/</code>:
-</p><div class="highlight"><pre><span></span><code>aquila<span class="w"> </span>host<span class="w"> </span>up<span class="w"> </span>--base-path<span class="w"> </span>/vllm/
+<p>Reverse proxy under <code>/aquila/</code>:
+</p><div class="highlight"><pre><span></span><code>aquila<span class="w"> </span>host<span class="w"> </span>up<span class="w"> </span>--base-path<span class="w"> </span>/aquila/
 </code></pre></div><p></p>
 <p>Launch a client node:
 </p><div class="highlight"><pre><span></span><code>aquila<span class="w"> </span>client<span class="w"> </span>up<span class="w"> </span>--host-ip<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--host-discover-port<span class="w"> </span><span class="m">47528</span><span class="w"> </span>--node-name<span class="w"> </span>node-1

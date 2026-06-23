@@ -1042,7 +1042,7 @@
 <h2 id="blank-page-behind-reverse-proxy">Blank page behind reverse proxy</h2>
 <p><strong>Symptoms</strong>: The UI shows a blank page when accessed through Nginx or another reverse proxy.</p>
 <p>Checks:
-- If you proxy under a path (for example <code>/vllm/</code>), set <code>VITE_BASE_PATH=/vllm/</code> in <code>host/frontend/.env</code>.
+- If you proxy under a path (for example <code>/aquila/</code>), set <code>VITE_BASE_PATH=/aquila/</code> in <code>host/frontend/.env</code>.
 - Restart the frontend service so Vite picks up the new base path.</p>
 <h2 id="consul-port-confusion">Consul port confusion</h2>
 <p><strong>Symptoms</strong>: Clients fail to register when using the Consul default port (8500).</p>
