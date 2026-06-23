@@ -1,0 +1,1548 @@
+<!DOCTYPE html><html lang="en" class="no-js"><head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the Aquila GPU inference cluster manager.">
+      
+      
+      
+        <link rel="canonical" href="https://sisl.github.io/aquila/latest/deployments/">
+      
+      
+        <link rel="prev" href="../getting-started/">
+      
+      
+        <link rel="next" href="../gateway/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/img/aquila-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Deployments - Aquila</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Sans+3:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Source Sans 3";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../styles/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  <link href="../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
+            html.glightbox-open { overflow: initial; height: 100%; }
+            .gslide-title { margin-top: 0px; user-select: text; }
+            .gslide-desc { color: #666; user-select: text; }
+            .gslide-image img { background: white; }
+            .gscrollbar-fixer { padding-right: 15px; }
+            .gdesc-inner { font-size: 0.75rem; }
+            body[data-md-color-scheme="slate"] .gdesc-inner { background: var(--md-default-bg-color); }
+            body[data-md-color-scheme="slate"] .gslide-title { color: var(--md-default-fg-color); }
+            body[data-md-color-scheme="slate"] .gslide-desc { color: var(--md-default-fg-color); }
+        </style></head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#deployments" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden="">
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Aquila" class="md-header__button md-logo" aria-label="Aquila" data-md-component="logo">
+      
+  <img src="../assets/img/aquila-logo.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Aquila
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Deployments
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom" aria-hidden="true" type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required="">
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix="">
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/sisl/aquila" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+  </div>
+  <div class="md-source__repository">
+    sisl/aquila
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Aquila" class="md-nav__button md-logo" aria-label="Aquila" data-md-component="logo">
+      
+  <img src="../assets/img/aquila-logo.svg" alt="logo">
+
+    </a>
+    Aquila
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/sisl/aquila" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+  </div>
+  <div class="md-source__repository">
+    sisl/aquila
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix="">
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployments
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#creating-a-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Creating a deployment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vllm-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vLLM version
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="vLLM version">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-images-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How images work
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gpu-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPU selection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="GPU selection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tensor-parallel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tensor parallel
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#engine-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Engine options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#local-checkpoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local checkpoints
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Local checkpoints">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#upload-from-the-dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upload from the dashboard
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pre-existing-checkpoints-model_dirs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pre-existing checkpoints (MODEL_DIRS)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lora-adapters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LoRA adapters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extra-packages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extra packages
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plugins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plugins
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extra-args" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extra args
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deployment-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deployment lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deployment lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#readiness-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Readiness detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#failure-classification-and-crash-loop-protection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure classification and crash-loop protection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#extending-a-running-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extending a running deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pause-resume-and-pin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pause, resume, and pin
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connecting-to-a-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connecting to a deployment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#saved-configurations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Saved configurations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reproducibility-manifests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reproducibility manifests
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deployment-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deployment recovery
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gateway &amp; Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#creating-a-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Creating a deployment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vllm-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vLLM version
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="vLLM version">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-images-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How images work
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gpu-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPU selection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="GPU selection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tensor-parallel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tensor parallel
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#engine-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Engine options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#local-checkpoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local checkpoints
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Local checkpoints">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#upload-from-the-dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upload from the dashboard
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pre-existing-checkpoints-model_dirs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pre-existing checkpoints (MODEL_DIRS)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lora-adapters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LoRA adapters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extra-packages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extra packages
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plugins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plugins
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extra-args" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extra args
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deployment-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deployment lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deployment lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#readiness-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Readiness detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#failure-classification-and-crash-loop-protection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure classification and crash-loop protection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#extending-a-running-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extending a running deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pause-resume-and-pin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pause, resume, and pin
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connecting-to-a-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connecting to a deployment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#saved-configurations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Saved configurations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reproducibility-manifests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reproducibility manifests
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deployment-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deployment recovery
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="deployments">Deployments</h1>
+<p>This page covers how to deploy models through the dashboard, including vLLM version selection, engine options, local checkpoints and LoRA adapters, extra packages, plugins, GPU assignment, reproducibility manifests, and the deployment lifecycle.</p>
+<h2 id="creating-a-deployment">Creating a deployment</h2>
+<div class="screenshot screenshot-narrow">
+  <a class="glightbox" data-type="image" data-width="auto" data-height="auto" href="../assets/img/deploy-form.png" data-desc-position="bottom"><img alt="Deploy form" src="../assets/img/deploy-form.png"></a>
+</div>
+
+<p>From the dashboard, select a target node, fill in the deployment form, and click <strong>Deploy</strong>. The required fields are:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Model Name</strong></td>
+<td>Hugging Face model ID (e.g. <code>meta-llama/Llama-3.1-8B-Instruct</code>) or an absolute path to a local checkpoint (see <a href="#local-checkpoints">Local checkpoints</a>).</td>
+</tr>
+<tr>
+<td><strong>Port</strong></td>
+<td>Port the vLLM OpenAI-compatible server will listen on.</td>
+</tr>
+<tr>
+<td><strong>GPU Memory Fraction</strong></td>
+<td>Fraction of GPU memory to allocate (0.0–1.0).</td>
+</tr>
+</tbody>
+</table>
+<p>Optional fields include <strong>Owner</strong> (free-text, used for attribution in the table and usage reports), <strong>Serve for</strong> (auto-stop after N hours; can be <a href="#extending-a-running-deployment">extended later</a> without a restart), engine options, LoRA adapters, extra packages, extra args, and env vars.</p>
+<p>The form's pre-filled defaults (port, GPU fraction, serve duration, vLLM version, max failed restarts) are configurable cluster-wide in <strong>Settings → Deployments</strong>.</p>
+<h2 id="vllm-version">vLLM version</h2>
+<p>Every deployment runs in an official <a href="https://hub.docker.com/r/vllm/vllm-openai/tags"><code>vllm/vllm-openai</code></a> container, via <strong>Docker or Podman</strong> — whichever the node offers (see <a href="../operations/#container-runtimes-docker--podman">Operations → Container runtimes</a> for how the runtime is chosen and the deployment's Settings dialog for which one a running model uses). The version you choose maps directly to an image tag — the image already bundles a matching CUDA runtime and PyTorch, so the node needs no local CUDA/PyTorch setup.</p>
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Image tag</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>(blank)</em></td>
+<td><code>vllm/vllm-openai:v&lt;latest release&gt;</code> (latest stable, resolved from GitHub).</td>
+</tr>
+<tr>
+<td><code>0.8.5</code></td>
+<td><code>vllm/vllm-openai:v0.8.5</code>.</td>
+</tr>
+<tr>
+<td><code>nightly</code></td>
+<td><code>vllm/vllm-openai:nightly</code>.</td>
+</tr>
+<tr>
+<td>40-character hex string</td>
+<td><code>vllm/vllm-openai:nightly-&lt;commit&gt;</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>The version field placeholder dynamically shows the current latest release so you always know what "blank" resolves to.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The resolved version is stored in the database and displayed in the deployments table, even when you leave the field blank. This way you always know exactly which vLLM version a deployment is running.</p>
+</div>
+<h3 id="how-images-work">How images work</h3>
+<ul>
+<li>The requested image is pulled once and cached on the node; subsequent deployments of the same version start instantly (no re-download).</li>
+<li>Each deployment runs as its own container, labelled so the agent can rediscover it after a restart.</li>
+<li>Model weights are cached in a shared HuggingFace cache mounted into every container, so a model is downloaded only once per node.</li>
+<li>When a deployment is stopped, its container is removed; the image stays cached for reuse.</li>
+</ul>
+<h2 id="gpu-selection">GPU selection</h2>
+<p>Select which GPUs to use with the toggle buttons in the deploy form. Each button corresponds to a GPU index reported by the node. You can select one or more GPUs.</p>
+<ul>
+<li>If no GPUs are selected, the container is given access to all GPUs (<code>--gpus all</code>).</li>
+<li>Selecting specific GPUs passes only those devices into the container (<code>--gpus "device=..."</code>).</li>
+</ul>
+<h3 id="tensor-parallel">Tensor parallel</h3>
+<p>When using multiple GPUs for a single model, set <strong>Tensor Parallel Size</strong> to the number of GPUs. This tells vLLM to shard the model across the selected GPUs.</p>
+<h2 id="engine-options">Engine options</h2>
+<p>The <strong>Engine Options</strong> section of the form exposes the most common vLLM flags as structured fields, so you don't need to hand-write CLI args:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>vLLM flag</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Served model name</td>
+<td><code>--served-model-name</code></td>
+</tr>
+<tr>
+<td>Max model length</td>
+<td><code>--max-model-len</code></td>
+</tr>
+<tr>
+<td>Dtype</td>
+<td><code>--dtype</code></td>
+</tr>
+<tr>
+<td>Quantization</td>
+<td><code>--quantization</code></td>
+</tr>
+<tr>
+<td>Max num seqs</td>
+<td><code>--max-num-seqs</code></td>
+</tr>
+<tr>
+<td>KV cache dtype</td>
+<td><code>--kv-cache-dtype</code></td>
+</tr>
+<tr>
+<td>Swap space</td>
+<td><code>--swap-space</code></td>
+</tr>
+<tr>
+<td>Enforce eager</td>
+<td><code>--enforce-eager</code></td>
+</tr>
+<tr>
+<td>Trust remote code</td>
+<td><code>--trust-remote-code</code></td>
+</tr>
+<tr>
+<td>Revision</td>
+<td><code>--revision</code> (pin an exact HF revision/commit)</td>
+</tr>
+<tr>
+<td>Seed</td>
+<td><code>--seed</code> (fix the sampling seed)</td>
+</tr>
+</tbody>
+</table>
+<p>These are stored structured in the database (and in <a href="#reproducibility-manifests">manifests</a>), so they survive save/load and redeploy. Anything not covered here can still go into <strong>Extra Args</strong>, which is appended last and therefore wins on conflicts.</p>
+<div class="admonition tip">
+<p class="admonition-title">Reproducibility</p>
+<p>For experiments you intend to cite or rerun, set <strong>Revision</strong> and <strong>Seed</strong>. Together with the pinned vLLM version they make a deployment reproducible; the exact image digest is also recorded automatically.</p>
+</div>
+<h2 id="local-checkpoints">Local checkpoints</h2>
+<h3 id="upload-from-the-dashboard">Upload from the dashboard</h3>
+<p>The easiest way to get a local checkpoint onto a node is the node's <strong>Manage</strong> dialog → <strong>Local Models</strong>:</p>
+<ul>
+<li><strong>Upload Folder</strong> — pick the checkpoint directory in the browser (<code>config.json</code>, <code>*.safetensors</code>, tokenizer files); it streams to the node with a progress bar, file by file, with no size buffering at any hop.</li>
+<li><strong>Upload Archive</strong> — same, but as a single <code>.tar.gz</code>/<code>.zip</code>; the node extracts it (a single wrapping folder is flattened automatically so <code>config.json</code> ends up at the model root).</li>
+<li><strong>Pull from URL</strong> — paste an <code>http(s)</code> URL (e.g. a presigned S3 link) and the node downloads it directly; progress shows in the dialog. Archives are extracted; a single-file URL (e.g. a <code>.gguf</code>) is stored as-is.</li>
+</ul>
+<p>Uploaded models live under <code>~/.vllm-client/.models/&lt;name&gt;</code> on the node, are always part of the allowed model dirs (no <code>MODEL_DIRS</code> configuration needed), and are mounted read-only into every new vLLM container. The dialog lists them with size and in-use status; managed models can be deleted there when no deployment serves them. Model names must be a single path segment (letters, digits, <code>.</code>, <code>_</code>, <code>-</code>), and an upload to an existing name is rejected — delete the old model first.</p>
+<p>To deploy one, select the node in the <strong>Deploy Model</strong> form and pick it from the <strong>Local model on this node</strong> dropdown (it fills the model name with the checkpoint's absolute path). Transfers are checked against the node's free disk space up front, and interrupted uploads are cleaned up automatically.</p>
+<h3 id="pre-existing-checkpoints-model_dirs">Pre-existing checkpoints (<code>MODEL_DIRS</code>)</h3>
+<p>If your checkpoints already live on the node (shared filesystem, rsync workflows), allowlist their directories instead: set <code>MODEL_DIRS</code> in the client agent's <code>.env</code> (comma-separated) and restart the agent:</p>
+<div class="highlight"><pre><span></span><code>MODEL_DIRS=/data/checkpoints,/data/adapters
+</code></pre></div>
+<p>Then use an absolute path as the model name, e.g. <code>/data/checkpoints/my-finetune</code>. Allowed directories (including the managed upload dir) are mounted <strong>read-only</strong> into every vLLM container at the same path, so paths behave identically inside and outside the container. <code>MODEL_DIRS</code> entries also appear in the Local Models list and the deploy-form picker, marked as external (they cannot be deleted from the UI).</p>
+<p>Paths are validated on the client: they must exist and resolve to a location inside an allowed directory (symlink and <code>..</code> escapes are rejected).</p>
+<h2 id="lora-adapters">LoRA adapters</h2>
+<p>The <strong>LoRA Adapters</strong> section lets you serve one or more adapters alongside the base model. Each row takes a <strong>name</strong> (how clients address the adapter) and a <strong>path</strong> — either a local path inside an allowed model dir, or a Hugging Face hub adapter id.</p>
+<p>Local adapters can be put on the node the same ways as full checkpoints: upload the adapter folder/archive via the node's Manage dialog → <a href="#local-checkpoints">Local Models</a> (then use its managed path, <code>~/.vllm-client/.models/&lt;name&gt;</code>), or place it in a <code>MODEL_DIRS</code> directory yourself.</p>
+<p>This translates to vLLM's <code>--enable-lora --lora-modules name=path ...</code>. Adapter names appear in <code>/v1/models</code> (with <code>parent</code> pointing at the base model) and can be used directly as the <code>model</code> field in requests, both via the <a href="../gateway/">gateway</a> and the node directly. Adapters served this way also show up on the deployment's <strong>Endpoint</strong> dialog ("also serves: …"), are stored in saved configs and <a href="#reproducibility-manifests">manifests</a>, and survive host restarts like the rest of the launch config. Additional LoRA tuning flags (e.g. <code>--max-lora-rank</code>) go in <strong>Extra Args</strong>.</p>
+<h2 id="extra-packages">Extra packages</h2>
+<p>Expand the <strong>Add Extra Packages</strong> section to install additional pip packages on top of the base vLLM image. Enter one package per line, using standard pip syntax:</p>
+<div class="highlight"><pre><span></span><code>transformers&gt;=4.40
+flash-attn
+</code></pre></div>
+<p>When extra packages are present, the client builds a thin derived image (<code>FROM vllm/vllm-openai:&lt;tag&gt;</code> + <code>pip install ...</code>) and caches it by a hash of the base image and package list, so the build happens once and is reused across identical deployments.</p>
+<h2 id="plugins">Plugins</h2>
+<p>vLLM supports Python plugins passed as CLI arguments (e.g. <code>--reasoning-parser-plugin my_plugin.py</code>). To use a plugin:</p>
+<ol>
+<li>Click the upload button and select a <code>.py</code> file.</li>
+<li>The file is uploaded to the client node and stored as-is.</li>
+<li>The file path is automatically added to the <strong>Extra Args</strong> field.</li>
+</ol>
+<p>Supported upload formats:</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.py</code></td>
+<td>Stored as a plugin file. Path added to extra args.</td>
+</tr>
+<tr>
+<td><code>.whl</code></td>
+<td>Stored as a wheel. Path added to extra packages for pip install.</td>
+</tr>
+<tr>
+<td><code>.tar.gz</code> / <code>.zip</code></td>
+<td>Extracted and path added to extra packages.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="extra-args">Extra args</h2>
+<p>The <strong>Extra Args</strong> field lets you pass additional CLI flags to the vLLM server. These are appended directly to the <code>vllm.entrypoints.openai.api_server</code> command. Examples:</p>
+<div class="highlight"><pre><span></span><code>--max-model-len 4096
+--reasoning-parser-plugin /path/to/plugin.py
+--enforce-eager
+</code></pre></div>
+<h2 id="environment-variables">Environment variables</h2>
+<p>Add environment variables for the deployment under the <strong>Env Vars</strong> section. Common use cases:</p>
+<ul>
+<li><code>HF_TOKEN</code> or <code>HUGGING_FACE_HUB_TOKEN</code> for gated models (e.g. Llama).</li>
+<li><code>VLLM_ATTENTION_BACKEND</code> to override the attention backend.</li>
+</ul>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>Sensitive values (tokens, keys, passwords) are masked in the deployment logs for security.</p>
+</div>
+<h2 id="deployment-lifecycle">Deployment lifecycle</h2>
+<div class="screenshot">
+  <a class="glightbox" data-type="image" data-width="auto" data-height="auto" href="../assets/img/deployment-table.png" data-desc-position="bottom"><img alt="Deployment table showing models, status, and actions" src="../assets/img/deployment-table.png"></a>
+</div>
+
+<p>A deployment goes through these states:</p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>starting</strong></td>
+<td>The client is preparing the vLLM image and starting the container. While a new image version is being pulled (20+ GB on first use), the status chip shows live progress inline, e.g. <code>starting (pulling image · 3.5/21.6 GB)</code>; warm starts of cached versions skip this entirely.</td>
+</tr>
+<tr>
+<td><strong>loading</strong></td>
+<td>The vLLM container is starting up. The status shows the current engine phase (downloading weights, loading weights, compiling).</td>
+</tr>
+<tr>
+<td><strong>running</strong></td>
+<td>The vLLM server is healthy and responding to requests.</td>
+</tr>
+<tr>
+<td><strong>paused_ram</strong></td>
+<td>The model is paused (warm cache): GPU VRAM freed, weights held in CPU RAM. The deployment remains routable — the first inference request wakes it automatically. The serve-duration countdown continues while paused.</td>
+</tr>
+<tr>
+<td><strong>stopping</strong></td>
+<td>A stop was requested and the process is shutting down.</td>
+</tr>
+<tr>
+<td><strong>stopped</strong></td>
+<td>The process has exited cleanly (or its serve duration expired).</td>
+</tr>
+<tr>
+<td><strong>error</strong></td>
+<td>The process exited unexpectedly. The table shows a classified cause; check logs for details.</td>
+</tr>
+<tr>
+<td><strong>unreachable</strong></td>
+<td>The host backend cannot reach the client node.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="readiness-detection">Readiness detection</h3>
+<p>After starting, the backend polls the vLLM server's <code>/health</code> and <code>/v1/models</code> endpoints every 2 seconds. The deployment transitions from <code>loading</code> to <code>running</code> once either endpoint returns HTTP 200.</p>
+<h3 id="failure-classification-and-crash-loop-protection">Failure classification and crash-loop protection</h3>
+<p>When a container exits unexpectedly, the agent matches the log tail against known failure signatures (GPU out of memory, bad CLI arguments, missing/gated model, etc.) and surfaces an actionable cause in the dashboard instead of a bare "error".</p>
+<p>A deployment that keeps crashing without ever becoming ready is stopped after <code>MAX_FAILED_RESTARTS</code> attempts (client setting, default 3; overridable per deployment in the form), so a misconfigured model cannot restart-loop forever. Independently, a host-side watchdog marks deployments as errored if they sit in <code>starting</code>/<code>loading</code> longer than <code>START_TIMEOUT_SECONDS</code> (default 30 minutes).</p>
+<h3 id="extending-a-running-deployment">Extending a running deployment</h3>
+<p>Deployments started with a <strong>Serve for</strong> duration shut down automatically when it elapses. To keep a model alive longer <strong>without restarting it</strong>, use the <strong>+</strong> button in the Remaining column — preset extensions (+1h / +4h / +12h / +24h), <strong>Custom…</strong> for an arbitrary number of hours, or <strong>Infinite</strong> to drop the deadline entirely and serve until stopped (matching the launch form's duration options). Via the API, send either <code>hours</code> or <code>infinite</code>:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://&lt;host&gt;:8000/api/deployments/&lt;id&gt;/extend<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"hours": 4}'</span>
+<span class="c1"># or remove the deadline entirely:</span>
+curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://&lt;host&gt;:8000/api/deployments/&lt;id&gt;/extend<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"infinite": true}'</span>
+</code></pre></div>
+<p>Extensions apply only to active deployments and re-arm the expiry warning <a href="../operations/#notifications">notification</a>; switching to infinite disarms it (there is no longer a deadline).</p>
+<h3 id="pause-resume-and-pin">Pause, resume, and pin</h3>
+<p>On nodes with <strong>warm cache</strong> enabled, running deployments show additional actions:</p>
+<ul>
+<li><strong>Pause</strong> — puts the model to sleep, freeing GPU VRAM while keeping weights in RAM. The deployment status changes to <code>paused_ram</code> and remains routable through the gateway — the first request transparently wakes it (a few seconds, no re-download). The serve-duration countdown continues while paused, so a paused deployment still expires on schedule. Pinned deployments cannot be paused.</li>
+<li><strong>Resume</strong> — explicitly wakes a paused model without waiting for a request.</li>
+<li><strong>Pin</strong> — protects a deployment from automatic eviction by the warm cache. A pinned model is never paused by the auto-evictor, even if it is the least recently used. Unpin to allow eviction again.</li>
+</ul>
+<p>These actions are not available on unified-memory nodes (e.g. DGX Spark), where pause has no effect.</p>
+<h3 id="logs">Logs</h3>
+<p>Click <strong>Logs</strong> on any deployment to stream its output in real time. Every line is prefixed with a UTC timestamp (<code>[2026-06-11 08:00:32] …</code>). Logs include:</p>
+<ul>
+<li>Image pull/build progress and agent events (<code>[docker]</code> / <code>[agent]</code> prefixed lines).</li>
+<li>vLLM server startup and runtime output (streamed from the container).</li>
+<li>ANSI escape codes are automatically stripped for clean display.</li>
+</ul>
+<p>Monitoring noise is filtered out: the HTTP access-log lines produced by the agent's own <code>/metrics</code> polling and <code>/health</code> checks (every ~15 s) never enter the log. Inference request lines (<code>POST /v1/...</code>) and the engine's throughput stats are kept.</p>
+<p>The dialog shows the live tail (last ~400 lines). The <strong>full log of the current run</strong> is persisted on the node under <code>~/.vllm-client/.logs/</code> and survives agent restarts without gaps or duplicates — use <strong>Download full log</strong> in the logs dialog to fetch it. One file per deployment run is kept (the previous run remains as <code>&lt;file&gt;.1</code>); files rotate at <code>LOG_MAX_MB</code> (default 50 MB) and are deleted after <code>LOG_RETENTION_DAYS</code> (default 14) without activity — see <a href="../operations/#configuration">Operations</a>.</p>
+<h2 id="connecting-to-a-deployment">Connecting to a deployment</h2>
+<p>Click <strong>Endpoint</strong> on any running deployment to get copy-paste connection details: the base URL, a Python <code>openai</code> snippet, and a curl one-liner — each with a toggle between the cluster-wide <a href="../gateway/">gateway</a> URL and the direct node URL. The table's Usage column shows each deployment's lifetime prompt/completion tokens, total requests, and current tokens/s.</p>
+<h2 id="saved-configurations">Saved configurations</h2>
+<p>You can save and load deployment configurations from the dashboard. A saved config stores all deployment settings (model, port, GPU selection, version, packages, extra args, env vars, LoRA adapters) so you can redeploy with one click.</p>
+<h2 id="reproducibility-manifests">Reproducibility manifests</h2>
+<div class="screenshot">
+  <a class="glightbox" data-type="image" data-width="auto" data-height="auto" href="../assets/img/deployment-settings-dialog.png" data-desc-position="bottom"><img alt="Deployment settings dialog with Manifest button" src="../assets/img/deployment-settings-dialog.png"></a>
+</div>
+
+<p>Every deployment can be exported as a self-contained JSON manifest — open the deployment's settings dialog and click <strong>Manifest</strong> (copy, download, or load it back into the launch form). It records everything needed to cite and reproduce the serving setup:</p>
+<ul>
+<li>model (and served model name), HF <strong>revision</strong>, sampling <strong>seed</strong></li>
+<li>exact <strong>vLLM version</strong> and the resolved <strong>image digest</strong></li>
+<li>all engine args, extra args, extra packages, and LoRA adapters</li>
+<li>GPU assignment (ids, names, memory fraction, tensor parallel size) and node hostname</li>
+<li>env var <strong>keys only</strong> — secret values are never written to manifests</li>
+</ul>
+<p>To redeploy from a manifest, load it into the launch form in the UI, or POST it to the API:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://&lt;host&gt;:8000/api/deployments/from-manifest<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"manifest": &lt;manifest JSON&gt;, "node_id": 1, "port": 8001, "env_vars": [...]}'</span>
+</code></pre></div>
+<p>A redeploy pins the vLLM version tag, HF revision, and seed; the image digest is informational (tags can move, so compare digests if bit-exact images matter). Env var values must be supplied again at redeploy time.</p>
+<h2 id="deployment-recovery">Deployment recovery</h2>
+<p>If the host backend is restarted while deployments are still running on client nodes, the sync loop automatically rediscovers them and re-creates the database entries. Running deployments are never interrupted by a backend restart.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden="">
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"></path></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "content.code.copy", "content.tabs.link"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  
+<script id="init-glightbox">const lightbox = GLightbox({"touchNavigation": true, "loop": false, "zoomable": true, "draggable": true, "openEffect": "zoom", "closeEffect": "zoom", "slideEffect": "slide"});
+document$.subscribe(()=>{ lightbox.reload(); });
+</script></body></html>
