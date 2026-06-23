@@ -684,7 +684,7 @@ class TestPreflightOrchestrators:
         assert len(results) == 6
         assert all(isinstance(r, PreflightResult) for r in results)
 
-    def test_preflight_client_fails_when_no_runtime(self):
+    def test_preflight_client_fails_when_no_runtime_binary(self):
         config = ClientConfig(
             host_ip="127.0.0.1", consul_port=0,
             client_host="0.0.0.0", client_port=0, node_name="n",
@@ -693,6 +693,7 @@ class TestPreflightOrchestrators:
                          return_value=PreflightResult("Docker", CheckStatus.WARN, "Not found")), \
              mock.patch("aquila.cli._check_podman_client",
                          return_value=PreflightResult("Podman", CheckStatus.WARN, "Not found")), \
+             mock.patch("aquila.cli.shutil.which", return_value=None), \
              mock.patch("aquila.cli._check_port",
                          return_value=PreflightResult("Port", CheckStatus.PASS, "ok")):
             results = preflight_client(config)
@@ -716,6 +717,27 @@ class TestPreflightOrchestrators:
         docker_r = next(r for r in results if r.label == "Docker")
         podman_r = next(r for r in results if r.label == "Podman")
         assert docker_r.status == CheckStatus.PASS
+        assert podman_r.status == CheckStatus.WARN
+
+    def test_preflight_client_no_fail_when_runtime_has_issues(self):
+        """Docker permission denied + old Podman should warn, not fail."""
+        config = ClientConfig(
+            host_ip="127.0.0.1", consul_port=0,
+            client_host="0.0.0.0", client_port=0, node_name="n",
+        )
+        with mock.patch("aquila.cli._check_docker_client",
+                         return_value=PreflightResult("Docker", CheckStatus.WARN, "Permission denied",
+                                                       hint="Add your user to the docker group.")), \
+             mock.patch("aquila.cli._check_podman_client",
+                         return_value=PreflightResult("Podman >= 5.4", CheckStatus.WARN, "Podman 4.9.3",
+                                                       hint="Podman < 5.4 cannot pass GPUs.")), \
+             mock.patch("aquila.cli.shutil.which", return_value="/usr/bin/something"), \
+             mock.patch("aquila.cli._check_port",
+                         return_value=PreflightResult("Port", CheckStatus.PASS, "ok")):
+            results = preflight_client(config)
+        docker_r = next(r for r in results if "Docker" in r.label)
+        podman_r = next(r for r in results if "Podman" in r.label)
+        assert docker_r.status == CheckStatus.WARN
         assert podman_r.status == CheckStatus.WARN
 
 
