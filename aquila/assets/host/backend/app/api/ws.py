@@ -13,6 +13,7 @@ router = APIRouter()
 
 
 @router.websocket("/ws")
+@router.websocket("/ws/")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     """Accept a WebSocket connection for live dashboard state-change notifications."""
     await manager.connect(websocket)
