@@ -31,6 +31,7 @@ import {
   deleteApiKey,
   fetchApiKeys,
   fetchDeployments,
+  fetchHealth,
   fetchSettings,
   purgeDatabase,
   updateApiKey,
@@ -150,6 +151,13 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     queryKey: ["deployments"],
     queryFn: fetchDeployments,
     enabled: open
+  });
+
+  const healthQuery = useQuery({
+    queryKey: ["health"],
+    queryFn: fetchHealth,
+    enabled: open,
+    staleTime: 60_000
   });
 
   useEffect(() => {
@@ -319,7 +327,12 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         open={open}
         onClose={handleClose}
         title="Settings"
-        meta="Saved values override the backend's environment defaults and apply live — no restart needed."
+        meta={
+          `Saved values override the backend's environment defaults and apply live — no restart needed.` +
+          (healthQuery.data?.aquila_version
+            ? ` · Host v${healthQuery.data.aquila_version}`
+            : "")
+        }
         contentSx={{ pt: 0 }}
         actions={
           <>

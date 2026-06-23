@@ -26,6 +26,7 @@ from app.services.node_state import (
     rogue_process_counts,
     rogue_artifact_counts,
     ram_cache_used_mb,
+    aquila_versions,
 )
 from app.services.notify import _warned_expiring, notify
 from app.ws.manager import manager
@@ -179,6 +180,12 @@ async def sync_nodes_from_consul(interval_seconds: int = 10) -> None:
                             node.installed_packages = installed_packages
                         if isinstance(available_runtimes, list):
                             node.available_runtimes = available_runtimes
+
+                    # Track the Aquila version reported by this agent.
+                    client_version = metrics.get("aquila_version") if metrics else None
+                    if isinstance(client_version, str) and client_version:
+                        await session.flush()
+                        aquila_versions[node.id] = client_version
 
                     # Keep a history sample for the metrics charts.
                     if metrics is not None:

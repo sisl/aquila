@@ -158,21 +158,21 @@ sudo systemctl restart aquila-client.service
 If the host should be reachable from other machines, use a non-loopback `--host-ip` (for example the host's LAN IP) and ensure firewall rules allow inbound traffic.
 
 ## Reverse proxy base path
-If you proxy the frontend under a path like `/vllm/`, pass `--base-path /vllm/` when running `host up`. This ensures asset URLs and API/WebSocket paths resolve correctly.
+If you proxy the frontend under a path like `/aquila/`, pass `--base-path /aquila/` when running `host up`. This ensures asset URLs and API/WebSocket paths resolve correctly.
 
-Nginx needs to route four distinct path prefixes — three to the backend and one to the frontend. Below is a complete location block you can copy into your `server` section and adapt (replace `/vllm` with your chosen prefix, and adjust ports if you changed the defaults):
+Nginx needs to route four distinct path prefixes — three to the backend and one to the frontend. Below is a complete location block you can copy into your `server` section and adapt (replace `/aquila` with your chosen prefix, and adjust ports if you changed the defaults):
 
 ```nginx
-# --- Aquila under /vllm/ --------------------------------------------------
+# --- Aquila under /aquila/ ------------------------------------------------
 
-# Bare /vllm → redirect to trailing-slash form
-location = /vllm {
-    return 301 $scheme://$http_host/vllm/;
+# Bare /aquila → redirect to trailing-slash form
+location = /aquila {
+    return 301 $scheme://$http_host/aquila/;
 }
 
 # REST API → backend
-location /vllm/api/ {
-    rewrite            ^/vllm/(.*)$ /$1 break;
+location /aquila/api/ {
+    rewrite            ^/aquila/(.*)$ /$1 break;
     proxy_pass         http://127.0.0.1:8000;
     proxy_http_version 1.1;
     proxy_set_header   Host $host;
@@ -186,8 +186,8 @@ location /vllm/api/ {
 }
 
 # WebSocket → backend
-location /vllm/ws/ {
-    rewrite            ^/vllm/(.*)$ /$1 break;
+location /aquila/ws/ {
+    rewrite            ^/aquila/(.*)$ /$1 break;
     proxy_pass         http://127.0.0.1:8000;
     proxy_http_version 1.1;
     proxy_set_header   Upgrade $http_upgrade;
@@ -200,8 +200,8 @@ location /vllm/ws/ {
 }
 
 # OpenAI-compatible gateway → backend
-location /vllm/v1/ {
-    rewrite            ^/vllm/(.*)$ /$1 break;
+location /aquila/v1/ {
+    rewrite            ^/aquila/(.*)$ /$1 break;
     proxy_pass         http://127.0.0.1:8000;
     proxy_http_version 1.1;
     proxy_set_header   Host $host;
@@ -213,7 +213,7 @@ location /vllm/v1/ {
 }
 
 # Frontend (catch-all) → Vite preview server
-location /vllm/ {
+location /aquila/ {
     proxy_pass         http://127.0.0.1:5173;
     proxy_http_version 1.1;
     proxy_set_header   Upgrade $http_upgrade;
@@ -226,7 +226,7 @@ location /vllm/ {
 ```
 
 !!! warning
-    All four `location` blocks are required. The three backend blocks (`/api/`, `/ws/`, `/v1/`) must appear **before** the frontend catch-all (`/vllm/`) because Nginx picks the longest matching prefix. If any are missing, those requests fall through to the frontend and silently fail — the gateway returns HTML instead of JSON, or the dashboard shows "Polling" instead of "Live".
+    All four `location` blocks are required. The three backend blocks (`/api/`, `/ws/`, `/v1/`) must appear **before** the frontend catch-all (`/aquila/`) because Nginx picks the longest matching prefix. If any are missing, those requests fall through to the frontend and silently fail — the gateway returns HTML instead of JSON, or the dashboard shows "Polling" instead of "Live".
 
 ## vLLM images
 Each deployment runs the official `vllm/vllm-openai` container; the requested version maps to an image tag and the image bundles its own matching CUDA runtime and PyTorch. There is no host-side CUDA detection or wheel selection — the client only needs Docker and the NVIDIA Container Toolkit. Images are pulled once and cached on the node; warm starts are instant. When extra pip packages are requested, the client builds and caches a thin derived image (`FROM vllm/vllm-openai:<tag>`).

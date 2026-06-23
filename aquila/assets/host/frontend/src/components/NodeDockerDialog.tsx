@@ -444,6 +444,11 @@ export function NodeDockerDialog({ node, open, onClose }: NodeDockerDialogProps)
             />
           </Box>
         )}
+        {node?.aquila_version && (
+          <Typography variant="caption" className="muted" sx={{ mb: disk ? -1 : 1, display: "block" }}>
+            Agent v{node.aquila_version}
+          </Typography>
+        )}
         {actionError && (
           <Typography variant="body2" color="error" sx={{ mb: 2 }}>
             {actionError}

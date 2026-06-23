@@ -5,6 +5,8 @@ from urllib.request import Request, urlopen
 
 from fastapi import APIRouter
 
+from aquila import __version__ as _aquila_version
+
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
@@ -17,7 +19,7 @@ _LATEST_VERSION_TTL: float = 3600.0
 @router.get("/health")
 async def health() -> dict[str, str]:
     """Backend health check."""
-    return {"status": "ok"}
+    return {"status": "ok", "aquila_version": _aquila_version}
 
 
 @router.get("/vllm-version")

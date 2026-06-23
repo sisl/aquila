@@ -40,10 +40,14 @@ function servedName(deployment: Deployment): string {
 }
 
 function pythonSnippet(baseUrl: string, model: string, apiKey: string): string {
+  const clientArgs =
+    apiKey !== "not-needed"
+      ? `base_url="${baseUrl}", api_key="${apiKey}"`
+      : `base_url="${baseUrl}", api_key="unused"`;
   return [
     "from openai import OpenAI",
     "",
-    `client = OpenAI(base_url="${baseUrl}", api_key="${apiKey}")`,
+    `client = OpenAI(${clientArgs})`,
     "resp = client.chat.completions.create(",
     `    model="${model}",`,
     '    messages=[{"role": "user", "content": "Hello"}],',
@@ -68,7 +72,7 @@ function curlSnippet(baseUrl: string, model: string, apiKey: string): string {
 
 type EndpointBlockProps = {
   label: string;
-  content: (baseUrl: string) => string;
+  content: (baseUrl: string, resolvedKind: UrlKind) => string;
   gatewayUrl: string | null;
   directUrl: string | null;
   kind: UrlKind;
@@ -111,7 +115,7 @@ function UrlKindOption({
 function EndpointBlock({ label, content, gatewayUrl, directUrl, kind, onKindChange, onCopy }: EndpointBlockProps) {
   const baseUrl =
     kind === "direct" && directUrl ? directUrl : gatewayUrl ?? directUrl ?? "";
-  const text = content(baseUrl);
+  const text = content(baseUrl, kind);
 
   return (
     <Box>
@@ -271,7 +275,7 @@ export function EndpointDialog({
         />
         <EndpointBlock
           label="Python (openai client)"
-          content={(baseUrl) => pythonSnippet(baseUrl, model, apiKey)}
+          content={(baseUrl, k) => pythonSnippet(baseUrl, model, k === "direct" ? "not-needed" : apiKey)}
           gatewayUrl={gatewayUrl}
           directUrl={directUrl}
           kind={gatewayUrl ? urlKind : "direct"}
@@ -280,7 +284,7 @@ export function EndpointDialog({
         />
         <EndpointBlock
           label="curl"
-          content={(baseUrl) => curlSnippet(baseUrl, model, apiKey)}
+          content={(baseUrl, k) => curlSnippet(baseUrl, model, k === "direct" ? "not-needed" : apiKey)}
           gatewayUrl={gatewayUrl}
           directUrl={directUrl}
           kind={gatewayUrl ? urlKind : "direct"}

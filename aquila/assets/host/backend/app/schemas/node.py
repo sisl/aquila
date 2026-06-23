@@ -38,6 +38,8 @@ class NodeRead(NodeBase):
     rogue_artifact_count: int | None = Field(None, description="Orphaned warm-cache artifacts (RAM + disk).")
     # Derived (not persisted): CPU RAM (MB) held by RAM-paused models.
     ram_cache_used_mb: float | None = Field(None, description="CPU RAM in MB currently held by RAM-paused models.")
+    # Derived (not persisted): Aquila version reported by the client agent.
+    aquila_version: str | None = Field(None, description="Aquila version running on the client agent.")
     last_heartbeat_at: datetime | None = Field(None, description="Timestamp of the last successful heartbeat from this node.")
     created_at: datetime | None = None
 

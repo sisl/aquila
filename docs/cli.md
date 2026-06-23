@@ -49,9 +49,9 @@ Launch host services in the foreground:
 aquila host up --host-ip 127.0.0.1 --host-frontend-port 5173 --host-discover-port 47528
 ```
 
-Reverse proxy under `/vllm/`:
+Reverse proxy under `/aquila/`:
 ```bash
-aquila host up --base-path /vllm/
+aquila host up --base-path /aquila/
 ```
 
 Launch a client node:

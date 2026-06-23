@@ -19,3 +19,6 @@ rogue_artifact_counts: dict[int, int] = {}
 
 # node_id -> CPU RAM (MB) currently held by RAM-paused models on the node.
 ram_cache_used_mb: dict[int, float] = {}
+
+# node_id -> Aquila version string reported by the client agent.
+aquila_versions: dict[int, str] = {}
