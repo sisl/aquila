@@ -2,9 +2,9 @@
   <img src="img/aquila-logo-full.svg" alt="Aquila — GPU Inference Management" height="80" />
 </p>
 
-[![Docs](https://img.shields.io/badge/docs-online-111827)](https://sisl.github.io/VLLMClusterManager/)
+[![Docs](https://img.shields.io/badge/docs-online-111827)](https://sisl.github.io/aquila/)
 [![PyPI](https://img.shields.io/pypi/v/aquila?color=111827)](https://pypi.org/project/aquila/)
-[![Tests](https://github.com/sisl/VLLMClusterManager/actions/workflows/tests.yml/badge.svg)](https://github.com/sisl/VLLMClusterManager/actions/workflows/tests.yml)
+[![Tests](https://github.com/sisl/aquila/actions/workflows/tests.yml/badge.svg)](https://github.com/sisl/aquila/actions/workflows/tests.yml)
 [![Python](https://img.shields.io/badge/python-3.10--3.14-111827)](https://pypi.org/project/aquila/)
 
 ![Aquila dashboard](img/aquila-screenshot.png "Aquila")
@@ -18,7 +18,7 @@ Admin dashboard + satellite clients for multi-model vLLM deployments. Deploy vLL
 - Warm cache (pause/resume models between GPU and RAM), per-GPU maintenance mode, and live cluster settings.
 - Upload local checkpoints and LoRA adapters from the browser, or pull them from a URL.
 
-See the [full documentation](https://sisl.github.io/VLLMClusterManager/) for detailed guides.
+See the [full documentation](https://sisl.github.io/aquila/) for detailed guides.
 
 ## Supported hardware
 - GPUs: NVIDIA H100, A100, L40, DGX Spark (GB10), RTX 4090

@@ -55,7 +55,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sisl/VLLMClusterManager"
+Homepage = "https://github.com/sisl/aquila"
 
 [project.scripts]
 aquila = "aquila.cli:main"

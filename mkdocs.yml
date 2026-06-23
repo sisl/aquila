@@ -1,8 +1,8 @@
 site_name: Aquila
 site_description: Documentation for the Aquila GPU inference cluster manager.
-site_url: https://sisl.github.io/vllmclustermanager/
-repo_name: sisl/vllmclustermanager
-repo_url: https://github.com/sisl/vllmclustermanager
+site_url: https://sisl.github.io/aquila/
+repo_name: sisl/aquila
+repo_url: https://github.com/sisl/aquila
 edit_uri: edit/main/docs/
 
 theme:
