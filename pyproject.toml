@@ -5,46 +5,65 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "aquila"
 dynamic = ["version"]
-description = "Deploy, manage, and monitor vLLM instances across a GPU cluster from a single web dashboard."
+description = "Single control plane for multi-node vLLM inference — deploy, serve, and manage LLMs across a GPU cluster without Kubernetes."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Marc Schlichting", email="mschl@stanford.edu"}]
 readme = {text = """
 # Aquila
 
-GPU inference cluster manager. Deploy, manage, and monitor vLLM instances across a GPU cluster from a single web dashboard.
+Single control plane for multi-node vLLM inference. Point-and-click deployments, an OpenAI-compatible gateway, warm caching, live GPU monitoring, and a full deployment lifecycle — without Kubernetes or a managed platform.
 
-## Quick Start
-
-```bash
-pip install aquila
-```
-
-**On each GPU node (satellite):**
+## Quick start
 
 ```bash
-aquila client install
-aquila client start
+uv venv && source .venv/bin/activate
+uv pip install aquila
 ```
 
-**On the management server (host):**
+**Host (management server):**
 
 ```bash
-aquila host install
-aquila host start
+aquila host up --host-ip 0.0.0.0 --host-frontend-port 5173 --host-discover-port 11400
 ```
 
-Then open the dashboard at `http://<host-ip>:5173` to deploy and monitor models across your cluster.
+**Client (each GPU node):**
+
+```bash
+aquila client up --host-ip <host-ip> --host-discover-port 11400
+```
+
+Open `http://<host-ip>:5173` — client nodes appear within seconds. Add `--service` for persistent systemd services.
 
 ## Features
 
-- Web dashboard for deploying and managing vLLM models across multiple GPU nodes
-- Runs each model in the official `vllm/vllm-openai` Docker container — no per-node CUDA/PyTorch setup; the version maps to an image tag
-- Live GPU utilization metrics and deployment status monitoring
-- Consul-based automatic node discovery
-- Support for custom pip packages (via cached derived images) and vLLM plugins
+- **Deploy and manage models** across GPU nodes via Docker or rootless Podman — each runs in the official `vllm/vllm-openai` container with a specific version, nightly build, or commit hash.
+- **OpenAI-compatible gateway** (`/v1`) with stable URLs across node moves, API key auth with per-deployment scoping, and auto-expiring snippet keys.
+- **Warm cache** — pause idle models to RAM and resume on demand; LRU auto-eviction frees GPU VRAM while keeping weights ready for near-instant restart.
+- **Local checkpoints and LoRA adapters** — upload from the browser (streamed) or pull from a URL directly onto a node.
+- **Live monitoring** — GPU utilization, disk usage, deployment status, per-deployment usage metrics, and 48-hour metric history charts.
+- **Usage tracking** — lifetime tokens, request counts, and average prefill/generation speeds from vLLM's own metrics.
+- **Reproducibility manifests** — export model, HF revision, seed, vLLM version, image digest, and full config per deployment.
+- **Notifications** — Slack/webhook alerts when deployments become ready, fail, or are about to expire.
+- **Per-GPU maintenance** — cordon individual GPUs while the rest of the node keeps serving; optionally drain affected deployments.
+- **Extra packages and plugins** — install pip packages and upload vLLM plugins per deployment via cached derived images.
+- **Reverse proxy support** — deploy behind nginx at any sub-path with `--base-path`.
+
+## Best for
+
+- Research labs and university clusters
+- Teams sharing GPUs across projects
+- Self-hosted multi-model inference
+
+## Supported platforms
+
+- Python 3.10–3.14, Node.js ≥ 23 (host only)
+- Ubuntu 22.04 and 24.04
+- NVIDIA GPUs (H100, A100, L40, RTX 4090, DGX Spark)
+
+[Full documentation](https://sisl.github.io/aquila/)
 """, content-type = "text/markdown"}
-keywords = ["vllm", "llm", "gpu", "cluster", "inference", "deployment"]
+keywords = ["vllm", "llm", "gpu", "cluster", "inference", "deployment", "openai", "serving"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
