@@ -63,8 +63,9 @@
 
 /* No subtitle in header — logo only. */
 
-/* Hide the site-name topic — the logo replaces it. */
-.md-header__topic:first-child {
+/* Hide the site-name text — the logo replaces it — but keep the container
+   visible so the version selector (appended by JS) can render. */
+.md-header__topic:first-child > .md-ellipsis {
   display: none;
 }
 
