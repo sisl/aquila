@@ -32,7 +32,7 @@ _last_used_updates: dict[str, datetime] = {}
 
 def generate() -> tuple[str, str, str]:
     """Return ``(raw_key, prefix, key_hash)``."""
-    raw = "ath-" + secrets.token_hex(16)
+    raw = "aqu-" + secrets.token_hex(16)
     prefix = raw[:8]
     key_hash = hashlib.sha256(raw.encode()).hexdigest()
     return raw, prefix, key_hash

@@ -1,7 +1,5 @@
 <p align="center">
-  <img src="img/aquila-logo.svg" alt="Aquila" height="64" />
-  <br />
-  <em>GPU Inference Management</em>
+  <img src="img/aquila-logo.svg" alt="Aquila" height="80" />&ensp;<em>GPU Inference Management</em>
 </p>
 
 [![Docs](https://img.shields.io/badge/docs-online-111827)](https://sisl.github.io/VLLMClusterManager/)

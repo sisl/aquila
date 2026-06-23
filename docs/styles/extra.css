@@ -47,18 +47,29 @@
   border-bottom: 1px solid var(--line-strong);
 }
 
+/* Show the logo SVG in the header with a baseline-aligned subtitle. */
 .md-header__button.md-logo {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 0.2rem 0;
+  margin-right: 0.4rem;
+}
+
+.md-header__button.md-logo img {
+  height: 26px;
+  width: auto;
+}
+
+/* No subtitle in header — logo only. */
+
+/* Hide the site-name topic — the logo replaces it. */
+.md-header__topic:first-child {
   display: none;
 }
 
-/* Brand mark: same voice as the dashboard title. */
 .md-header__title {
   font-weight: 300;
-}
-
-.md-header__topic {
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
 }
 
 .md-search__form {
@@ -266,10 +277,45 @@
   display: block;
   width: 100%;
   height: auto;
+  cursor: zoom-in;
 }
 
 .screenshot-narrow {
   max-width: 480px;
   margin-left: auto;
   margin-right: auto;
+}
+
+/* ------------------------------------------------- index page brand title */
+
+/* Hide auto-generated page title on the index page (brand replaces it). */
+.md-content__inner > h1:first-child:has(~ .docs-brand) {
+  display: none;
+}
+
+.docs-brand {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin: 0 0 1.5rem;
+}
+
+.docs-brand > p,
+.docs-brand a.glightbox {
+  display: contents;
+}
+
+.md-typeset .docs-brand img.docs-brand-logo {
+  height: clamp(52px, 7.5vw, 96px);
+  width: auto;
+  max-width: none;
+}
+
+.md-typeset .docs-brand .docs-brand-subtitle {
+  font-size: clamp(14px, 2.1vw, 24px);
+  font-weight: 300;
+  letter-spacing: 0.05em;
+  opacity: 0.4;
+  padding-bottom: 0.45em;
+  white-space: nowrap;
 }
