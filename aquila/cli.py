@@ -8,7 +8,8 @@ import socket
 import subprocess
 import sys
 import textwrap
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 from importlib import resources
 from pathlib import Path
 from typing import Iterable
@@ -50,6 +51,20 @@ class ClientConfig:
     client_host: str
     client_port: int
     node_name: str
+
+
+class CheckStatus(Enum):
+    PASS = "pass"
+    FAIL = "fail"
+    WARN = "warn"
+
+
+@dataclass
+class PreflightResult:
+    label: str
+    status: CheckStatus
+    message: str
+    hint: str = ""
 
 
 def main() -> None:
@@ -164,9 +179,269 @@ def build_client_config(args: argparse.Namespace) -> ClientConfig:
     )
 
 
+def _check_python() -> PreflightResult:
+    v = sys.version_info
+    version_str = f"Python {v[0]}.{v[1]}.{v[2]}"
+    if v >= (3, 10):
+        return PreflightResult("Python >= 3.10", CheckStatus.PASS, version_str)
+    return PreflightResult(
+        "Python >= 3.10", CheckStatus.FAIL, version_str,
+        hint="Install Python 3.10 or newer.",
+    )
+
+
+def _check_node() -> PreflightResult:
+    node = shutil.which("node")
+    if not node:
+        return PreflightResult(
+            "Node.js >= 23", CheckStatus.FAIL, "Not found",
+            hint="Install Node.js 23+ (https://nodejs.org/).",
+        )
+    try:
+        out = subprocess.run(
+            [node, "--version"], capture_output=True, text=True, timeout=5,
+        )
+        version_str = out.stdout.strip()
+        major_str = version_str.lstrip("v").split(".")[0]
+        try:
+            major = int(major_str)
+        except ValueError:
+            major = 0
+        if major >= 23:
+            return PreflightResult("Node.js >= 23", CheckStatus.PASS, version_str)
+        return PreflightResult(
+            "Node.js >= 23", CheckStatus.FAIL, version_str,
+            hint="Upgrade to Node.js 23+.",
+        )
+    except Exception:
+        return PreflightResult(
+            "Node.js >= 23", CheckStatus.FAIL, "Error running node --version",
+            hint="Check your Node.js installation.",
+        )
+
+
+def _check_npm() -> PreflightResult:
+    npm = shutil.which("npm")
+    if npm:
+        return PreflightResult("npm", CheckStatus.PASS, npm)
+    return PreflightResult(
+        "npm", CheckStatus.FAIL, "Not found",
+        hint="npm ships with Node.js — reinstall Node.js.",
+    )
+
+
+def _check_docker() -> PreflightResult:
+    docker = shutil.which("docker")
+    if not docker:
+        return PreflightResult(
+            "Docker daemon", CheckStatus.FAIL, "Not found",
+            hint="Install Docker (https://docs.docker.com/engine/install/) and add your user to the docker group.",
+        )
+    try:
+        out = subprocess.run(
+            [docker, "info", "--format", "{{.ServerVersion}}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return PreflightResult("Docker daemon", CheckStatus.PASS, f"Docker {out.stdout.strip()}")
+        stderr = out.stderr.strip().lower()
+        if "permission denied" in stderr or "connect" in stderr:
+            return PreflightResult(
+                "Docker daemon", CheckStatus.FAIL, "Permission denied",
+                hint="Add your user to the docker group: sudo usermod -aG docker $USER  (then log out and back in).",
+            )
+        return PreflightResult(
+            "Docker daemon", CheckStatus.FAIL, "Daemon not running",
+            hint="Start the Docker daemon: sudo systemctl start docker",
+        )
+    except Exception:
+        return PreflightResult(
+            "Docker daemon", CheckStatus.FAIL, "Error checking Docker",
+            hint="Install Docker and ensure the daemon is running.",
+        )
+
+
+def _check_compose() -> PreflightResult:
+    docker = shutil.which("docker")
+    if docker:
+        try:
+            out = subprocess.run(
+                [docker, "compose", "version", "--short"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if out.returncode == 0 and out.stdout.strip():
+                return PreflightResult("Docker Compose", CheckStatus.PASS, f"docker compose v{out.stdout.strip()}")
+        except Exception:
+            pass
+    dc = shutil.which("docker-compose")
+    if dc:
+        try:
+            out = subprocess.run(
+                [dc, "--version"], capture_output=True, text=True, timeout=5,
+            )
+            if out.returncode == 0:
+                return PreflightResult("Docker Compose", CheckStatus.PASS, out.stdout.strip())
+        except Exception:
+            pass
+    return PreflightResult(
+        "Docker Compose", CheckStatus.FAIL, "Not found",
+        hint="Install the Docker Compose plugin: sudo apt install docker-compose-plugin",
+    )
+
+
+def _check_container_runtime() -> PreflightResult:
+    docker = shutil.which("docker")
+    if docker:
+        try:
+            out = subprocess.run(
+                [docker, "info", "--format", "{{.ServerVersion}}"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if out.returncode == 0 and out.stdout.strip():
+                return PreflightResult("Container runtime", CheckStatus.PASS, f"Docker {out.stdout.strip()}")
+            stderr = out.stderr.strip().lower()
+            if "permission denied" in stderr or "connect" in stderr:
+                return PreflightResult(
+                    "Container runtime", CheckStatus.FAIL, "Permission denied",
+                    hint="Add your user to the docker group: sudo usermod -aG docker $USER  (then log out and back in).",
+                )
+        except Exception:
+            pass
+    podman = shutil.which("podman")
+    if podman:
+        try:
+            out = subprocess.run(
+                [podman, "version", "--format", "{{.Version}}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if out.returncode == 0 and out.stdout.strip():
+                return PreflightResult("Container runtime", CheckStatus.PASS, f"Podman {out.stdout.strip()}")
+        except Exception:
+            pass
+    return PreflightResult(
+        "Container runtime", CheckStatus.FAIL, "Not found",
+        hint="Install Docker (https://docs.docker.com/engine/install/) or enable the Podman socket.",
+    )
+
+
+def _check_nvidia_smi() -> PreflightResult:
+    nvsmi = shutil.which("nvidia-smi")
+    if not nvsmi:
+        return PreflightResult(
+            "GPU driver (nvidia-smi)", CheckStatus.WARN, "Not found",
+            hint="Install NVIDIA drivers if this node has GPUs.",
+        )
+    try:
+        out = subprocess.run(
+            [nvsmi, "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0:
+            gpus = [line for line in out.stdout.strip().splitlines() if line.strip()]
+            return PreflightResult("GPU driver (nvidia-smi)", CheckStatus.PASS, f"{len(gpus)} GPU(s)")
+        return PreflightResult(
+            "GPU driver (nvidia-smi)", CheckStatus.WARN, "nvidia-smi failed",
+            hint="Check your NVIDIA driver installation.",
+        )
+    except Exception:
+        return PreflightResult(
+            "GPU driver (nvidia-smi)", CheckStatus.WARN, "Error running nvidia-smi",
+            hint="Check your NVIDIA driver installation.",
+        )
+
+
+def _check_nvidia_ctk() -> PreflightResult:
+    ctk = shutil.which("nvidia-ctk")
+    if ctk:
+        return PreflightResult("NVIDIA Container Toolkit", CheckStatus.PASS, ctk)
+    cdi_path = Path("/etc/cdi")
+    if cdi_path.exists() and any(cdi_path.glob("*.json")):
+        return PreflightResult("NVIDIA Container Toolkit", CheckStatus.PASS, "CDI specs found")
+    return PreflightResult(
+        "NVIDIA Container Toolkit", CheckStatus.WARN, "Not found",
+        hint="Install nvidia-container-toolkit so containers can access GPUs.",
+    )
+
+
+def _check_port(port: int, label: str, flag: str = "") -> PreflightResult:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("0.0.0.0", port))
+        return PreflightResult(f"Port {port} ({label})", CheckStatus.PASS, "Available")
+    except OSError:
+        hint = f"Stop the process on port {port}"
+        if flag:
+            hint += f", or pass {flag} <port>"
+        return PreflightResult(
+            f"Port {port} ({label})", CheckStatus.FAIL, "In use",
+            hint=hint,
+        )
+
+
+def preflight_host(config: HostConfig) -> list[PreflightResult]:
+    return [
+        _check_python(),
+        _check_node(),
+        _check_npm(),
+        _check_docker(),
+        _check_compose(),
+        _check_port(config.frontend_port, "frontend", "--host-frontend-port"),
+        _check_port(config.admin_api_port, "backend API", "--host-backend-port"),
+        _check_port(config.consul_port, "discovery", "--host-discover-port"),
+        _check_port(config.postgres_port, "Postgres", "--postgres-port"),
+    ]
+
+
+def preflight_client(config: ClientConfig) -> list[PreflightResult]:
+    return [
+        _check_python(),
+        _check_container_runtime(),
+        _check_nvidia_smi(),
+        _check_nvidia_ctk(),
+        _check_port(config.client_port, "client API", "--client-port"),
+    ]
+
+
+def run_preflight(results: list[PreflightResult]) -> None:
+    from aquila.banner import _rgb, _supports_color
+
+    color = _supports_color()
+    _OK = (134, 194, 132)
+    _ERR = (220, 100, 100)
+    _WARN_CLR = (220, 186, 100)
+
+    label_width = max(len(r.label) for r in results)
+
+    print("Preflight checks:")
+    for r in results:
+        if r.status == CheckStatus.PASS:
+            icon = _rgb(*_OK, "✓") if color else "✓"
+        elif r.status == CheckStatus.FAIL:
+            icon = _rgb(*_ERR, "✗") if color else "✗"
+        else:
+            icon = _rgb(*_WARN_CLR, "!") if color else "!"
+        print(f"  {icon}  {r.label:<{label_width}}   {r.message}")
+        if r.hint and r.status != CheckStatus.PASS:
+            print(f"     → {r.hint}")
+
+    fails = sum(1 for r in results if r.status == CheckStatus.FAIL)
+    warns = sum(1 for r in results if r.status == CheckStatus.WARN)
+
+    if fails:
+        msg = f"\n{fails} check(s) failed — cannot continue."
+        print(_rgb(*_ERR, msg) if color else msg)
+        sys.exit(1)
+    elif warns:
+        msg = f"\n{warns} warning(s) — proceeding anyway."
+        print(_rgb(*_WARN_CLR, msg) if color else msg)
+    print()
+
+
 def run_host_up(config: HostConfig, use_service: bool) -> None:
     from aquila.banner import banner
     print(banner())
+    run_preflight(preflight_host(config))
     runtime_dir = ensure_runtime_dir("host")
     ensure_host_assets(runtime_dir)
     print("Host configuration:")
@@ -263,6 +538,7 @@ def run_host_down(purge: bool = False) -> None:
 def run_client_up(config: ClientConfig, use_service: bool) -> None:
     from aquila.banner import banner
     print(banner())
+    run_preflight(preflight_client(config))
     runtime_dir = ensure_runtime_dir("client")
     print("Client configuration:")
     print(format_kv(

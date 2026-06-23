@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import os
+import socket
 from pathlib import Path
 from unittest import mock
 
@@ -11,6 +12,8 @@ import pytest
 from aquila.cli import (
     HostConfig,
     ClientConfig,
+    CheckStatus,
+    PreflightResult,
     build_host_config,
     build_client_config,
     format_kv,
@@ -22,6 +25,18 @@ from aquila.cli import (
     write_pid,
     remove_pid,
     stop_pid,
+    _check_python,
+    _check_node,
+    _check_npm,
+    _check_docker,
+    _check_compose,
+    _check_container_runtime,
+    _check_nvidia_smi,
+    _check_nvidia_ctk,
+    _check_port,
+    preflight_host,
+    preflight_client,
+    run_preflight,
 )
 
 
@@ -439,3 +454,231 @@ def test_copy_assets_subdir_missing_raises(tmp_path):
 
     with pytest.raises(RuntimeError, match="Missing packaged assets"):
         cli_mod.copy_assets_subdir("host", "definitely-not-a-real-subdir", tmp_path / "d")
+
+
+# ---------------------------------------------------------------------------
+# Preflight checks
+# ---------------------------------------------------------------------------
+
+
+class TestCheckPython:
+    def test_pass(self):
+        result = _check_python()
+        assert result.status == CheckStatus.PASS
+        assert "Python" in result.message
+
+    def test_fail_on_old_version(self, monkeypatch):
+        monkeypatch.setattr("sys.version_info", (3, 9, 0, "final", 0))
+        result = _check_python()
+        assert result.status == CheckStatus.FAIL
+        assert result.hint
+
+
+class TestCheckNode:
+    def test_pass(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/node" if cmd == "node" else None)
+        fake = mock.MagicMock()
+        fake.stdout = "v23.6.0\n"
+        fake.returncode = 0
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake)
+        result = _check_node()
+        assert result.status == CheckStatus.PASS
+        assert "v23.6.0" in result.message
+
+    def test_fail_old_version(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/node" if cmd == "node" else None)
+        fake = mock.MagicMock()
+        fake.stdout = "v18.0.0\n"
+        fake.returncode = 0
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake)
+        result = _check_node()
+        assert result.status == CheckStatus.FAIL
+
+    def test_fail_not_found(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: None)
+        result = _check_node()
+        assert result.status == CheckStatus.FAIL
+        assert "Not found" in result.message
+
+
+class TestCheckNpm:
+    def test_pass(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/npm" if cmd == "npm" else None)
+        result = _check_npm()
+        assert result.status == CheckStatus.PASS
+
+    def test_fail(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: None)
+        result = _check_npm()
+        assert result.status == CheckStatus.FAIL
+
+
+class TestCheckDocker:
+    def test_pass(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/docker" if cmd == "docker" else None)
+        fake = mock.MagicMock()
+        fake.stdout = "27.0.3\n"
+        fake.stderr = ""
+        fake.returncode = 0
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake)
+        result = _check_docker()
+        assert result.status == CheckStatus.PASS
+        assert "27.0.3" in result.message
+
+    def test_fail_not_found(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: None)
+        result = _check_docker()
+        assert result.status == CheckStatus.FAIL
+
+    def test_fail_permission_denied(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/docker" if cmd == "docker" else None)
+        fake = mock.MagicMock()
+        fake.stdout = ""
+        fake.stderr = "Got permission denied while trying to connect"
+        fake.returncode = 1
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake)
+        result = _check_docker()
+        assert result.status == CheckStatus.FAIL
+        assert "docker group" in result.hint
+
+
+class TestCheckCompose:
+    def test_pass_plugin(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/docker" if cmd == "docker" else None)
+        fake = mock.MagicMock()
+        fake.stdout = "2.29.1\n"
+        fake.returncode = 0
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake)
+        result = _check_compose()
+        assert result.status == CheckStatus.PASS
+
+    def test_fail(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: None)
+        result = _check_compose()
+        assert result.status == CheckStatus.FAIL
+
+
+class TestCheckContainerRuntime:
+    def test_pass_docker(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/docker" if cmd == "docker" else None)
+        fake = mock.MagicMock()
+        fake.stdout = "27.0.3\n"
+        fake.stderr = ""
+        fake.returncode = 0
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake)
+        result = _check_container_runtime()
+        assert result.status == CheckStatus.PASS
+
+    def test_fail(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: None)
+        result = _check_container_runtime()
+        assert result.status == CheckStatus.FAIL
+
+
+class TestCheckNvidiaSmi:
+    def test_warn_not_found(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: None)
+        result = _check_nvidia_smi()
+        assert result.status == CheckStatus.WARN
+
+    def test_pass(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/nvidia-smi" if cmd == "nvidia-smi" else None)
+        fake = mock.MagicMock()
+        fake.stdout = "NVIDIA H100\nNVIDIA H100\n"
+        fake.returncode = 0
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake)
+        result = _check_nvidia_smi()
+        assert result.status == CheckStatus.PASS
+        assert "2 GPU" in result.message
+
+
+class TestCheckNvidiaCtk:
+    def test_pass_binary(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/nvidia-ctk" if cmd == "nvidia-ctk" else None)
+        result = _check_nvidia_ctk()
+        assert result.status == CheckStatus.PASS
+
+    def test_warn_not_found(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: None)
+        monkeypatch.setattr("pathlib.Path.exists", lambda self: False)
+        result = _check_nvidia_ctk()
+        assert result.status == CheckStatus.WARN
+
+
+class TestCheckPort:
+    def test_pass_available(self):
+        result = _check_port(0, "test")
+        assert result.status == CheckStatus.PASS
+
+    def test_fail_in_use(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("0.0.0.0", 0))
+            s.listen(1)
+            port = s.getsockname()[1]
+            result = _check_port(port, "test", "--some-flag")
+            assert result.status == CheckStatus.FAIL
+            assert "--some-flag" in result.hint
+
+
+class TestPreflightOrchestrators:
+    def test_preflight_host_returns_results(self):
+        config = HostConfig(
+            host_ip="127.0.0.1", frontend_port=0, admin_api_port=0,
+            consul_port=0, postgres_host="127.0.0.1", postgres_port=0,
+            postgres_db="db", postgres_user="u", postgres_password="p",
+            base_path="/",
+        )
+        with mock.patch("aquila.cli._check_port", return_value=PreflightResult("Port", CheckStatus.PASS, "ok")):
+            results = preflight_host(config)
+        assert len(results) == 9
+        assert all(isinstance(r, PreflightResult) for r in results)
+
+    def test_preflight_client_returns_results(self):
+        config = ClientConfig(
+            host_ip="127.0.0.1", consul_port=0,
+            client_host="0.0.0.0", client_port=0, node_name="n",
+        )
+        with mock.patch("aquila.cli._check_port", return_value=PreflightResult("Port", CheckStatus.PASS, "ok")):
+            results = preflight_client(config)
+        assert len(results) == 5
+        assert all(isinstance(r, PreflightResult) for r in results)
+
+
+class TestRunPreflight:
+    def test_all_pass(self, capsys):
+        results = [
+            PreflightResult("Check A", CheckStatus.PASS, "ok"),
+            PreflightResult("Check B", CheckStatus.PASS, "ok"),
+        ]
+        run_preflight(results)
+        out = capsys.readouterr().out
+        assert "Preflight checks:" in out
+        assert "✓" in out
+
+    def test_warn_does_not_exit(self, capsys):
+        results = [
+            PreflightResult("Check A", CheckStatus.PASS, "ok"),
+            PreflightResult("Check B", CheckStatus.WARN, "maybe", hint="try this"),
+        ]
+        run_preflight(results)
+        out = capsys.readouterr().out
+        assert "1 warning(s)" in out
+
+    def test_fail_exits(self):
+        results = [
+            PreflightResult("Check A", CheckStatus.PASS, "ok"),
+            PreflightResult("Check B", CheckStatus.FAIL, "bad", hint="fix it"),
+        ]
+        with pytest.raises(SystemExit) as exc_info:
+            run_preflight(results)
+        assert exc_info.value.code == 1
+
+    def test_fail_shows_hint(self, capsys):
+        results = [
+            PreflightResult("Check A", CheckStatus.FAIL, "bad", hint="do this"),
+        ]
+        with pytest.raises(SystemExit):
+            run_preflight(results)
+        out = capsys.readouterr().out
+        assert "do this" in out
