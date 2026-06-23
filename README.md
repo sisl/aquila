@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="img/aquila-logo-full.svg" alt="Aquila — GPU Inference Management" height="80" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="img/aquila-logo-full-dark.svg" />
+    <img src="img/aquila-logo-full.svg" alt="Aquila — GPU Inference Management" height="80" />
+  </picture>
 </p>
 
 [![Docs](https://img.shields.io/badge/docs-online-111827)](https://sisl.github.io/aquila/)
