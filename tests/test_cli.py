@@ -3,13 +3,12 @@
 import argparse
 import hashlib
 import os
-import textwrap
 from pathlib import Path
 from unittest import mock
 
 import pytest
 
-from vllm_cluster_manager.cli import (
+from aquila.cli import (
     HostConfig,
     ClientConfig,
     build_host_config,
@@ -23,9 +22,6 @@ from vllm_cluster_manager.cli import (
     write_pid,
     remove_pid,
     stop_pid,
-    parse_nvcc_version,
-    parse_smi_version,
-    _vllm_wheel_url,
 )
 
 
@@ -206,56 +202,12 @@ def test_stop_pid_no_such_process(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# CUDA version parsers
-# ---------------------------------------------------------------------------
-
-
-def test_parse_nvcc_version():
-    output = textwrap.dedent("""\
-        nvcc: NVIDIA (R) Cuda compiler driver
-        Copyright (c) 2005-2024 NVIDIA Corporation
-        Cuda compilation tools, release 12.4, V12.4.131
-    """)
-    assert parse_nvcc_version(output) == "12.4"
-
-
-def test_parse_nvcc_version_no_match():
-    assert parse_nvcc_version("random output") is None
-
-
-def test_parse_smi_version():
-    output = textwrap.dedent("""\
-        +-----------------------------------------------------------------------------------------+
-        | NVIDIA-SMI 550.54.14              Driver Version: 550.54.14      CUDA Version: 12.4     |
-        +-----------------------------------------------------------------------------------------+
-    """)
-    assert parse_smi_version(output) == "12.4"
-
-
-def test_parse_smi_version_no_match():
-    assert parse_smi_version("no cuda here") is None
-
-
-# ---------------------------------------------------------------------------
-# _vllm_wheel_url
-# ---------------------------------------------------------------------------
-
-
-def test_vllm_wheel_url():
-    url = _vllm_wheel_url("0.8.5", 124, "x86_64")
-    assert "v0.8.5" in url
-    assert "cu124" in url
-    assert "x86_64" in url
-    assert url.endswith(".whl")
-
-
-# ---------------------------------------------------------------------------
 # write_host_env_files / write_client_env_file
 # ---------------------------------------------------------------------------
 
 
 def test_write_host_env_files(tmp_path):
-    from vllm_cluster_manager.cli import write_host_env_files
+    from aquila.cli import write_host_env_files
 
     cfg = HostConfig(
         host_ip="10.0.0.1",
@@ -286,7 +238,7 @@ def test_write_host_env_files(tmp_path):
 
 
 def test_write_client_env_file(tmp_path):
-    from vllm_cluster_manager.cli import write_client_env_file
+    from aquila.cli import write_client_env_file
 
     cfg = ClientConfig(
         host_ip="10.0.0.1",
@@ -301,3 +253,189 @@ def test_write_client_env_file(tmp_path):
     assert env["NODE_NAME"] == "gpu-1"
     assert env["PORT"] == "9000"
     assert "47528" in env["CONSUL_HTTP_ADDR"]
+
+
+# ---------------------------------------------------------------------------
+# run_clean
+# ---------------------------------------------------------------------------
+
+
+def test_run_clean_removes_working_dirs(tmp_path, monkeypatch):
+    from aquila.cli import run_clean
+
+    data_root = tmp_path / "share" / "aquila"
+    # Only the client subtree (no host dir) so clean doesn't shell out to docker.
+    (data_root / "client" / ".venv").mkdir(parents=True)
+    client_root = tmp_path / ".vllm-client"
+    (client_root / ".packages").mkdir(parents=True)
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
+    monkeypatch.setenv("VLLM_CLIENT_ROOT", str(client_root))
+
+    run_clean(remove_docker=False, assume_yes=True)
+
+    assert not data_root.exists()
+    assert not client_root.exists()
+
+
+def test_run_clean_nothing_to_do(tmp_path, monkeypatch, capsys):
+    from aquila.cli import run_clean
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "empty-share"))
+    monkeypatch.setenv("VLLM_CLIENT_ROOT", str(tmp_path / "empty-client"))
+
+    run_clean(remove_docker=False, assume_yes=True)
+
+    assert "Nothing to clean." in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Postgres volume persistence (stop_infra / host down --purge)
+# ---------------------------------------------------------------------------
+
+
+class TestInfraPersistence:
+    def test_stop_infra_keeps_volumes_by_default(self, tmp_path):
+        from aquila import cli as cli_mod
+
+        with mock.patch.object(
+            cli_mod, "detect_compose_cmd", return_value="docker compose"
+        ), mock.patch.object(cli_mod, "run") as run_cmd:
+            cli_mod.stop_infra(tmp_path)
+        cmd = run_cmd.call_args.args[0]
+        assert cmd[-1] == "down"
+        assert "-v" not in cmd
+
+    def test_stop_infra_purge_removes_volumes(self, tmp_path):
+        from aquila import cli as cli_mod
+
+        with mock.patch.object(
+            cli_mod, "detect_compose_cmd", return_value="docker compose"
+        ), mock.patch.object(cli_mod, "run") as run_cmd:
+            cli_mod.stop_infra(tmp_path, purge=True)
+        cmd = run_cmd.call_args.args[0]
+        assert cmd[-2:] == ["down", "-v"]
+
+    @pytest.mark.parametrize("purge", [False, True])
+    def test_run_host_down_threads_purge(self, tmp_path, purge):
+        from aquila import cli as cli_mod
+
+        with mock.patch.object(
+            cli_mod, "runtime_dir_path", return_value=tmp_path
+        ), mock.patch.object(cli_mod, "stop_infra") as stop_infra, mock.patch.object(
+            cli_mod, "stop_pid"
+        ), mock.patch.object(cli_mod, "remove_host_service"), mock.patch.object(
+            cli_mod, "remove_runtime_dir"
+        ):
+            cli_mod.run_host_down(purge=purge)
+        stop_infra.assert_called_once_with(tmp_path, purge=purge)
+
+    def test_infra_service_execstop_keeps_volumes(self, tmp_path):
+        from aquila import cli as cli_mod
+
+        units: dict[str, str] = {}
+
+        with mock.patch.object(
+            cli_mod, "ensure_runtime_dir", return_value=tmp_path
+        ), mock.patch.object(
+            cli_mod.shutil, "which", return_value="/usr/bin/tool"
+        ), mock.patch.object(
+            cli_mod,
+            "write_systemd_service",
+            side_effect=lambda path, content: units.__setitem__(path, content),
+        ), mock.patch.object(cli_mod, "systemctl"):
+            cli_mod.install_host_service(
+                HostConfig(
+                    host_ip="127.0.0.1",
+                    frontend_port=5173,
+                    admin_api_port=8000,
+                    consul_port=47528,
+                    postgres_host="127.0.0.1",
+                    postgres_port=5757,
+                    postgres_db="db",
+                    postgres_user="u",
+                    postgres_password="p",
+                    base_path="/",
+                )
+            )
+        infra_unit = next(text for path, text in units.items() if "infra" in path)
+        assert "down -v" not in infra_unit
+        assert "docker compose down" in infra_unit
+
+    def test_run_clean_purges_volumes(self, tmp_path, monkeypatch):
+        from aquila import cli as cli_mod
+
+        data_root = tmp_path / "share" / "aquila"
+        (data_root / "host").mkdir(parents=True)
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
+        monkeypatch.setenv("VLLM_CLIENT_ROOT", str(tmp_path / "no-client"))
+
+        with mock.patch.object(cli_mod, "stop_infra") as stop_infra, mock.patch.object(
+            cli_mod, "stop_pid"
+        ):
+            cli_mod.run_clean(remove_docker=False, assume_yes=True)
+        stop_infra.assert_called_once_with(data_root / "host", purge=True)
+
+
+# ---------------------------------------------------------------------------
+# Asset refresh (_refresh_tree / copy_assets) — content-only, no metadata
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_tree_updates_content_and_skips_ignored(tmp_path):
+    from aquila import cli as cli_mod
+
+    src = tmp_path / "src"
+    (src / "sub").mkdir(parents=True)
+    (src / "a.txt").write_text("new")
+    (src / "sub" / "b.txt").write_text("nested")
+    (src / "__pycache__").mkdir()
+    (src / "__pycache__" / "x.pyc").write_text("junk")
+    (src / "mod.pyc").write_text("bytecode")
+
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "a.txt").write_text("stale")  # already present -> overwritten
+
+    cli_mod._refresh_tree(src, dest)
+
+    assert (dest / "a.txt").read_text() == "new"
+    assert (dest / "sub" / "b.txt").read_text() == "nested"
+    # Ignore patterns are honored (no stale bytecode in the runtime tree).
+    assert not (dest / "__pycache__").exists()
+    assert not (dest / "mod.pyc").exists()
+
+
+def test_refresh_tree_does_not_touch_directory_metadata(tmp_path, monkeypatch):
+    """Regression: a runtime subdir chowned by a container (e.g. Consul takes
+    infra/consul as uid 100) must not break a re-copy. copytree failed there via
+    copystat -> os.utime (EPERM); _refresh_tree must never call those."""
+    from aquila import cli as cli_mod
+
+    src = tmp_path / "src"
+    (src / "infra" / "consul").mkdir(parents=True)
+    (src / "infra" / "consul" / "consul.hcl").write_text("config v2")
+    dest = tmp_path / "dest"
+    (dest / "infra" / "consul").mkdir(parents=True)
+    (dest / "infra" / "consul" / "consul.hcl").write_text("config v1 stale")
+
+    def _forbidden(name):
+        def _boom(*_a, **_k):
+            pytest.fail(f"{name} must not be called by _refresh_tree")
+
+        return _boom
+
+    monkeypatch.setattr(cli_mod.shutil, "copystat", _forbidden("shutil.copystat"))
+    monkeypatch.setattr(cli_mod.shutil, "copy2", _forbidden("shutil.copy2"))
+    monkeypatch.setattr(cli_mod.os, "utime", _forbidden("os.utime"))
+
+    cli_mod._refresh_tree(src, dest)
+
+    assert (dest / "infra" / "consul" / "consul.hcl").read_text() == "config v2"
+
+
+def test_copy_assets_subdir_missing_raises(tmp_path):
+    from aquila import cli as cli_mod
+
+    with pytest.raises(RuntimeError, match="Missing packaged assets"):
+        cli_mod.copy_assets_subdir("host", "definitely-not-a-real-subdir", tmp_path / "d")

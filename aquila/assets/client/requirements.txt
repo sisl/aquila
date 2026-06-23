@@ -1,0 +1,11 @@
+setuptools==80
+packaging>24.2
+fastapi
+uvicorn[standard]
+psutil
+pydantic
+pydantic-settings
+python-consul2
+httpx
+docker
+python-multipart

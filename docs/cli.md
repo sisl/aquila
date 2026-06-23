@@ -1,12 +1,12 @@
 # CLI Reference
 
-The CLI command is `vllm-cluster-manager`.
+The CLI command is `aquila`.
 
 Run `--help` to see command and flag details:
 ```bash
-vllm-cluster-manager --help
-vllm-cluster-manager host up --help
-vllm-cluster-manager client up --help
+aquila --help
+aquila host up --help
+aquila client up --help
 ```
 
 ## Host (`host up`)
@@ -20,10 +20,16 @@ vllm-cluster-manager client up --help
 | `--host-backend-port` | `8000` | Backend API port. |
 | `--postgres-host` | `127.0.0.1` | Postgres host. |
 | `--postgres-port` | `5757` | Postgres port. |
-| `--postgres-db` | `vllm_admin` | Postgres database name. |
+| `--postgres-db` | `aquila` | Postgres database name. |
 | `--postgres-user` | `vllm` | Postgres user. |
 | `--postgres-password` | `change-me` | Postgres password. |
 | `--base-path` | `/` | Base path for the UI (reverse proxy subpath). |
+
+## Host (`host down`)
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--purge` | `false` | Also delete the Postgres data volume (wipes all deployments, nodes, and history). Without it, data persists and is restored on the next `host up`. |
 
 ## Client (`client up`)
 
@@ -40,24 +46,24 @@ vllm-cluster-manager client up --help
 
 Launch host services in the foreground:
 ```bash
-vllm-cluster-manager host up --host-ip 127.0.0.1 --host-frontend-port 5173 --host-discover-port 47528
+aquila host up --host-ip 127.0.0.1 --host-frontend-port 5173 --host-discover-port 47528
 ```
 
 Reverse proxy under `/vllm/`:
 ```bash
-vllm-cluster-manager host up --base-path /vllm/
+aquila host up --base-path /vllm/
 ```
 
 Launch a client node:
 ```bash
-vllm-cluster-manager client up --host-ip 127.0.0.1 --host-discover-port 47528 --node-name node-1
+aquila client up --host-ip 127.0.0.1 --host-discover-port 47528 --node-name node-1
 ```
 
 ### Service mode
 Service mode writes systemd unit files and enables them so they start automatically on boot:
 ```bash
-vllm-cluster-manager host up --service
-vllm-cluster-manager client up --service
+aquila host up --service
+aquila client up --service
 ```
 
 !!! warning

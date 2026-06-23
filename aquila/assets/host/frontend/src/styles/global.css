@@ -1,0 +1,320 @@
+@import url("https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@300;400;500;600&display=swap");
+
+/* CSS variables mirror src/styles/theme.ts (the source of truth).
+   Spacing rhythm: 4 / 8 / 12 / 16 / 20 / 24 / 32 — one 24px gutter
+   between panels, one 20/24px inset inside them. */
+:root {
+  color-scheme: light;
+  font-family: "Source Sans 3", system-ui, sans-serif;
+  --ink: #101214;
+  --muted: #5d6570;
+  --bg: #f2f3f5;
+  --panel: #ffffff;
+  --line: rgba(148, 163, 184, 0.45);
+  --line-strong: rgba(148, 163, 184, 0.55);
+  --accent: #111827;
+  --font-mono: "SFMono-Regular", ui-monospace, "SF Mono", Menlo, Consolas,
+    monospace;
+  --radius: 12px;
+  --radius-lg: 16px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app {
+  width: min(2200px, 100%);
+  margin: 0 auto;
+  padding: clamp(16px, 2.5vw, 32px) clamp(12px, 2.5vw, 64px) 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.app-shell {
+  display: grid;
+  /* minmax(0, 1fr) (not plain auto) so wide children — e.g. tables with a
+     min-width inside a scroll container — can't blow the column out past
+     the viewport. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+/* Single-column (phone/tablet) reading order: overview, deployments+nodes,
+   then the launch form last. */
+.overview-strip {
+  order: 1;
+  min-width: 0;
+}
+
+.stage {
+  order: 2;
+}
+
+.deploy-rail {
+  order: 3;
+  min-width: 0;
+}
+
+.brand {
+  padding: 8px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.brand-title {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin: 0;
+}
+
+.brand-logo {
+  height: clamp(36px, 5vw, 64px);
+  width: auto;
+}
+
+.brand-subtitle {
+  font-size: clamp(11px, 1.6vw, 18px);
+  font-weight: 300;
+  letter-spacing: 0.05em;
+  opacity: 0.4;
+  padding-bottom: 0.45em;
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+
+.panel {
+  background: var(--panel);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line-strong);
+  padding: 20px 24px;
+  box-shadow: none;
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 599px) {
+  .app {
+    gap: 16px;
+  }
+
+  .app-shell {
+    gap: 16px;
+  }
+
+  .stage {
+    gap: 16px;
+  }
+
+  .panel {
+    padding: 16px 14px;
+  }
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.panel-header h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.panel-header p {
+  margin: 0;
+  color: var(--muted);
+}
+
+/* Quiet metric: semantic dot + label above, numeral below. Borderless —
+   the stats sit directly in their panel instead of nested cards. */
+.status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.status-label-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.status-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.status-value {
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  padding-left: 13px; /* aligns under the label text (dot 7px + gap 6px) */
+}
+
+/* Status stats: one row of three in the rail; wraps only when truly tight. */
+.stack {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 12px;
+}
+
+/* Hoverable list rows (saved configs and similar pick-lists). */
+.list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.list-row:last-child {
+  border-bottom: none;
+}
+
+.list-row:hover {
+  background-color: rgba(16, 18, 20, 0.03);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.code-area {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+/* Thin, quiet scrollbars (tables, code areas, terminal). */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroll-thin::-webkit-scrollbar-thumb {
+  background-color: var(--line);
+  border-radius: 999px;
+}
+
+.terminal-shell .MuiDialogTitle-root {
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.terminal-shell .terminal-body {
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.terminal-shell .terminal-input .MuiInputBase-root {
+  background: var(--panel);
+}
+
+.terminal-shell .terminal-input {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--ink);
+  line-height: 1.5;
+  background: transparent;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0;
+  overflow: auto;
+  max-height: 60vh;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+.terminal-shell .terminal-input::-webkit-scrollbar {
+  width: 8px;
+}
+
+.terminal-shell .terminal-input::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-shell .terminal-input::-webkit-scrollbar-thumb {
+  background-color: var(--line);
+  border-radius: 999px;
+}
+
+/* Two-column shell from the MUI "md" breakpoint up; stacked below.
+   Left column: overview strip over the launch form; right: the tables. */
+@media (min-width: 900px) {
+  .app-shell {
+    grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+  }
+
+  .overview-strip {
+    order: 0;
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .deploy-rail {
+    order: 0;
+    grid-column: 1;
+    grid-row: 2;
+    align-self: start;
+  }
+
+  .stage {
+    order: 0;
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+}

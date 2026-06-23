@@ -1,2 +1,2 @@
-recursive-include vllm_cluster_manager/assets *
-recursive-exclude vllm_cluster_manager/assets __pycache__ *.pyc *.pyo
+recursive-include aquila/assets *
+recursive-exclude aquila/assets __pycache__ *.pyc *.pyo

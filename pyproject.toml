@@ -1,37 +1,37 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68", "wheel", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vllm-cluster-manager"
-version = "0.2.3"
+name = "aquila"
+dynamic = ["version"]
 description = "Deploy, manage, and monitor vLLM instances across a GPU cluster from a single web dashboard."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Marc Schlichting", email="mschl@stanford.edu"}]
 readme = {text = """
-# vLLM Cluster Manager
+# Aquila
 
-Deploy, manage, and monitor vLLM instances across a GPU cluster from a single web dashboard.
+GPU inference cluster manager. Deploy, manage, and monitor vLLM instances across a GPU cluster from a single web dashboard.
 
 ## Quick Start
 
 ```bash
-pip install vllm-cluster-manager
+pip install aquila
 ```
 
 **On each GPU node (satellite):**
 
 ```bash
-vllm-cluster-manager client install
-vllm-cluster-manager client start
+aquila client install
+aquila client start
 ```
 
 **On the management server (host):**
 
 ```bash
-vllm-cluster-manager host install
-vllm-cluster-manager host start
+aquila host install
+aquila host start
 ```
 
 Then open the dashboard at `http://<host-ip>:5173` to deploy and monitor models across your cluster.
@@ -39,10 +39,10 @@ Then open the dashboard at `http://<host-ip>:5173` to deploy and monitor models 
 ## Features
 
 - Web dashboard for deploying and managing vLLM models across multiple GPU nodes
-- Automatic vLLM version management with isolated per-deployment virtual environments
+- Runs each model in the official `vllm/vllm-openai` Docker container — no per-node CUDA/PyTorch setup; the version maps to an image tag
 - Live GPU utilization metrics and deployment status monitoring
 - Consul-based automatic node discovery
-- Support for custom pip packages and vLLM plugins
+- Support for custom pip packages (via cached derived images) and vLLM plugins
 """, content-type = "text/markdown"}
 keywords = ["vllm", "llm", "gpu", "cluster", "inference", "deployment"]
 classifiers = [
@@ -55,17 +55,21 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sisl/VLLMClusterManager"
+Homepage = "https://github.com/sisl/aquila"
 
 [project.scripts]
-vllm-cluster-manager = "vllm_cluster_manager.cli:main"
+aquila = "aquila.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["vllm_cluster_manager*"]
+include = ["aquila*"]
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.package-data]
-"vllm_cluster_manager" = ["assets/**"]
+"aquila" = ["assets/**"]
+
+[tool.setuptools_scm]
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"

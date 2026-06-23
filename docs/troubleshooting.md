@@ -10,6 +10,11 @@ Checks:
 - Confirm the host is reachable from the client (use a non-loopback `--host-ip`).
 - Check firewall rules between client and host.
 
+## Node stuck as "critical" after decommissioning
+**Symptoms**: A node whose agent was shut down (or that no longer exists) stays in the Nodes table with status `critical`.
+
+Nodes are created automatically from discovery but never removed automatically. Open the node's **Manage** dialog and click **Remove Node** — this deletes the node, its deployment records, and its discovery registration. If the agent is actually still running, the node simply re-registers within seconds (no harm done).
+
 ## UI loads but data is empty
 **Symptoms**: UI opens, but no nodes or deployments show up.
 
@@ -32,37 +37,59 @@ Explanation:
 - The host maps Consul's container port `8500` to a host port (default `47528`).
 - Clients must use the host port (`--host-discover-port`, default `47528`).
 
-## CUDA detection fails
-**Symptoms**: Client install fails with an error about CUDA detection.
+## Docker daemon not reachable
+**Symptoms**: Client install or a deployment fails with "Cannot talk to the Docker daemon".
 
 Checks:
-- Ensure `nvcc` or `nvidia-smi` is on PATH.
-- Verify NVIDIA drivers are installed and the GPU is visible.
+- Verify Docker is running: `docker info`.
+- Ensure the client user can use Docker without sudo: `sudo usermod -aG docker "$USER"` then log out/in (or run the client as root).
+- The client systemd unit runs as the installing user — that user must be in the `docker` group.
 
-## vLLM wheel not found
-**Symptoms**: Install fails after detecting CUDA.
-
-Checks:
-- The vLLM wheel must exist for your CUDA version and CPU architecture.
-- If no wheel matches your exact CUDA version, the installer automatically tries the highest compatible version. If that also fails, consider installing a supported CUDA version or building vLLM from source.
-
-## `uv` not found when running as a systemd service
-**Symptoms**: Deploying a model fails with "uv is not installed or not on PATH".
-
-Explanation:
-- Systemd services run with a minimal PATH that may not include user-local directories.
+## GPUs not visible to containers
+**Symptoms**: A deployment fails to start, or the container cannot see the GPUs.
 
 Checks:
-- Verify `uv` is installed: `which uv` or check `~/.local/bin/uv` and `~/.cargo/bin/uv`.
-- The client automatically searches common locations (`/usr/local/bin`, `/usr/bin`, `/home/*/.local/bin`, `/home/*/.cargo/bin`), but if `uv` is installed elsewhere, add its directory to the systemd service's `Environment=PATH=...` line.
+- Confirm the NVIDIA Container Toolkit is installed and configured: `docker run --rm --gpus all ubuntu nvidia-smi` should list your GPUs.
+- If it fails, install the toolkit and run `sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker`.
+
+## Image pull fails
+**Symptoms**: The deployment log shows a "Failed to pull image" error.
+
+Checks:
+- Confirm the requested vLLM version exists as a tag on [Docker Hub](https://hub.docker.com/r/vllm/vllm-openai/tags) (releases use the `v<version>` form; commits use `nightly-<commit>`).
+- Ensure the node has outbound network access to Docker Hub. The first pull is multi-GB and may take a while; progress is streamed to the deployment log.
 
 ## Deployment stuck in "loading"
 **Symptoms**: A deployment stays in the `loading` state and never transitions to `running`.
 
 Checks:
-- Open the deployment logs to see venv creation or vLLM startup errors.
-- Common causes: network issues downloading packages, insufficient GPU memory, model not found on Hugging Face, or missing `HF_TOKEN` for gated models.
-- The readiness check polls `/health` and `/v1/models` on the deployment port. Ensure no firewall blocks localhost access on the client node.
+- Open the deployment logs to see image pull/build (`[docker]`) or vLLM startup errors.
+- Common causes: a large image still pulling, insufficient GPU memory, model not found on Hugging Face, or missing `HF_TOKEN` for gated models.
+- The readiness check polls `/health` and `/v1/models` on the deployment port. With host networking the container binds the node port directly; ensure no firewall blocks localhost access on the client node.
+
+## Gateway returns 404 / 503 / 502
+**Symptoms**: Requests to `http://<host>/v1/...` fail even though deployments exist.
+
+Explanation:
+- **404** — no *running* deployment serves the requested `model`; the error message lists the available names. Check the `model` field against the served model name (or LoRA adapter name) shown in `GET /v1/models`.
+- **503** — a matching deployment exists but is still `starting`/`loading`; retry once it is `running`.
+- **502** — the deployment's node did not respond; check that the host can reach the client node and that the vLLM container is healthy.
+- If `/v1` itself is not found behind a reverse proxy, make sure the proxy forwards `/v1` (or `<base-path>/v1`) to the backend, like `/api` and `/ws`.
+
+## Local model path rejected
+**Symptoms**: Starting a deployment with an absolute model path fails with an "allowed model directories" error.
+
+Checks:
+- Set `MODEL_DIRS` in the client agent's `.env` to a comma-separated list of directories that may be served, then restart the agent.
+- The path must exist on the **client node** and resolve to a location inside one of those directories (symlinks escaping them are rejected).
+
+## Webhook notifications not arriving
+**Symptoms**: Deployments change state but no Slack/webhook messages appear.
+
+Checks:
+- Set the webhook URL in the dashboard (Settings → Notifications; applies live) or as the `WEBHOOK_URL` default in `host/backend/.env`.
+- Verify the URL with a manual `curl -X POST -d '{"text":"test"}'`.
+- Delivery is fire-and-forget: failures are logged by the backend but never retried or surfaced in the UI.
 
 ## Deployments missing after backend restart
 **Symptoms**: Running models disappear from the dashboard after restarting the host backend.
@@ -74,8 +101,55 @@ Explanation:
 **Symptoms**: Previously created deployments are gone after shutdown.
 
 Explanation:
-- `host down` runs `docker compose down -v`, which wipes the Postgres volume.
-- Remove `-v` in code if you want persistent data.
+- Host data persists across `host down` by default. Data is only wiped by `host down --purge`, `aquila clean`, or the dashboard's Settings → Data → Purge.
+- If data vanished without one of those, check whether the Postgres volume (`host_pgdata`) still exists: `docker volume ls`.
 
 !!! tip
     When debugging, start the host in the foreground to see backend and frontend logs in the terminal.
+
+## Podman is installed but not detected
+**Symptoms**: The node's Manage dialog doesn't list `podman` even though Podman is installed.
+
+The agent talks to Podman through its Docker-compatible API socket — **installing the podman package does not start it**. The two common causes:
+
+- The user socket service is enabled but not running (`systemctl --user status podman.socket` shows `inactive (dead)`). Start it: `systemctl --user enable --now podman.socket`. If the agent runs as a systemd service for a user that isn't logged in, also enable lingering: `loginctl enable-linger <user>`.
+- Only the **rootful** socket (`/run/podman/podman.sock`, owned `root:root`) exists, which the agent user cannot access. Use the rootless socket instead (command above); the agent logs a warning naming this case.
+
+A non-standard socket path can be supplied via `PODMAN_SOCK` in the client `.env` (e.g. when starting the API service manually on clusters without systemd user sessions: `podman system service --time=0 unix:///path/sock &`). Detection refreshes within ~1 minute of the socket appearing; the agent log names the cause when a socket exists but is unusable.
+
+Version note: **GPU deployments need Podman ≥ 5.4** — older versions silently drop GPU requests sent over the Docker-compatible API (see below). Podman 3.x additionally streams no byte-level pull progress (the status chip shows `pulling image` without GB figures). See [Operations → Podman on restricted clusters](operations.md#podman-on-restricted-clusters) for SELinux, user-namespace, and NFS-home caveats.
+
+## GPU deployment fails on a Podman node
+**Symptoms**: The deployment is rejected with a message about Podman versions or CDI specs — or, on manager versions before this check existed, the container started but crash-looped with `RuntimeError: Failed to infer device type` / `No CUDA runtime is found` in the vLLM log.
+
+Two preconditions must hold for GPUs to reach a Podman container; the agent verifies both before starting and rejects the deployment with the specific remedy:
+
+- **Podman ≥ 5.4.** Podman's Docker-compatible API ignores Docker's native GPU request mechanism (`DeviceRequests` with GPU capabilities) — the container starts without any GPU and vLLM crash-loops on `Failed to infer device type`. The manager therefore requests GPUs as **CDI device requests** (`nvidia.com/gpu=...`), which Podman's compat API only honors from 5.4 on. There is no working GPU path over the compat API in older versions — upgrade Podman or switch the node's runtime to Docker.
+- **NVIDIA CDI specs generated.** Install the NVIDIA Container Toolkit (≥ 1.12) and generate the specs once (and again after driver updates): `sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`, then redeploy.
+
+## Gateway returns 401 "API key required"
+**Symptoms**: Requests to `/v1/...` fail with 401 even though deployments are running.
+
+Checks:
+- At least one permanent API key exists (check Settings → Gateway & Keys). When keys exist, every gateway request must include `Authorization: Bearer <key>`.
+- Verify the key hasn't expired (temporary keys have a short TTL).
+- Confirm the `Authorization` header uses the `Bearer` prefix.
+
+## Gateway returns 403 on a valid key
+**Symptoms**: The API key is accepted for some models but returns 403 for others.
+
+Explanation:
+- The key is **scoped** to specific deployments and cannot access the requested model. Edit the key's scope in Settings → Gateway & Keys → Edit, or use a key with "all deployments" access.
+
+## Pause button missing on a running deployment
+**Symptoms**: A running deployment on a warm-cache node does not show a Pause button.
+
+Checks:
+- **Warm cache** must be enabled on the node (Manage dialog → Warm offload toggle).
+- On **unified-memory** nodes (e.g. DGX Spark), pause is intentionally disabled — GPU and CPU share the same memory, so freeing CUDA memory has no effect.
+
+## Deployment rejected on a cordoned GPU
+**Symptoms**: Deploying fails with a message about maintenance GPUs.
+
+Explanation:
+- One or more of the selected GPUs are in maintenance mode. Check the node's status — partial maintenance is shown as `maint. GPU 0, 2` etc. Uncordon the GPUs in the Maintenance dialog, or select different GPUs.

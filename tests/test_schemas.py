@@ -6,11 +6,17 @@ from pathlib import Path
 import pytest
 
 # Add the host backend to sys.path so schemas can be imported directly.
-_HOST_BACKEND = Path(__file__).resolve().parent.parent / "vllm_cluster_manager" / "assets" / "host" / "backend"
+_HOST_BACKEND = Path(__file__).resolve().parent.parent / "aquila" / "assets" / "host" / "backend"
 if str(_HOST_BACKEND) not in sys.path:
     sys.path.insert(0, str(_HOST_BACKEND))
 
-from app.schemas.deployment import DeploymentBase, DeploymentCreate, DeploymentRead, DeploymentStart
+from app.schemas.deployment import (
+    DeploymentBase,
+    DeploymentCreate,
+    DeploymentExtend,
+    DeploymentRead,
+    DeploymentStart,
+)
 from app.schemas.node import NodeBase, NodeRead, DiscoveredNode
 from app.schemas.deployment_config import DeploymentConfigBase, DeploymentConfigRead
 
@@ -66,8 +72,19 @@ class TestDeploymentSchemas:
         assert d.id == 42
 
     def test_deployment_start_inherits(self):
-        d = DeploymentStart(node_id=1, model_name="m", port=80, gpu_memory_fraction=0.5)
+        d = DeploymentStart(
+            node_id=1, model_name="m", port=80, gpu_memory_fraction=0.5, owner="alice"
+        )
         assert d.status == "stopped"
+        assert d.owner == "alice"
+        assert d.duration_seconds is None
+
+    def test_deployment_start_requires_owner(self):
+        import pytest
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            DeploymentStart(node_id=1, model_name="m", port=80, gpu_memory_fraction=0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -114,3 +131,28 @@ class TestDeploymentConfigSchemas:
     def test_config_read(self):
         c = DeploymentConfigRead(id=1, name="cfg", payload={}, created_at=None)
         assert c.id == 1
+
+
+class TestDeploymentExtend:
+    def test_hours_only_is_valid(self):
+        assert DeploymentExtend(hours=4).hours == 4
+        assert DeploymentExtend(hours=4).infinite is False
+
+    def test_infinite_only_is_valid(self):
+        extend = DeploymentExtend(infinite=True)
+        assert extend.infinite is True
+        assert extend.hours is None
+
+    def test_both_rejected(self):
+        with pytest.raises(ValueError):
+            DeploymentExtend(hours=4, infinite=True)
+
+    def test_neither_rejected(self):
+        with pytest.raises(ValueError):
+            DeploymentExtend()
+
+    def test_hours_bounds(self):
+        with pytest.raises(ValueError):
+            DeploymentExtend(hours=0)
+        with pytest.raises(ValueError):
+            DeploymentExtend(hours=24 * 14 + 1)

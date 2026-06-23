@@ -1,16 +1,17 @@
-site_name: vLLM Cluster Manager
-site_description: Documentation for the vLLM Cluster Manager CLI and services.
-site_url: https://sisl.github.io/vllmclustermanager/
-repo_name: sisl/vllmclustermanager
-repo_url: https://github.com/sisl/vllmclustermanager
+site_name: Aquila
+site_description: Documentation for the Aquila GPU inference cluster manager.
+site_url: https://sisl.github.io/aquila/
+repo_name: sisl/aquila
+repo_url: https://github.com/sisl/aquila
 edit_uri: edit/main/docs/
 
 theme:
   name: material
   language: en
-  logo: null
-  icon:
-    logo: null
+  font:
+    text: Source Sans 3
+  logo: assets/img/aquila-logo.svg
+  favicon: assets/img/aquila-icon.svg
   features:
     - navigation.instant
     - navigation.sections
@@ -24,6 +25,7 @@ theme:
 
 plugins:
   - search
+  - glightbox
   - mike:
       version_selector: true
       canonical_version: latest
@@ -36,6 +38,10 @@ markdown_extensions:
   - pymdownx.superfences
   - pymdownx.tabbed
 
+extra:
+  version:
+    provider: mike
+
 extra_css:
   - styles/extra.css
 
@@ -43,6 +49,8 @@ nav:
   - Overview: index.md
   - Getting Started: getting-started.md
   - Deployments: deployments.md
+  - Gateway & Usage: gateway.md
+  - API Reference: api-reference.md
   - CLI Reference: cli.md
   - Architecture: architecture.md
   - Operations: operations.md

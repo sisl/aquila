@@ -27,8 +27,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pytest pytest-anyio httpx
           python -m pip install -e .
-          python -m pip install -r vllm_cluster_manager/assets/host/backend/requirements.txt
-          python -m pip install -r vllm_cluster_manager/assets/client/requirements.txt
+          python -m pip install -r aquila/assets/host/backend/requirements.txt
+          python -m pip install -r aquila/assets/client/requirements.txt
 
       - name: Run tests
         run: pytest tests/ -v
