@@ -73,6 +73,46 @@
   font-weight: 300;
 }
 
+/* ------------------------------------------------ version selector (mike) */
+
+.md-version__current {
+  color: var(--muted);
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.md-version__current::after {
+  background-color: var(--muted);
+}
+
+.md-version__current:hover {
+  color: var(--ink);
+}
+
+.md-version__current:hover::after {
+  background-color: var(--ink);
+}
+
+.md-version__list {
+  background-color: #ffffff;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.md-version__link {
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.md-version__link:hover {
+  color: var(--ink);
+}
+
 .md-search__form {
   background-color: rgba(16, 18, 20, 0.05);
   border-radius: 8px;
