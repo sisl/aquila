@@ -416,15 +416,11 @@ def preflight_client(config: ClientConfig) -> list[PreflightResult]:
     docker_result = _check_docker_client()
     podman_result = _check_podman_client()
     if docker_result.status != CheckStatus.PASS and podman_result.status != CheckStatus.PASS:
-        # Only escalate to FAIL when no runtime binary exists at all.
-        # A binary that exists but has issues (permissions, old version, daemon
-        # down) still means the system has a runtime — the warnings are enough.
-        if not shutil.which("docker") and not shutil.which("podman"):
-            fallback_hint = "Install Docker (https://docs.docker.com/engine/install/) or enable the Podman socket."
-            docker_result = PreflightResult(docker_result.label, CheckStatus.FAIL, docker_result.message,
-                                            hint=docker_result.hint or fallback_hint)
-            podman_result = PreflightResult(podman_result.label, CheckStatus.FAIL, podman_result.message,
-                                            hint=podman_result.hint or fallback_hint)
+        fallback_hint = "Install Docker (https://docs.docker.com/engine/install/) or enable the Podman socket."
+        docker_result = PreflightResult(docker_result.label, CheckStatus.FAIL, docker_result.message,
+                                        hint=docker_result.hint or fallback_hint)
+        podman_result = PreflightResult(podman_result.label, CheckStatus.FAIL, podman_result.message,
+                                        hint=podman_result.hint or fallback_hint)
     return [
         _check_python(),
         docker_result,
