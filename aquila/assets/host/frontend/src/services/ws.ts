@@ -5,7 +5,7 @@ export type WsMessage = {
 
 export function connectWebSocket(onMessage: (msg: WsMessage) => void): WebSocket {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  const wsPath = withBase("ws");
+  const wsPath = withBase("ws/");
   const socket = new WebSocket(`${protocol}://${window.location.host}${wsPath}`);
 
   socket.onmessage = (event) => {

@@ -33,6 +33,8 @@ from urllib.request import Request as UrllibRequest, urlopen
 from app.config import settings
 from app.consul import register_node, register_loop
 
+_aquila_version = os.environ.get("AQUILA_VERSION", "unknown")
+
 logger = logging.getLogger("aquila-client")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -1751,6 +1753,7 @@ def metrics() -> dict[str, object]:
         "gpus": _gpu_metrics(),
         "disk": _disk_metrics(),
         "available_runtimes": _available_runtimes(),
+        "aquila_version": _aquila_version,
     }
 
 

@@ -27,7 +27,7 @@ Checks:
 **Symptoms**: The UI shows a blank page when accessed through Nginx or another reverse proxy.
 
 Checks:
-- If you proxy under a path (for example `/vllm/`), set `VITE_BASE_PATH=/vllm/` in `host/frontend/.env`.
+- If you proxy under a path (for example `/aquila/`), set `VITE_BASE_PATH=/aquila/` in `host/frontend/.env`.
 - Restart the frontend service so Vite picks up the new base path.
 
 ## Consul port confusion

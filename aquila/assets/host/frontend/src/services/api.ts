@@ -37,6 +37,7 @@ export type Node = {
   available_runtimes?: string[];
   // Per-node runtime override; null = auto (preferred runtime).
   container_runtime?: string | null;
+  aquila_version?: string | null;
   last_heartbeat_at?: string | null;
 };
 
@@ -111,6 +112,10 @@ async function request<T>(path: string): Promise<T> {
 
 export function fetchNodes(): Promise<Node[]> {
   return request<Node[]>("/nodes/");
+}
+
+export function fetchHealth(): Promise<{ status: string; aquila_version: string }> {
+  return request<{ status: string; aquila_version: string }>("/health");
 }
 
 export function fetchLatestVllmVersion(): Promise<{ version: string }> {

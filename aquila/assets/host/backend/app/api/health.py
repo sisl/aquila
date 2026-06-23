@@ -1,9 +1,12 @@
 import json
+import os
 import time
 import logging
 from urllib.request import Request, urlopen
 
 from fastapi import APIRouter
+
+_aquila_version = os.environ.get("AQUILA_VERSION", "unknown")
 
 router = APIRouter()
 
@@ -17,7 +20,7 @@ _LATEST_VERSION_TTL: float = 3600.0
 @router.get("/health")
 async def health() -> dict[str, str]:
     """Backend health check."""
-    return {"status": "ok"}
+    return {"status": "ok", "aquila_version": _aquila_version}
 
 
 @router.get("/vllm-version")

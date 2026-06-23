@@ -25,6 +25,7 @@ from app.services.node_state import (
     rogue_process_counts,
     rogue_artifact_counts,
     ram_cache_used_mb,
+    aquila_versions,
 )
 from app.services.notify import _warned_expiring
 from app.services.client_api import (
@@ -67,6 +68,7 @@ def _attach_derived(node: Node) -> None:
     node.rogue_process_count = rogue_process_counts.get(node.id)
     node.rogue_artifact_count = rogue_artifact_counts.get(node.id)
     node.ram_cache_used_mb = ram_cache_used_mb.get(node.id)
+    node.aquila_version = aquila_versions.get(node.id)
     node.partial_maintenance = node.has_partial_maintenance
 
 

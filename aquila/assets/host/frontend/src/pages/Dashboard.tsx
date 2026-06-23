@@ -32,6 +32,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchDeployments,
   fetchConfigs,
+  fetchHealth,
   fetchLocalModels,
   fetchNodes,
   fetchLatestVllmVersion,
@@ -230,6 +231,12 @@ export function Dashboard() {
   }, [queryClient]);
 
   const pollInterval = wsConnected ? 30000 : 5000;
+
+  const healthQuery = useQuery({
+    queryKey: ["health"],
+    queryFn: fetchHealth,
+    staleTime: 60_000
+  });
 
   const nodesQuery = useQuery({
     queryKey: ["nodes"],
@@ -1195,8 +1202,13 @@ export function Dashboard() {
     <Box className="app">
       <Box className="brand">
         <h1 className="brand-title">
-          <img src="/aquila_light_logo.svg" alt="Aquila" className="brand-logo" />
-          <span className="brand-subtitle">GPU Inference Management</span>
+          <img src={`${import.meta.env.BASE_URL}aquila_light_logo.svg`} alt="Aquila" className="brand-logo" />
+          <span className="brand-text">
+            <span className="brand-subtitle">GPU Inference Management</span>
+            {healthQuery.data?.aquila_version && (
+              <span className="brand-version">v{healthQuery.data.aquila_version}</span>
+            )}
+          </span>
         </h1>
         <Tooltip title="Settings" enterDelay={500}>
           <IconButton aria-label="Settings" onClick={() => setSettingsOpen(true)}>
