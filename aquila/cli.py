@@ -289,39 +289,42 @@ def _check_compose() -> PreflightResult:
     )
 
 
-def _check_container_runtime() -> PreflightResult:
+def _check_docker_client() -> PreflightResult:
     docker = shutil.which("docker")
-    if docker:
-        try:
-            out = subprocess.run(
-                [docker, "info", "--format", "{{.ServerVersion}}"],
-                capture_output=True, text=True, timeout=10,
+    if not docker:
+        return PreflightResult("Docker", CheckStatus.WARN, "Not found")
+    try:
+        out = subprocess.run(
+            [docker, "info", "--format", "{{.ServerVersion}}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return PreflightResult("Docker", CheckStatus.PASS, f"Docker {out.stdout.strip()}")
+        stderr = out.stderr.strip().lower()
+        if "permission denied" in stderr or "connect" in stderr:
+            return PreflightResult(
+                "Docker", CheckStatus.WARN, "Permission denied",
+                hint="Add your user to the docker group: sudo usermod -aG docker $USER  (then log out and back in).",
             )
-            if out.returncode == 0 and out.stdout.strip():
-                return PreflightResult("Container runtime", CheckStatus.PASS, f"Docker {out.stdout.strip()}")
-            stderr = out.stderr.strip().lower()
-            if "permission denied" in stderr or "connect" in stderr:
-                return PreflightResult(
-                    "Container runtime", CheckStatus.FAIL, "Permission denied",
-                    hint="Add your user to the docker group: sudo usermod -aG docker $USER  (then log out and back in).",
-                )
-        except Exception:
-            pass
+        return PreflightResult("Docker", CheckStatus.WARN, "Daemon not running")
+    except Exception:
+        return PreflightResult("Docker", CheckStatus.WARN, "Error checking Docker")
+
+
+def _check_podman_client() -> PreflightResult:
     podman = shutil.which("podman")
-    if podman:
-        try:
-            out = subprocess.run(
-                [podman, "version", "--format", "{{.Version}}"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if out.returncode == 0 and out.stdout.strip():
-                return PreflightResult("Container runtime", CheckStatus.PASS, f"Podman {out.stdout.strip()}")
-        except Exception:
-            pass
-    return PreflightResult(
-        "Container runtime", CheckStatus.FAIL, "Not found",
-        hint="Install Docker (https://docs.docker.com/engine/install/) or enable the Podman socket.",
-    )
+    if not podman:
+        return PreflightResult("Podman", CheckStatus.WARN, "Not found")
+    try:
+        out = subprocess.run(
+            [podman, "version", "--format", "{{.Version}}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return PreflightResult("Podman", CheckStatus.PASS, f"Podman {out.stdout.strip()}")
+        return PreflightResult("Podman", CheckStatus.WARN, "Error checking Podman")
+    except Exception:
+        return PreflightResult("Podman", CheckStatus.WARN, "Error checking Podman")
 
 
 def _check_nvidia_smi() -> PreflightResult:
@@ -394,9 +397,18 @@ def preflight_host(config: HostConfig) -> list[PreflightResult]:
 
 
 def preflight_client(config: ClientConfig) -> list[PreflightResult]:
+    docker_result = _check_docker_client()
+    podman_result = _check_podman_client()
+    if docker_result.status != CheckStatus.PASS and podman_result.status != CheckStatus.PASS:
+        fallback_hint = "Install Docker (https://docs.docker.com/engine/install/) or enable the Podman socket."
+        docker_result = PreflightResult(docker_result.label, CheckStatus.FAIL, docker_result.message,
+                                        hint=docker_result.hint or fallback_hint)
+        podman_result = PreflightResult(podman_result.label, CheckStatus.FAIL, podman_result.message,
+                                        hint=podman_result.hint or fallback_hint)
     return [
         _check_python(),
-        _check_container_runtime(),
+        docker_result,
+        podman_result,
         _check_nvidia_smi(),
         _check_nvidia_ctk(),
         _check_port(config.client_port, "client API", "--client-port"),

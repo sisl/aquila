@@ -30,7 +30,8 @@ from aquila.cli import (
     _check_npm,
     _check_docker,
     _check_compose,
-    _check_container_runtime,
+    _check_docker_client,
+    _check_podman_client,
     _check_nvidia_smi,
     _check_nvidia_ctk,
     _check_port,
@@ -558,21 +559,50 @@ class TestCheckCompose:
         assert result.status == CheckStatus.FAIL
 
 
-class TestCheckContainerRuntime:
-    def test_pass_docker(self, monkeypatch):
+class TestCheckDockerClient:
+    def test_pass(self, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/docker" if cmd == "docker" else None)
         fake = mock.MagicMock()
         fake.stdout = "27.0.3\n"
         fake.stderr = ""
         fake.returncode = 0
         monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake)
-        result = _check_container_runtime()
+        result = _check_docker_client()
         assert result.status == CheckStatus.PASS
+        assert "27.0.3" in result.message
 
-    def test_fail(self, monkeypatch):
+    def test_warn_not_found(self, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda cmd: None)
-        result = _check_container_runtime()
-        assert result.status == CheckStatus.FAIL
+        result = _check_docker_client()
+        assert result.status == CheckStatus.WARN
+
+    def test_warn_permission_denied(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/docker" if cmd == "docker" else None)
+        fake = mock.MagicMock()
+        fake.stdout = ""
+        fake.stderr = "Got permission denied while trying to connect"
+        fake.returncode = 1
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake)
+        result = _check_docker_client()
+        assert result.status == CheckStatus.WARN
+        assert "docker group" in result.hint
+
+
+class TestCheckPodmanClient:
+    def test_pass(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/podman" if cmd == "podman" else None)
+        fake = mock.MagicMock()
+        fake.stdout = "4.9.3\n"
+        fake.returncode = 0
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake)
+        result = _check_podman_client()
+        assert result.status == CheckStatus.PASS
+        assert "4.9.3" in result.message
+
+    def test_warn_not_found(self, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda cmd: None)
+        result = _check_podman_client()
+        assert result.status == CheckStatus.WARN
 
 
 class TestCheckNvidiaSmi:
@@ -641,8 +671,42 @@ class TestPreflightOrchestrators:
         )
         with mock.patch("aquila.cli._check_port", return_value=PreflightResult("Port", CheckStatus.PASS, "ok")):
             results = preflight_client(config)
-        assert len(results) == 5
+        assert len(results) == 6
         assert all(isinstance(r, PreflightResult) for r in results)
+
+    def test_preflight_client_fails_when_no_runtime(self):
+        config = ClientConfig(
+            host_ip="127.0.0.1", consul_port=0,
+            client_host="0.0.0.0", client_port=0, node_name="n",
+        )
+        with mock.patch("aquila.cli._check_docker_client",
+                         return_value=PreflightResult("Docker", CheckStatus.WARN, "Not found")), \
+             mock.patch("aquila.cli._check_podman_client",
+                         return_value=PreflightResult("Podman", CheckStatus.WARN, "Not found")), \
+             mock.patch("aquila.cli._check_port",
+                         return_value=PreflightResult("Port", CheckStatus.PASS, "ok")):
+            results = preflight_client(config)
+        docker_r = next(r for r in results if r.label == "Docker")
+        podman_r = next(r for r in results if r.label == "Podman")
+        assert docker_r.status == CheckStatus.FAIL
+        assert podman_r.status == CheckStatus.FAIL
+
+    def test_preflight_client_warns_when_one_runtime(self):
+        config = ClientConfig(
+            host_ip="127.0.0.1", consul_port=0,
+            client_host="0.0.0.0", client_port=0, node_name="n",
+        )
+        with mock.patch("aquila.cli._check_docker_client",
+                         return_value=PreflightResult("Docker", CheckStatus.PASS, "Docker 27.0.3")), \
+             mock.patch("aquila.cli._check_podman_client",
+                         return_value=PreflightResult("Podman", CheckStatus.WARN, "Not found")), \
+             mock.patch("aquila.cli._check_port",
+                         return_value=PreflightResult("Port", CheckStatus.PASS, "ok")):
+            results = preflight_client(config)
+        docker_r = next(r for r in results if r.label == "Docker")
+        podman_r = next(r for r in results if r.label == "Podman")
+        assert docker_r.status == CheckStatus.PASS
+        assert podman_r.status == CheckStatus.WARN
 
 
 class TestRunPreflight:
