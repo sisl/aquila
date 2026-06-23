@@ -160,24 +160,73 @@ If the host should be reachable from other machines, use a non-loopback `--host-
 ## Reverse proxy base path
 If you proxy the frontend under a path like `/vllm/`, pass `--base-path /vllm/` when running `host up`. This ensures asset URLs and API/WebSocket paths resolve correctly.
 
-For Nginx, make sure `/vllm/api`, `/vllm/ws`, and `/vllm/v1` are proxied to the backend (port 8000 by default; `/v1` is the [OpenAI gateway](gateway.md)). The frontend uses the configured base path for API, WebSocket, and gateway URLs, so it works both at `/` and under a subpath.
-
-Streamed chat completions through the gateway are server-sent events; with Nginx's default response buffering, tokens arrive in bursts instead of streaming. Disable buffering on the gateway location:
+Nginx needs to route four distinct path prefixes — three to the backend and one to the frontend. Below is a complete location block you can copy into your `server` section and adapt (replace `/vllm` with your chosen prefix, and adjust ports if you changed the defaults):
 
 ```nginx
+# --- Aquila under /vllm/ --------------------------------------------------
+
+# Bare /vllm → redirect to trailing-slash form
+location = /vllm {
+    return 301 $scheme://$http_host/vllm/;
+}
+
+# REST API → backend
+location /vllm/api/ {
+    rewrite            ^/vllm/(.*)$ /$1 break;
+    proxy_pass         http://127.0.0.1:8000;
+    proxy_http_version 1.1;
+    proxy_set_header   Host $host;
+    proxy_set_header   X-Real-IP $remote_addr;
+    proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+
+    # Local-model uploads can be tens of GB — stream them.
+    client_max_body_size    0;
+    proxy_request_buffering off;
+}
+
+# WebSocket → backend
+location /vllm/ws/ {
+    rewrite            ^/vllm/(.*)$ /$1 break;
+    proxy_pass         http://127.0.0.1:8000;
+    proxy_http_version 1.1;
+    proxy_set_header   Upgrade $http_upgrade;
+    proxy_set_header   Connection "upgrade";
+    proxy_set_header   Host $host;
+    proxy_set_header   X-Real-IP $remote_addr;
+    proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    proxy_read_timeout 3600s;
+}
+
+# OpenAI-compatible gateway → backend
 location /vllm/v1/ {
-    proxy_pass http://127.0.0.1:8000/v1/;
-    proxy_buffering off;        # stream SSE tokens as they arrive
-    proxy_read_timeout 1h;      # long generations / idle streams
+    rewrite            ^/vllm/(.*)$ /$1 break;
+    proxy_pass         http://127.0.0.1:8000;
+    proxy_http_version 1.1;
+    proxy_set_header   Host $host;
+    proxy_set_header   X-Real-IP $remote_addr;
+    proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    proxy_buffering    off;          # stream SSE tokens as they arrive
+    proxy_read_timeout 1h;           # long generations / idle streams
+}
+
+# Frontend (catch-all) → Vite preview server
+location /vllm/ {
+    proxy_pass         http://127.0.0.1:5173;
+    proxy_http_version 1.1;
+    proxy_set_header   Upgrade $http_upgrade;
+    proxy_set_header   Connection "upgrade";
+    proxy_set_header   Host $host;
+    proxy_set_header   X-Real-IP $remote_addr;
+    proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
 }
 ```
 
-If you use the dashboard's [local-model uploads](deployments.md#local-checkpoints) behind Nginx, raise the request body limits for the `api` location — checkpoint uploads are streamed and can be tens of GB:
-
-```nginx
-client_max_body_size 0;
-proxy_request_buffering off;   # stream instead of spooling the body to disk
-```
+!!! warning
+    All four `location` blocks are required. The three backend blocks (`/api/`, `/ws/`, `/v1/`) must appear **before** the frontend catch-all (`/vllm/`) because Nginx picks the longest matching prefix. If any are missing, those requests fall through to the frontend and silently fail — the gateway returns HTML instead of JSON, or the dashboard shows "Polling" instead of "Live".
 
 ## vLLM images
 Each deployment runs the official `vllm/vllm-openai` container; the requested version maps to an image tag and the image bundles its own matching CUDA runtime and PyTorch. There is no host-side CUDA detection or wheel selection — the client only needs Docker and the NVIDIA Container Toolkit. Images are pulled once and cached on the node; warm starts are instant. When extra pip packages are requested, the client builds and caches a thin derived image (`FROM vllm/vllm-openai:<tag>`).

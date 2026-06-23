@@ -1437,18 +1437,72 @@ sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class=
 <p>If the host should be reachable from other machines, use a non-loopback <code>--host-ip</code> (for example the host's LAN IP) and ensure firewall rules allow inbound traffic.</p>
 <h2 id="reverse-proxy-base-path">Reverse proxy base path</h2>
 <p>If you proxy the frontend under a path like <code>/vllm/</code>, pass <code>--base-path /vllm/</code> when running <code>host up</code>. This ensures asset URLs and API/WebSocket paths resolve correctly.</p>
-<p>For Nginx, make sure <code>/vllm/api</code>, <code>/vllm/ws</code>, and <code>/vllm/v1</code> are proxied to the backend (port 8000 by default; <code>/v1</code> is the <a href="../gateway/">OpenAI gateway</a>). The frontend uses the configured base path for API, WebSocket, and gateway URLs, so it works both at <code>/</code> and under a subpath.</p>
-<p>Streamed chat completions through the gateway are server-sent events; with Nginx's default response buffering, tokens arrive in bursts instead of streaming. Disable buffering on the gateway location:</p>
-<div class="highlight"><pre><span></span><code><span class="k">location</span><span class="w"> </span><span class="s">/vllm/v1/</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="kn">proxy_pass</span><span class="w"> </span><span class="s">http://127.0.0.1:8000/v1/</span><span class="p">;</span>
-<span class="w">    </span><span class="kn">proxy_buffering</span><span class="w"> </span><span class="no">off</span><span class="p">;</span><span class="w">        </span><span class="c1"># stream SSE tokens as they arrive</span>
-<span class="w">    </span><span class="kn">proxy_read_timeout</span><span class="w"> </span><span class="s">1h</span><span class="p">;</span><span class="w">      </span><span class="c1"># long generations / idle streams</span>
+<p>Nginx needs to route four distinct path prefixes — three to the backend and one to the frontend. Below is a complete location block you can copy into your <code>server</code> section and adapt (replace <code>/vllm</code> with your chosen prefix, and adjust ports if you changed the defaults):</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># --- Aquila under /vllm/ --------------------------------------------------</span>
+
+<span class="c1"># Bare /vllm → redirect to trailing-slash form</span>
+<span class="k">location</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">/vllm</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kn">return</span><span class="w"> </span><span class="mi">301</span><span class="w"> </span><span class="nv">$scheme://$http_host/vllm/</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="c1"># REST API → backend</span>
+<span class="k">location</span><span class="w"> </span><span class="s">/vllm/api/</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kn">rewrite</span><span class="w">            </span><span class="s">^/vllm/(.*)</span>$<span class="w"> </span><span class="s">/</span><span class="nv">$1</span><span class="w"> </span><span class="s">break</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_pass</span><span class="w">         </span><span class="s">http://127.0.0.1:8000</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_http_version</span><span class="w"> </span><span class="mi">1</span><span class="s">.1</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">Host</span><span class="w"> </span><span class="nv">$host</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">X-Real-IP</span><span class="w"> </span><span class="nv">$remote_addr</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">X-Forwarded-For</span><span class="w"> </span><span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">X-Forwarded-Proto</span><span class="w"> </span><span class="nv">$scheme</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1"># Local-model uploads can be tens of GB — stream them.</span>
+<span class="w">    </span><span class="kn">client_max_body_size</span><span class="w">    </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_request_buffering</span><span class="w"> </span><span class="no">off</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="c1"># WebSocket → backend</span>
+<span class="k">location</span><span class="w"> </span><span class="s">/vllm/ws/</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kn">rewrite</span><span class="w">            </span><span class="s">^/vllm/(.*)</span>$<span class="w"> </span><span class="s">/</span><span class="nv">$1</span><span class="w"> </span><span class="s">break</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_pass</span><span class="w">         </span><span class="s">http://127.0.0.1:8000</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_http_version</span><span class="w"> </span><span class="mi">1</span><span class="s">.1</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">Upgrade</span><span class="w"> </span><span class="nv">$http_upgrade</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">Connection</span><span class="w"> </span><span class="s">"upgrade"</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">Host</span><span class="w"> </span><span class="nv">$host</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">X-Real-IP</span><span class="w"> </span><span class="nv">$remote_addr</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">X-Forwarded-For</span><span class="w"> </span><span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">X-Forwarded-Proto</span><span class="w"> </span><span class="nv">$scheme</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_read_timeout</span><span class="w"> </span><span class="s">3600s</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="c1"># OpenAI-compatible gateway → backend</span>
+<span class="k">location</span><span class="w"> </span><span class="s">/vllm/v1/</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kn">rewrite</span><span class="w">            </span><span class="s">^/vllm/(.*)</span>$<span class="w"> </span><span class="s">/</span><span class="nv">$1</span><span class="w"> </span><span class="s">break</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_pass</span><span class="w">         </span><span class="s">http://127.0.0.1:8000</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_http_version</span><span class="w"> </span><span class="mi">1</span><span class="s">.1</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">Host</span><span class="w"> </span><span class="nv">$host</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">X-Real-IP</span><span class="w"> </span><span class="nv">$remote_addr</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">X-Forwarded-For</span><span class="w"> </span><span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">X-Forwarded-Proto</span><span class="w"> </span><span class="nv">$scheme</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_buffering</span><span class="w">    </span><span class="no">off</span><span class="p">;</span><span class="w">          </span><span class="c1"># stream SSE tokens as they arrive</span>
+<span class="w">    </span><span class="kn">proxy_read_timeout</span><span class="w"> </span><span class="s">1h</span><span class="p">;</span><span class="w">           </span><span class="c1"># long generations / idle streams</span>
+<span class="p">}</span>
+
+<span class="c1"># Frontend (catch-all) → Vite preview server</span>
+<span class="k">location</span><span class="w"> </span><span class="s">/vllm/</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kn">proxy_pass</span><span class="w">         </span><span class="s">http://127.0.0.1:5173</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_http_version</span><span class="w"> </span><span class="mi">1</span><span class="s">.1</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">Upgrade</span><span class="w"> </span><span class="nv">$http_upgrade</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">Connection</span><span class="w"> </span><span class="s">"upgrade"</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">Host</span><span class="w"> </span><span class="nv">$host</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">X-Real-IP</span><span class="w"> </span><span class="nv">$remote_addr</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">X-Forwarded-For</span><span class="w"> </span><span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">proxy_set_header</span><span class="w">   </span><span class="s">X-Forwarded-Proto</span><span class="w"> </span><span class="nv">$scheme</span><span class="p">;</span>
 <span class="p">}</span>
 </code></pre></div>
-<p>If you use the dashboard's <a href="../deployments/#local-checkpoints">local-model uploads</a> behind Nginx, raise the request body limits for the <code>api</code> location — checkpoint uploads are streamed and can be tens of GB:</p>
-<div class="highlight"><pre><span></span><code><span class="k">client_max_body_size</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
-<span class="k">proxy_request_buffering</span><span class="w"> </span><span class="no">off</span><span class="p">;</span><span class="w">   </span><span class="c1"># stream instead of spooling the body to disk</span>
-</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>All four <code>location</code> blocks are required. The three backend blocks (<code>/api/</code>, <code>/ws/</code>, <code>/v1/</code>) must appear <strong>before</strong> the frontend catch-all (<code>/vllm/</code>) because Nginx picks the longest matching prefix. If any are missing, those requests fall through to the frontend and silently fail — the gateway returns HTML instead of JSON, or the dashboard shows "Polling" instead of "Live".</p>
+</div>
 <h2 id="vllm-images">vLLM images</h2>
 <p>Each deployment runs the official <code>vllm/vllm-openai</code> container; the requested version maps to an image tag and the image bundles its own matching CUDA runtime and PyTorch. There is no host-side CUDA detection or wheel selection — the client only needs Docker and the NVIDIA Container Toolkit. Images are pulled once and cached on the node; warm starts are instant. When extra pip packages are requested, the client builds and caches a thin derived image (<code>FROM vllm/vllm-openai:&lt;tag&gt;</code>).</p>
 <p>You can inspect and manage cached images via the client API:</p>
