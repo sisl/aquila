@@ -665,20 +665,43 @@ class TestRunPreflight:
         out = capsys.readouterr().out
         assert "1 warning(s)" in out
 
-    def test_fail_exits(self):
+    def test_fail_exits_non_tty(self, monkeypatch):
         results = [
             PreflightResult("Check A", CheckStatus.PASS, "ok"),
             PreflightResult("Check B", CheckStatus.FAIL, "bad", hint="fix it"),
         ]
+        monkeypatch.setattr("sys.stdin", type("FakeStdin", (), {"isatty": lambda self: False})())
         with pytest.raises(SystemExit) as exc_info:
             run_preflight(results)
         assert exc_info.value.code == 1
 
-    def test_fail_shows_hint(self, capsys):
+    def test_fail_shows_hint(self, capsys, monkeypatch):
         results = [
             PreflightResult("Check A", CheckStatus.FAIL, "bad", hint="do this"),
         ]
+        monkeypatch.setattr("sys.stdin", type("FakeStdin", (), {"isatty": lambda self: False})())
         with pytest.raises(SystemExit):
             run_preflight(results)
         out = capsys.readouterr().out
         assert "do this" in out
+
+    def test_fail_exits_on_decline(self, monkeypatch):
+        results = [
+            PreflightResult("Check A", CheckStatus.FAIL, "bad", hint="fix it"),
+        ]
+        monkeypatch.setattr("sys.stdin", type("FakeStdin", (), {"isatty": lambda self: True})())
+        monkeypatch.setattr("builtins.input", lambda _: "n")
+        with pytest.raises(SystemExit) as exc_info:
+            run_preflight(results)
+        assert exc_info.value.code == 1
+
+    def test_fail_continues_on_confirm(self, capsys, monkeypatch):
+        results = [
+            PreflightResult("Check A", CheckStatus.PASS, "ok"),
+            PreflightResult("Check B", CheckStatus.FAIL, "bad", hint="fix it"),
+        ]
+        monkeypatch.setattr("sys.stdin", type("FakeStdin", (), {"isatty": lambda self: True})())
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+        run_preflight(results)
+        out = capsys.readouterr().out
+        assert "1 check(s) failed" in out

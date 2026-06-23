@@ -429,9 +429,17 @@ def run_preflight(results: list[PreflightResult]) -> None:
     warns = sum(1 for r in results if r.status == CheckStatus.WARN)
 
     if fails:
-        msg = f"\n{fails} check(s) failed — cannot continue."
+        msg = f"\n{fails} check(s) failed."
         print(_rgb(*_ERR, msg) if color else msg)
-        sys.exit(1)
+        if sys.stdin.isatty():
+            try:
+                answer = input("Continue anyway? [y/N]: ").strip().lower()
+            except EOFError:
+                answer = ""
+            if answer not in ("y", "yes"):
+                sys.exit(1)
+        else:
+            sys.exit(1)
     elif warns:
         msg = f"\n{warns} warning(s) — proceeding anyway."
         print(_rgb(*_WARN_CLR, msg) if color else msg)
