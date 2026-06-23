@@ -79,7 +79,7 @@ body {
 
 .brand-title {
   display: flex;
-  align-items: baseline;
+  align-items: flex-end;
   gap: 10px;
   margin: 0;
 }
@@ -87,7 +87,13 @@ body {
 .brand-logo {
   height: clamp(36px, 5vw, 64px);
   width: auto;
-  align-self: flex-end;
+}
+
+.brand-text {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 0.45em;
 }
 
 .brand-subtitle {
