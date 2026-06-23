@@ -75,14 +75,16 @@
 
 /* ------------------------------------------------ version selector (mike) */
 
-/* Place the selector to the left of the repo link in the header. */
+/* Place the selector at the right edge of the content area, just left of
+   the repo link.  The header inner is the nearest flex container — give it
+   a positioning context so the version dropdown anchors to it. */
 .md-header__inner {
   position: relative;
 }
 
 .md-version {
   position: absolute;
-  right: 234px;
+  right: 0;
   top: 0;
   height: 2.4rem;
   z-index: 3;
