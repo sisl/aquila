@@ -28,7 +28,7 @@ See the [full documentation](https://sisl.github.io/aquila/) for detailed guides
 - OS: Ubuntu 22.04 and 24.04
 
 ## Prerequisites
-**Host:** Docker + Compose, Node.js + npm, Python 3.10–3.14, `uv`.
+**Host:** Docker + Compose, Node.js ≥ 23 + npm, Python 3.10–3.14, `uv`.
 
 **Client:** NVIDIA GPU with driver, Docker or Podman ≥ 5.4, [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), Python 3.10–3.14, `uv`.
 

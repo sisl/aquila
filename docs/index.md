@@ -51,7 +51,7 @@
 - Automatic deployment recovery after backend restarts; schema migrations run automatically on upgrade.
 
 ## Supported platforms
-- Python 3.10–3.14
+- Python 3.10–3.14, Node.js ≥ 23 (host only)
 - Ubuntu 22.04 and 24.04
 - NVIDIA GPUs (H100, A100, L40, RTX 4090, DGX Spark)
 
