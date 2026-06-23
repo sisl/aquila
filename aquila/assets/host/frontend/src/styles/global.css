@@ -79,7 +79,7 @@ body {
 
 .brand-title {
   display: flex;
-  align-items: flex-end;
+  align-items: baseline;
   gap: 10px;
   margin: 0;
 }
@@ -87,6 +87,7 @@ body {
 .brand-logo {
   height: clamp(36px, 5vw, 64px);
   width: auto;
+  align-self: flex-end;
 }
 
 .brand-subtitle {
@@ -94,7 +95,6 @@ body {
   font-weight: 300;
   letter-spacing: 0.05em;
   opacity: 0.4;
-  padding-bottom: 0.45em;
 }
 
 .brand-version {
@@ -102,7 +102,6 @@ body {
   font-weight: 400;
   letter-spacing: 0.03em;
   opacity: 0.25;
-  padding-bottom: 0.45em;
 }
 
 .stage {
