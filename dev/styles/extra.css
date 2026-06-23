@@ -108,6 +108,12 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  pointer-events: none;
+}
+
+.md-version:hover .md-version__list,
+.md-version:focus-within .md-version__list {
+  pointer-events: auto;
 }
 
 .md-version__link {
