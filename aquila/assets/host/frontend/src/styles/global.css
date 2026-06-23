@@ -93,7 +93,7 @@ body {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding-bottom: clamp(3px, 0.39vw, 5px);
+  padding-bottom: clamp(4px, 0.5vw, 6.5px);
 }
 
 .brand-subtitle {
