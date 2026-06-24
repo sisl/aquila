@@ -633,7 +633,13 @@ def run_clean(remove_docker: bool = False, assume_yes: bool = False) -> None:
     ]
 
     targets = [p for p in (data_root, client_root, *legacy_roots) if p.exists()]
-    cache_targets = [p for p in legacy_caches if p.exists()]
+    cache_targets = []
+    for p in legacy_caches:
+        try:
+            if p.exists():
+                cache_targets.append(p)
+        except OSError:
+            pass
 
     candidate_units = (
         f"{HOST_SERVICE_NAME}-infra.service",
