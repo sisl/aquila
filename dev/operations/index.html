@@ -1328,13 +1328,18 @@
 </tr>
 <tr>
 <td><code>HF_CACHE_DIR</code></td>
-<td><code>~/.cache/huggingface</code></td>
-<td>Host directory used as the shared HuggingFace cache.</td>
+<td><code>~/.local/share/aquila/models</code></td>
+<td>Host directory used as the shared HuggingFace cache. In service mode, automatically set to <code>{runtime_dir}/models</code>.</td>
+</tr>
+<tr>
+<td><code>VLLM_CLIENT_ROOT</code></td>
+<td><code>~/.vllm-client</code></td>
+<td>Root directory for deployment logs, uploaded packages, local models, and compile caches. In service mode, automatically set to the runtime directory.</td>
 </tr>
 <tr>
 <td><code>LOG_MAX_MB</code></td>
 <td><code>50</code></td>
-<td>Rotate a deployment's persistent log file (<code>~/.vllm-client/.logs</code>) once it exceeds this size; the overflow is kept as <code>&lt;file&gt;.1</code>.</td>
+<td>Rotate a deployment's persistent log file (<code>{VLLM_CLIENT_ROOT}/.logs</code>) once it exceeds this size; the overflow is kept as <code>&lt;file&gt;.1</code>.</td>
 </tr>
 <tr>
 <td><code>LOG_RETENTION_DAYS</code></td>
