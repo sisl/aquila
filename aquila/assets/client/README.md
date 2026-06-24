@@ -30,7 +30,8 @@ Environment variables are read from `~/.local/share/aquila/client/.env`:
 | --- | --- | --- |
 | `MODEL_DIRS` | *(unset)* | Comma-separated directories for local models/LoRA adapters. |
 | `MAX_FAILED_RESTARTS` | `3` | Crash-loop breaker per deployment. |
-| `HF_CACHE_DIR` | `~/.cache/huggingface` | Shared HuggingFace model cache. |
+| `HF_CACHE_DIR` | `~/.local/share/aquila/models` | Shared HuggingFace model cache. In service mode, set to `{runtime_dir}/models`. |
+| `VLLM_CLIENT_ROOT` | `~/.vllm-client` | Root for deployment logs, packages, local models, compile caches. In service mode, set to the runtime directory. |
 | `LOG_MAX_MB` | `50` | Rotate deployment logs at this size. |
 | `LOG_RETENTION_DAYS` | `14` | Delete old log files after this many days. |
 | `PODMAN_SOCK` | *(auto)* | Non-standard Podman API socket path. |

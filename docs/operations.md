@@ -45,8 +45,9 @@ These act as defaults for the corresponding [dashboard settings](#global-setting
 | --- | --- | --- |
 | `MODEL_DIRS` | *(unset)* | Comma-separated directories that may be served as local models / LoRA adapters (mounted read-only into containers). Unset = local paths rejected. |
 | `MAX_FAILED_RESTARTS` | `3` | Crash-loop breaker: stop a deployment that restarts this many times without becoming ready. Overridable per deployment. |
-| `HF_CACHE_DIR` | `~/.cache/huggingface` | Host directory used as the shared HuggingFace cache. |
-| `LOG_MAX_MB` | `50` | Rotate a deployment's persistent log file (`~/.vllm-client/.logs`) once it exceeds this size; the overflow is kept as `<file>.1`. |
+| `HF_CACHE_DIR` | `~/.local/share/aquila/models` | Host directory used as the shared HuggingFace cache. In service mode, automatically set to `{runtime_dir}/models`. |
+| `VLLM_CLIENT_ROOT` | `~/.vllm-client` | Root directory for deployment logs, uploaded packages, local models, and compile caches. In service mode, automatically set to the runtime directory. |
+| `LOG_MAX_MB` | `50` | Rotate a deployment's persistent log file (`{VLLM_CLIENT_ROOT}/.logs`) once it exceeds this size; the overflow is kept as `<file>.1`. |
 | `LOG_RETENTION_DAYS` | `14` | Delete persistent deployment log files untouched for this many days. |
 | `PODMAN_SOCK` | *(auto)* | Non-standard Podman API socket path. By default the agent probes the rootless socket (`$XDG_RUNTIME_DIR/podman/podman.sock`) and the rootful one (`/run/podman/podman.sock`). |
 

@@ -87,7 +87,7 @@ The easiest way to get a local checkpoint onto a node is the node's **Manage** d
 - **Upload Archive** — same, but as a single `.tar.gz`/`.zip`; the node extracts it (a single wrapping folder is flattened automatically so `config.json` ends up at the model root).
 - **Pull from URL** — paste an `http(s)` URL (e.g. a presigned S3 link) and the node downloads it directly; progress shows in the dialog. Archives are extracted; a single-file URL (e.g. a `.gguf`) is stored as-is.
 
-Uploaded models live under `~/.vllm-client/.models/<name>` on the node, are always part of the allowed model dirs (no `MODEL_DIRS` configuration needed), and are mounted read-only into every new vLLM container. The dialog lists them with size and in-use status; managed models can be deleted there when no deployment serves them. Model names must be a single path segment (letters, digits, `.`, `_`, `-`), and an upload to an existing name is rejected — delete the old model first.
+Uploaded models live under `{VLLM_CLIENT_ROOT}/.models/<name>` on the node (default `~/.vllm-client/.models/<name>`; in service mode, under the runtime directory), are always part of the allowed model dirs (no `MODEL_DIRS` configuration needed), and are mounted read-only into every new vLLM container. The dialog lists them with size and in-use status; managed models can be deleted there when no deployment serves them. Model names must be a single path segment (letters, digits, `.`, `_`, `-`), and an upload to an existing name is rejected — delete the old model first.
 
 To deploy one, select the node in the **Deploy Model** form and pick it from the **Local model on this node** dropdown (it fills the model name with the checkpoint's absolute path). Transfers are checked against the node's free disk space up front, and interrupted uploads are cleaned up automatically.
 
@@ -221,7 +221,7 @@ Click **Logs** on any deployment to stream its output in real time. Every line i
 
 Monitoring noise is filtered out: the HTTP access-log lines produced by the agent's own `/metrics` polling and `/health` checks (every ~15 s) never enter the log. Inference request lines (`POST /v1/...`) and the engine's throughput stats are kept.
 
-The dialog shows the live tail (last ~400 lines). The **full log of the current run** is persisted on the node under `~/.vllm-client/.logs/` and survives agent restarts without gaps or duplicates — use **Download full log** in the logs dialog to fetch it. One file per deployment run is kept (the previous run remains as `<file>.1`); files rotate at `LOG_MAX_MB` (default 50 MB) and are deleted after `LOG_RETENTION_DAYS` (default 14) without activity — see [Operations](operations.md#configuration).
+The dialog shows the live tail (last ~400 lines). The **full log of the current run** is persisted on the node under `{VLLM_CLIENT_ROOT}/.logs/` (default `~/.vllm-client/.logs/`; in service mode, under the runtime directory) and survives agent restarts without gaps or duplicates — use **Download full log** in the logs dialog to fetch it. One file per deployment run is kept (the previous run remains as `<file>.1`); files rotate at `LOG_MAX_MB` (default 50 MB) and are deleted after `LOG_RETENTION_DAYS` (default 14) without activity — see [Operations](operations.md#configuration).
 
 ## Connecting to a deployment
 

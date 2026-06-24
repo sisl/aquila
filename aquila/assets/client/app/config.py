@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     # same path. Empty = local paths rejected.
     model_dirs: str = ""
 
-    # Persistent deployment logs (~/.vllm-client/.logs): rotate a deployment's
+    # Persistent deployment logs ({vllm_client_root}/.logs): rotate a deployment's
     # log file once it exceeds this size, and delete files untouched for this
     # many days.
     log_max_mb: int = 50
