@@ -16,7 +16,10 @@ class Settings(BaseSettings):
     vllm_image_repo: str = "vllm/vllm-openai"
     # Host directory mounted into every vLLM container as the HuggingFace cache so
     # model weights are downloaded once and shared across deployments.
-    hf_cache_dir: str = "~/.cache/huggingface"
+    hf_cache_dir: str = "~/.local/share/aquila/models"
+    # Root directory for deployment logs, uploaded packages, local models, and
+    # compile caches.
+    vllm_client_root: str = "~/.vllm-client"
 
     # Default crash-loop breaker threshold: stop a deployment that restarts
     # this many times without ever becoming ready. Overridable per deployment.
@@ -27,7 +30,7 @@ class Settings(BaseSettings):
     # same path. Empty = local paths rejected.
     model_dirs: str = ""
 
-    # Persistent deployment logs (~/.vllm-client/.logs): rotate a deployment's
+    # Persistent deployment logs ({vllm_client_root}/.logs): rotate a deployment's
     # log file once it exceeds this size, and delete files untouched for this
     # many days.
     log_max_mb: int = 50

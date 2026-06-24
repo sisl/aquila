@@ -118,7 +118,7 @@ _RESUME_WAIT_CAP_SECONDS = 120.0
 # a candidate RAM sleeper when scanning for orphaned warm artifacts.
 _SLEEPER_RSS_MIN_MB = 1024
 
-_CLIENT_ROOT = Path(os.environ.get("VLLM_CLIENT_ROOT", Path.home() / ".vllm-client"))
+_CLIENT_ROOT = Path(os.path.expanduser(settings.vllm_client_root)).resolve()
 _PACKAGES_DIR = _CLIENT_ROOT / ".packages"
 # Managed local models (uploaded through the host or pulled from a URL).
 # Always part of the allowed model dirs and mounted into vLLM containers.
