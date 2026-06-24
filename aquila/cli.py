@@ -1,5 +1,8 @@
 import argparse
+import getpass
+import grp
 import hashlib
+import pwd
 
 from aquila import __version__
 import os
@@ -613,18 +616,24 @@ def run_client_down() -> None:
 
 
 def run_clean(remove_docker: bool = False, assume_yes: bool = False) -> None:
-    """Remove the tool's runtime directories, venvs, and caches.
+    """Remove the tool's runtime directories, venvs, caches, and legacy model caches.
 
-    Targets the host/client runtime dirs under XDG data home and the client
-    working root (uploaded packages). The HuggingFace model cache is left
-    intact. systemd units are not removed here — use `host down`/`client down`.
+    Targets the host/client runtime dirs under XDG data home, the client
+    working root, and legacy HuggingFace cache locations that are no longer
+    used. systemd units are not removed here — use `host down`/`client down`.
     """
     base_dir = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
     data_root = base_dir / "aquila"
     client_root = Path(os.environ.get("VLLM_CLIENT_ROOT", Path.home() / ".vllm-client"))
     legacy_roots = [base_dir / "athanor", base_dir / "vllm_cluster_manager"]
+    legacy_caches = [
+        Path.home() / ".cache" / "huggingface",
+        Path("/root/.cache/huggingface"),
+        Path("/root/.vllm-client"),
+    ]
 
     targets = [p for p in (data_root, client_root, *legacy_roots) if p.exists()]
+    cache_targets = [p for p in legacy_caches if p.exists()]
 
     candidate_units = (
         f"{HOST_SERVICE_NAME}-infra.service",
@@ -634,7 +643,7 @@ def run_clean(remove_docker: bool = False, assume_yes: bool = False) -> None:
     )
     installed_units = [u for u in candidate_units if Path(f"/etc/systemd/system/{u}").exists()]
 
-    if not targets and not remove_docker:
+    if not targets and not cache_targets and not remove_docker:
         print("Nothing to clean.")
         if installed_units:
             print("Installed systemd services remain; remove with `host down` / `client down`.")
@@ -643,11 +652,12 @@ def run_clean(remove_docker: bool = False, assume_yes: bool = False) -> None:
     print("aquila clean will remove:")
     for p in targets:
         print(f"  - {p}")
+    for p in cache_targets:
+        print(f"  - {p}  (legacy model cache)")
     if (data_root / "host").exists():
         print("  - Docker: Postgres data volume (all deployments, nodes, history)")
     if remove_docker:
         print("  - Docker: managed vLLM containers and cached vLLM images")
-    print("  (the HuggingFace model cache is left intact)")
     if installed_units:
         print("\nNote: systemd services are installed and will NOT be removed:")
         for u in installed_units:
@@ -684,7 +694,7 @@ def run_clean(remove_docker: bool = False, assume_yes: bool = False) -> None:
         _clean_docker()
 
     failures: list[Path] = []
-    for p in targets:
+    for p in targets + cache_targets:
         shutil.rmtree(p, ignore_errors=True)
         if p.exists():
             failures.append(p)
@@ -856,12 +866,15 @@ def copy_assets_subdir(kind: str, subdir: str, dest: Path) -> None:
 
 
 def write_client_env_file(runtime_dir: Path, config: ClientConfig) -> None:
+    models_dir = runtime_dir / "models"
     client_env = textwrap.dedent(
         f"""
         NODE_NAME={config.node_name}
         HOST={config.client_host}
         PORT={config.client_port}
         CONSUL_HTTP_ADDR=http://{config.host_ip}:{config.consul_port}
+        HF_CACHE_DIR={models_dir}
+        VLLM_CLIENT_ROOT={runtime_dir}
         """
     ).strip() + "\n"
     (runtime_dir / ".env").write_text(client_env, encoding="utf-8")
@@ -963,8 +976,20 @@ def compose_service_cmd(args: str) -> str:
     )
 
 
+def _service_user() -> tuple[str, str]:
+    """Return (user, group) for systemd units — the real user behind sudo."""
+    user = os.environ.get("SUDO_USER") or getpass.getuser()
+    try:
+        gid = os.stat(Path(f"~{user}").expanduser()).st_gid
+        group = grp.getgrgid(gid).gr_name
+    except (KeyError, OSError):
+        group = user
+    return user, group
+
+
 def install_host_service(config: HostConfig) -> None:
     runtime_dir = ensure_runtime_dir("host")
+    user, group = _service_user()
     compose_start = compose_service_cmd("up -d")
     compose_stop = compose_service_cmd("down")
     npm_path = shutil.which("npm")
@@ -987,6 +1012,8 @@ def install_host_service(config: HostConfig) -> None:
 
         [Service]
         Type=oneshot
+        User={user}
+        Group={group}
         WorkingDirectory={runtime_dir}
         EnvironmentFile={runtime_dir}/.env
         ExecStart={compose_start}
@@ -1007,6 +1034,8 @@ def install_host_service(config: HostConfig) -> None:
 
         [Service]
         Type=simple
+        User={user}
+        Group={group}
         WorkingDirectory={runtime_dir}/backend
         EnvironmentFile={runtime_dir}/backend/.env
         Environment=AQUILA_VERSION={__version__}
@@ -1028,6 +1057,8 @@ def install_host_service(config: HostConfig) -> None:
 
         [Service]
         Type=simple
+        User={user}
+        Group={group}
         WorkingDirectory={runtime_dir}/frontend
         EnvironmentFile={runtime_dir}/frontend/.env
         Environment=PATH={frontend_path}
@@ -1061,6 +1092,11 @@ def remove_host_service() -> None:
 
 def install_client_service(config: ClientConfig) -> None:
     runtime_dir = ensure_runtime_dir("client")
+    user, group = _service_user()
+    try:
+        uid = pwd.getpwnam(user).pw_uid
+    except KeyError:
+        uid = os.getuid()
     client_service = textwrap.dedent(
         f"""
         [Unit]
@@ -1069,6 +1105,9 @@ def install_client_service(config: ClientConfig) -> None:
 
         [Service]
         Type=simple
+        User={user}
+        Group={group}
+        Environment=XDG_RUNTIME_DIR=/run/user/{uid}
         WorkingDirectory={runtime_dir}
         EnvironmentFile={runtime_dir}/.env
         Environment=AQUILA_VERSION={__version__}
@@ -1082,6 +1121,10 @@ def install_client_service(config: ClientConfig) -> None:
     ).strip() + "\n"
 
     write_systemd_service(f"/etc/systemd/system/{CLIENT_SERVICE_NAME}.service", client_service)
+    try:
+        run(["loginctl", "enable-linger", user], capture=True)
+    except Exception:
+        pass
     systemctl(["daemon-reload"])
 
 

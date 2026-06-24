@@ -623,10 +623,16 @@ async def resume_deployment(
 async def delete_deployment(
     deployment_id: int, session: AsyncSession = Depends(get_session)
 ) -> dict[str, str]:
-    """Delete the deployment record and remove it from scoped API keys. Does not stop a running container -- call stop first."""
+    """Delete the deployment record, stopping its container first if still active."""
     deployment = await session.get(Deployment, deployment_id)
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
+
+    if deployment.status in ACTIVE_STATUSES:
+        node = await session.get(Node, deployment.node_id)
+        await stop_deployment_internal(
+            deployment, node, best_effort=True, final_status="stopped"
+        )
 
     await session.delete(deployment)
 

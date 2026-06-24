@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     vllm_image_repo: str = "vllm/vllm-openai"
     # Host directory mounted into every vLLM container as the HuggingFace cache so
     # model weights are downloaded once and shared across deployments.
-    hf_cache_dir: str = "~/.cache/huggingface"
+    hf_cache_dir: str = "~/.local/share/aquila/models"
 
     # Default crash-loop breaker threshold: stop a deployment that restarts
     # this many times without ever becoming ready. Overridable per deployment.

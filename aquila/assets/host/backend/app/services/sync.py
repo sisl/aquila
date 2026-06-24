@@ -616,7 +616,7 @@ async def sync_deployments_from_clients(interval_seconds: int = 5) -> None:
                             if not dep_key or dep_key in known_keys:
                                 continue
                             client_status = client_dep.get("status")
-                            if client_status in ("stopped", "error"):
+                            if client_status in ("stopped", "error", "expired"):
                                 continue
                             port = int(client_dep.get("port", 0))
                             # An active row already holds this port (e.g. a
